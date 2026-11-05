@@ -1,0 +1,34 @@
+{
+  "name": "site-evaluator-kooboo",
+  "version": "0.2.0",
+  "private": true,
+  "type": "module",
+  "engines": {
+    "node": ">=24.0.0"
+  },
+  "scripts": {
+    "dev": "vite --config frontend/vite.config.ts",
+    "check": "tsc --noEmit -p tsconfig.backend.json && vue-tsc --noEmit -p tsconfig.web.json",
+    "test": "node --import tsx --test tests/*.test.ts",
+    "build": "node scripts/build.mjs",
+    "preflight": "node scripts/preflight.mjs",
+    "push": "node scripts/push.mjs",
+    "smoke": "node scripts/smoke.mjs",
+    "migrate:node": "node scripts/migrate-node.mjs"
+  },
+  "dependencies": {
+    "@lucide/vue": "1.68.0",
+    "vue": "3.5.44",
+    "zod": "4.6.7"
+  },
+  "devDependencies": {
+    "@types/node": "24.10.1",
+    "@vitejs/plugin-vue": "6.0.10",
+    "tsx": "4.23.15",
+    "typescript": "5.9.3",
+    "vite": "8.3.5",
+    "vue-tsc": "3.3.14",
+    "esbuild": "0.28.2",
+    "@babel/parser": "7.29.13"
+  }
+}

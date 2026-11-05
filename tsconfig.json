@@ -1,0 +1,15 @@
+{
+  "compilerOptions": {
+    "target": "ESNext",
+    "module": "ESNext",
+    "moduleResolution": "Bundler",
+    "baseUrl": ".",
+    "paths": {
+      "code/*": [
+        "src/code/*"
+      ]
+    },
+    "resolveJsonModule": true,
+    "skipLibCheck": true
+  }
+}

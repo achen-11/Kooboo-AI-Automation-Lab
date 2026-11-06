@@ -1,5 +1,6 @@
 import { reactive } from 'vue';
-import type { PublicSettings, Stage } from '../../backend/shared/types';
+import type { PublicSettings, Run, Stage } from '../../shared/types';
+import { scoringStatus } from '../../shared/result';
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await fetch(`/api${path}`, { credentials: 'same-origin', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
@@ -24,7 +25,11 @@ export async function saveSettings(input: unknown): Promise<void> {
 }
 export function go(path: string): void { window.location.hash = path; }
 export function message(error: unknown): string { return error instanceof Error ? error.message : String(error); }
-export const statusNames: Record<Stage, string> = { queued: '排队中', collecting: '采集中', scoring: '评分中', completed: '已完成', failed: '执行失败' };
+export const statusNames: Record<Stage, string> = { queued: '排队中', collecting: '采集中', scoring: '评分中', completed: '执行结束', failed: '执行失败' };
+export function runStatusName(run: Pick<Run, 'status' | 'report'>): string {
+  const result = scoringStatus(run);
+  return result === 'unscored' ? '未生成评分' : result === 'partial' ? '仅完成度评分' : result === 'scored' ? '已评分' : statusNames[run.status];
+}
 export function formatDate(timestamp: number): string { return new Intl.DateTimeFormat('zh-CN', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' }).format(timestamp); }
 export function score(value: number | null | undefined): string { return value == null ? '—' : String(value); }
 export function scoreClass(value: number | null | undefined): string { return value == null ? 'score-unknown' : value < (platform.settings?.threshold ?? 80) ? 'score-low' : 'score-good'; }

@@ -1,15 +1,15 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Plus, Search, RotateCw, ChevronRight, ChevronLeft, ArrowUpRight, ScanLine, X, CircleAlert, LoaderCircle } from '@lucide/vue';
-import { api, platform, statusNames, formatDate, score, scoreClass, go, message } from '../api';
-import type { Evaluation, Stage } from '../../../backend/shared/types';
+import { api, platform, statusNames, runStatusName, formatDate, score, scoreClass, go, message } from '../api';
+import type { Evaluation } from '../../../shared/types';
 
 interface Listing { items: Evaluation[]; total: number; summary: { total: number; active: number; needsReview: number; belowThreshold: number; completed: number } }
 const listing = ref<Listing>({ items: [], total: 0, summary: { total: 0, active: 0, needsReview: 0, belowThreshold: 0, completed: 0 } });
 const filter = ref('all'), query = ref(''), status = ref('all'), page = ref(1);
 const loading = ref(true), saving = ref(false), error = ref('');
 const manualDialog = ref<HTMLDialogElement>();
-const form = ref({ jobId: '', targetUrl: '', referenceUrl: '', scope: 'homepage', ruleSetVersion: 'visual-v1' });
+const form = ref({ jobId: '', targetUrl: '', referenceUrl: '', scope: 'homepage', ruleSetVersion: '' });
 const rules = ref<{ version: string; name: string }[]>([]);
 const formError = ref('');
 const pages = computed(() => Math.max(1, Math.ceil(listing.value.total / 25)));
@@ -35,14 +35,14 @@ onMounted(() => { void load(); void api<{ items: { version: string; name: string
 onUnmounted(() => { disposed = true; clearInterval(poll); clearTimeout(debounce); });
 
 function openCreate(): void {
-  form.value = { jobId: `manual-${Date.now()}`, targetUrl: '', referenceUrl: '', scope: 'homepage', ruleSetVersion: 'visual-v1' };
+  form.value = { jobId: `manual-${Date.now()}`, targetUrl: '', referenceUrl: '', scope: 'homepage', ruleSetVersion: '' };
   formError.value = '';
   manualDialog.value?.showModal();
 }
 async function submit(): Promise<void> {
   saving.value = true; formError.value = '';
   try {
-    const result = await api<{ evaluationId: string }>('/manual-evaluations', { method: 'POST', body: JSON.stringify(form.value) });
+    const result = await api<{ evaluationId: string }>('/manual-evaluations', { method: 'POST', body: JSON.stringify({ ...form.value, ruleSetVersion: form.value.ruleSetVersion || undefined }) });
     manualDialog.value?.close(); go(`/evaluations/${result.evaluationId}`);
   } catch (reason) { formError.value = message(reason); }
   finally { saving.value = false; }
@@ -61,7 +61,7 @@ function targetLabel(item: Evaluation): string {
     <CircleAlert :size="18" /><span>先配置视觉模型接口，已接收的任务会保留在队列中。</span><a href="#/settings?tab=model">前往配置<ArrowUpRight :size="15" /></a>
   </div>
   <div v-else-if="platform.settings.paused" class="alert info"><span>任务执行已暂停，待处理记录会保留。</span><a href="#/settings">运行设置<ArrowUpRight :size="15" /></a></div>
-  <div v-else-if="!platform.browserReady" class="alert info"><CircleAlert :size="18" /><span>Kooboo 服务器未开放 Puppeteer 能力，请检查服务器配置后刷新页面。</span></div>
+  <div v-else-if="!platform.browserReady" class="alert info"><CircleAlert :size="18" /><span>本机 Chromium 尚未安装，请运行 npm run install:browser 后刷新页面。</span></div>
   <div class="toolbar overview-toolbar">
     <div class="segmented filters" aria-label="任务筛选">
       <button :class="{ selected: filter === 'all' }" @click="filter = 'all'">全部任务<span>{{ listing.summary.total }}</span></button>
@@ -93,12 +93,12 @@ function targetLabel(item: Evaluation): string {
           <td><span class="table-score" :class="scoreClass(item.run.report?.fidelityScore)">{{ score(item.run.report?.fidelityScore) }}</span><span v-if="item.run.status === 'completed' && item.run.report?.fidelityScore == null" class="table-subtitle">不可评估</span></td>
           <td><span :class="{ 'text-muted': item.run.report?.completionScore == null }">{{ score(item.run.report?.completionScore) }}</span></td>
           <td><span class="scope-text">{{ item.submission.scope === 'homepage' ? '首页' : '全站' }}</span><span v-if="item.run.report && !item.run.report.coverage.complete" class="table-subtitle warning-text">覆盖不足</span></td>
-          <td><span class="status-badge" :class="item.run.status"><i />{{ statusNames[item.run.status as Stage] }}</span><span v-if="item.needsReview" class="table-subtitle warning-text">需人工复核</span><span v-else-if="item.review?.decision === 'accepted'" class="table-subtitle">人工已通过</span></td>
+          <td><span class="status-badge" :class="[item.run.status, { unscored: item.run.status === 'completed' && item.run.report?.fidelityScore == null }]"><i />{{ runStatusName(item.run) }}</span><span v-if="item.needsReview" class="table-subtitle warning-text">需人工复核</span><span v-else-if="item.review?.decision === 'accepted'" class="table-subtitle">人工已通过</span></td>
           <td class="date-cell">{{ formatDate(item.createdAt) }}</td><td><a class="icon-button" :href="`#/evaluations/${item.id}`" aria-label="查看评测报告"><ChevronRight :size="19" /></a></td>
         </tr></tbody>
       </table>
     </div>
-    <footer class="table-footer"><span>共 {{ listing.total }} 项<span v-if="listing.summary.total"> · 已完成 {{ listing.summary.completed }} 项</span></span><div class="pagination"><button class="icon-button" :disabled="page <= 1" aria-label="上一页" @click="page--"><ChevronLeft :size="17" /></button><span>{{ page }} / {{ pages }}</span><button class="icon-button" :disabled="page >= pages" aria-label="下一页" @click="page++"><ChevronRight :size="17" /></button></div></footer>
+    <footer class="table-footer"><span>共 {{ listing.total }} 项<span v-if="listing.summary.total"> · 已结束 {{ listing.summary.completed }} 项</span></span><div class="pagination"><button class="icon-button" :disabled="page <= 1" aria-label="上一页" @click="page--"><ChevronLeft :size="17" /></button><span>{{ page }} / {{ pages }}</span><button class="icon-button" :disabled="page >= pages" aria-label="下一页" @click="page++"><ChevronRight :size="17" /></button></div></footer>
   </section>
   <p class="page-footnote">每个生成站域名展示最近一次评测，历史记录在报告中查看；域名尚未解析的任务单独显示。未知分数可在“需复核”中查看。</p>
 
@@ -110,7 +110,7 @@ function targetLabel(item: Evaluation): string {
       <label class="field"><span>目标站点</span><input v-model="form.targetUrl" class="input" type="url" placeholder="https://生成的站点" required /></label>
       <label class="field"><span>视觉参考站 <small>可选</small></span><input v-model="form.referenceUrl" class="input" type="url" placeholder="https://参考站点" /></label>
       <label class="field"><span>评测范围</span><select v-model="form.scope" class="input"><option value="homepage">首页 · 桌面与移动</option><option value="site">全站 · 当前仅采集首页，结果需复核</option></select></label>
-      <label class="field"><span>评分规则</span><select v-model="form.ruleSetVersion" class="input"><option v-for="rule in rules" :key="rule.version" :value="rule.version">{{ rule.name }} · {{ rule.version }}</option><option v-if="!rules.length" value="visual-v1">visual-v1</option></select></label>
+      <label class="field"><span>评分规则</span><select v-model="form.ruleSetVersion" class="input"><option value="">最近发布版本</option><option v-for="rule in rules" :key="rule.version" :value="rule.version">{{ rule.name }} · {{ rule.version }}</option></select></label>
       <p v-if="formError" class="alert error" role="alert">{{ formError }}</p>
       <div class="modal-actions"><button type="button" class="button secondary" @click="manualDialog?.close()">取消</button><button class="button primary" :disabled="saving"><LoaderCircle v-if="saving" class="spin" :size="17" />{{ saving ? '提交中…' : '开始评测' }}</button></div>
     </form>

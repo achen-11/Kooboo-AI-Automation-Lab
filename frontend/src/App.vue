@@ -48,7 +48,7 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
         </a>
       </nav>
       <div class="sidebar-bottom">
-        <div class="local-note"><CircleHelp :size="17" /><span>Kooboo 工作区 <span class="version">v0.2.0</span></span></div>
+        <div class="local-note"><CircleHelp :size="17" /><span>本机工作区 <span class="version">v0.3.0</span></span></div>
         <button v-if="platform.ready" type="button" class="sidebar-logout" title="退出登录" aria-label="退出登录" :disabled="loggingOut" @click="logout"><LogOut :size="19" :stroke-width="1.7" /><span>{{ loggingOut ? '正在退出…' : '退出登录' }}</span></button>
         <div class="sidebar-toolbar">
           <span class="online-state" :class="{ offline: !platform.online }"><i />{{ platform.online ? '在线' : '未连接' }}</span>
@@ -65,7 +65,7 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
         <SettingsView v-else-if="route.startsWith('/settings') || route === '/environments'" :key="route" :environments-only="route === '/environments'" />
         <TasksView v-else />
       </template>
-      <div v-else-if="!platform.error && !platform.authenticationRequired" class="boot-state"><span class="spinner" />正在连接Kooboo 工作区…</div>
+      <div v-else-if="!platform.error && !platform.authenticationRequired" class="boot-state"><span class="spinner" />正在连接本机工作区…</div>
     </main>
   </div>
 </template>

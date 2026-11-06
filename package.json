@@ -1,23 +1,27 @@
 {
-  "name": "site-evaluator-kooboo",
-  "version": "0.2.0",
+  "name": "site-evaluator",
+  "version": "0.3.0",
   "private": true,
   "type": "module",
   "engines": {
     "node": ">=24.0.0"
   },
   "scripts": {
-    "dev": "vite --config frontend/vite.config.ts",
-    "check": "tsc --noEmit -p tsconfig.backend.json && vue-tsc --noEmit -p tsconfig.web.json",
-    "test": "node --import tsx --test tests/*.test.ts",
-    "build": "node scripts/build.mjs",
-    "preflight": "node scripts/preflight.mjs",
-    "push": "node scripts/push.mjs",
-    "smoke": "node scripts/smoke.mjs",
-    "migrate:node": "node scripts/migrate-node.mjs"
+    "dev": "tsx watch server/main.ts",
+    "dev:web": "vite --config frontend/vite.config.ts",
+    "check": "tsc --noEmit -p tsconfig.server.json && vue-tsc --noEmit -p tsconfig.web.json",
+    "test": "node scripts/test-node.mjs",
+    "build": "vite build --config frontend/vite.config.ts && tsc -p tsconfig.server.build.json",
+    "start": "node dist-server/server/main.js",
+    "install:browser": "playwright install chromium",
+    "migrate:kooboo": "tsx scripts/migrate-kooboo.ts"
   },
   "dependencies": {
+    "@fastify/static": "10.1.10",
     "@lucide/vue": "1.68.0",
+    "fastify": "5.12.8",
+    "openai": "7.51.0",
+    "playwright": "1.64.1",
     "vue": "3.5.44",
     "zod": "4.6.7"
   },
@@ -27,8 +31,6 @@
     "tsx": "4.23.15",
     "typescript": "5.9.3",
     "vite": "8.3.5",
-    "vue-tsc": "3.3.14",
-    "esbuild": "0.28.2",
-    "@babel/parser": "7.29.13"
+    "vue-tsc": "3.3.14"
   }
 }

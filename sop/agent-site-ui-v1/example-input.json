@@ -1,0 +1,11 @@
+{
+  "target": "https://manwei-sav-2.localkooboo.com/",
+  "reference": "https://beximco-consulting.webflow.io/",
+  "viewports": [
+    { "id": "desktop", "width": 1440, "height": 900 },
+    { "id": "mobile", "width": 390, "height": 844 }
+  ],
+  "maxHeight": 30000,
+  "scope": "homepage-static-visual",
+  "contentPolicy": "Evaluate visible layout and appearance; do not score semantic meaning separately."
+}

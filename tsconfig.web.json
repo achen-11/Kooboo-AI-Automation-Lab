@@ -1,4 +1,5 @@
 {
+  "extends": "./tsconfig.json",
   "compilerOptions": {
     "target": "ES2022",
     "module": "ESNext",
@@ -18,6 +19,6 @@
   "include": [
     "frontend/src/**/*.ts",
     "frontend/src/**/*.vue",
-    "backend/shared/**/*.ts"
+    "shared/**/*.ts"
   ]
 }

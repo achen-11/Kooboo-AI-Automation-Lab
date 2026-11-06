@@ -1,82 +1,141 @@
-# Site Evaluator · Kooboo
+# Site Evaluator
 
-独立维护的 Kooboo 评分站点。源项目 `../ai_site_evaluator` 保留，运行不再依赖 Node API/Worker；Node 24 只用于本地构建、测试、发布和迁移脚本。
+独立的站点 UI 评分平台，使用 Vue 前端与 Node.js 服务端。Kooboo 建站插件投递任务，后台 Worker 启动 Agent，由 Agent 按 SOP 自主调用采集、看图、审查和评分提交工具，并向 Admin 提供结果接口。
 
-后续功能与修复统一在本项目维护。旧 `ai_site_evaluator` 仅作历史来源保留，本地服务已关闭，不再作为运行入口。
+当前在本机运行，默认地址 `http://127.0.0.1:4180`。后续统一在此项目维护；旧 `../ai_site_evaluator` 仅作历史来源。原 Kooboo 运行资源已从当前项目移除，旧实现可从 Git 历史查阅。
 
-## 开发与发布
+## 安装与启动
+
+需要 Node.js 24 或以上版本，以及能访问生成站、参考站、模型和 Kooboo API 的网络。
 
 ```sh
 npm install
-npm run check
-npm test
+npm run install:browser
 npm run build
-npm run preflight
-npm run push
-npm run smoke
+npm start
 ```
 
-`npm run dev` 只启动本地前端，未配置 API 代理；实际联调使用构建后的 Kooboo 站点。没有默认开启 `kb sync`。
+打开 `http://127.0.0.1:4180`，点击“进入本机工作区”。入口不再要求 Kooboo 用户名和密码；侧栏仍提供退出入口。退出或刷新页面不影响后台任务。当前会话机制只用于本机工作区，生产网络部署的身份认证与访问控制另行设计。
 
-源码位于 `backend/` 与 `frontend/src/`；`src/` 是生成目录，不直接编辑。构建失败不会替换上次可部署资源。站点根入口 `/`，Vue hash 路由；资源 URL 是 `/assets/*`。
-
-Git 只维护源码、构建脚本和测试；`src/`、构建缓存、`.env` 和运行数据均忽略。完整生成的 `kooboo.d.ts` 可能带入环境敏感配置，已移除并忽略；本项目类型检查使用 `backend/k-types.d.ts` 中核对过的最小原生 API 声明。拉取类型文件后也不要将其加入提交。
-
-构建时生成独立加密密钥，写入忽略的 `.env` 与服务端 CodeBlock `src/code/evaluator-secret.ts`。不要将这些文件提交 Git，不要丢失或重新生成运行中站点的密钥。
-
-## 运行条件
-
-- Kooboo 开启站点 Job，站点已发布。`src/job/evaluator.ts` 每 10 秒检查持久队列，每次处理一项；Job 使用 Kooboo 的长运行脚本入口。
-- 服务器启用 Puppeteer，并有 Chromium 或允许 Kooboo 下载浏览器。健康检查只能确认 API 可用，不能证明浏览器启动成功；首次真实评测才会实际调用浏览器。
-- 服务器能访问被评测站点、参考站、模型和配置中的 Kooboo API 地址。原本的 `localhost` 地址始终指向评分站所在服务器，部署到另一台服务器时需要重新配置。
-- 管理页使用此站点组织的 Kooboo 管理员账号登录（或组织所有者）。插件与 Admin 使用独立的投递、读取令牌。
-- 侧栏底部提供退出登录入口，调用 Kooboo 登出并清除当前登录 Cookie。
-
-运行数据和截图保存在此 Kooboo 站点 SQLite；配置通过 Kooboo AES 加密，密钥保存为服务端 CodeBlock。管理 API 不向匿名用户开放。SQLite 中的截图只能通过鉴权 API 读取；截图中间文件在读取后删除。
-
-队列接收幂等、规则发布和重评通过 SQLite 事务完成；单 Worker、5 分钟执行租约、4 分钟任务预算，租约失效最多恢复三次。无法取得可信证据或模型结果时保留失败/未知状态。旧执行者不能覆盖新执行结果。
-
-备份应包含站点 SQLite、服务端资源及加密密钥；按 Kooboo 站点备份方式执行，恢复时一同恢复。不要只备份前端目录。
-
-## 原 Node 平台配置迁移
+开发时运行 `npm run dev` 启动 Node API 与 Worker；另开终端运行 `npm run dev:web` 可使用 `http://127.0.0.1:4181` 的前端热更新，API 代理到 4180。
 
 ```sh
-npm run migrate:node -- ../ai_site_evaluator/.data
+npm test
+npm run check
+npm run build
 ```
 
-迁移脚本读取本地旧平台加密配置，仅经已登录管理员的 HTTPS 请求导入。保留模型、环境、筛选设置以及投递/读取令牌；不输出凭据。
+测试与构建不调用真实模型，也不代表完成浏览器视觉验收。可显式运行 `EVALUATOR_BROWSER_TEST=1 TSX_TSCONFIG_PATH=tsconfig.server.json node --import tsx --test tests-node/collector-browser.test.ts`，在本地静态页面验证真实滚动与截图坐标；普通测试默认跳过该浏览器用例。Chromium 由 Playwright 安装；浏览器是否能正确加载特定网站，需要真实采集验证。
 
-本次来源无评测和草稿，且只有内置规则，因此只需导入配置。脚本会在发现历史评测、草稿或不同发布规则时停止，避免遗漏数据；目标只允许尚未配置且无任务时首次导入。同一来源重复执行不会覆盖后续编辑。
+## 目录与数据
 
-## 首次验证与插件切换
+- `server/`：可读的 Node API、后台 Worker、配置、SQLite 存储及 Playwright 采集器。
+- `shared/`：前后端共享的业务类型与结果状态。
+- `frontend/src/`：Vue 页面、阶段展示、截图对照与站点预览。
+- `tests-node/`：服务端与采集流程的针对性测试。
+- `sop/agent-site-ui-v1/`：新流程的人类 SOP 与平台 Agent 运行约定；`sop/site-ui-v1/` 保留旧流程。
 
-1. 打开 `https://site_evaluator_impl.localkooboo.com`，用此站点组织的 Kooboo 管理员账号登录。
-2. 在「系统设置 → 模型配置」点击测试，确认已保存的配置支持图片输入与 JSON 输出。迁移与健康检查不会实际调用模型。
-3. 在「评测任务 → 新建评测」填入一个生成站点和对应参考站，先选首页；等待报告后检查桌面、移动截图和评分证据。
-4. 在建站插件的评测接入配置中，将投递地址改为 `https://site_evaluator_impl.localkooboo.com/api/evaluations`。投递与读取令牌已迁移，可以沿用；Admin 查询请求也需改用本站域名。插件已有配置不会被迁移脚本自动修改。
+构建输出到 `dist/` 与 `dist-server/`。原 Kooboo API、CodeBlock、Job、原生类型绑定及旧发布脚本已移除，部署使用 Node 服务，不需要 `kb push`。
 
-2026-11-05 已完成首次配置导入：1 个 Kooboo 环境，模型配置及投递/读取令牌核对通过；来源无历史评测。旧平台及其数据目录保留。
+运行数据默认保存在 `.data/`：任务、执行记录、规则和证据索引进入 SQLite，新截图原始 PNG 保存在 `.data/artifacts/`，索引记录 SHA-256；历史 SQLite 图片继续兼容读取；模型 API Key、Kooboo 环境令牌及插件投递/查询令牌随配置加密保存。加密主密钥为 `.data/master.key`，配置文件为 `.data/settings.enc`。备份时保留整个 `.data/`，恢复时同时恢复主密钥；不要只备份数据库，也不要重新生成已有密钥。运行数据、密钥、`.env` 和完整生成的 `kooboo.d.ts` 不得加入 Git。
 
-## 保留的业务契约
+## 从 Kooboo 版本迁移
 
-- 站点键为实际生成的完整域名；参考域名不作为站点键。同域保留历史与重评。
-- UI 还原度、任务完成度、页面健康独立；没有参考时还原度为 `null`，没有 README 时完成度为 `null`。
-- 五个评分维度、草稿编辑、不可覆盖的发布版本、每轮规则/模型/采集快照。
-- 模型保存后提供图片 + JSON 测试按钮；测试最多 50 秒，评分 Job 模型调用最多 90 秒。
-- 首页桌面/移动截图对照、问题证据、低分/需复核筛选、人工复核、域名历史。
+本项目已迁回 Node：1 个评测任务、5 条执行记录和 52 份证据文件已保留，旧 `site_evaluator_impl` Kooboo 评分站点已删除。以下工具供其他尚未迁移的实例使用，不能再从已删除的站点导入。
 
-API 沿用原 `/api/evaluations`、`/api/jobs/{jobId}/evaluations/latest`、`/api/sites/{domain}/evaluations/latest` 等协议。插件 POST 的 `Idempotency-Key` 必须等于 `attemptId`。接入地址与令牌在系统设置中获取。
+在新平台首次配置前执行：
 
-## 采集差异
+```sh
+npm run migrate:kooboo -- --destination .data
+```
 
-Kooboo 当前公开 API 的 DOM 读取与截图各自导航；原 Playwright 采集器的同会话逐段滚动、网络事件监测无法直接沿用。此实现使用原生 Puppeteer 截整页，再在独立的空白浏览器页面内通过 Canvas 切出顶部、中部、底部像素。不会把目标页面代码交给服务端执行。
+迁移工具读取旧评分站的数据和配置，写入本机数据目录；按工具提示提供旧站访问所需信息。已有模型、Kooboo 环境和插件投递/查询令牌应保留。完成迁移后检查任务历史、规则、截图及模型配置，再切换插件与 Admin 的接入地址。迁移和模型测试是两个独立步骤，配置导入不表示模型能力已验证。
 
-检测到懒加载图片、页面超高、参考缺失时标记覆盖不足；正文或高度变化时标记不稳定。超高页面只截顶部，不伪造中部和底部证据。报告与快照记录实际采集方式。全站任务仍只覆盖首页，需人工复核。
+## 首次验证
 
-## 验证边界
+1. 启动服务并进入本机工作区；迁移已有数据，或在“环境连接”中填写 Kooboo 地址与服务端访问令牌。
+2. 在“系统设置 → 模型接口”填写完整 Chat Completions 地址、模型名称与 API Key，保存后点击“测试连接”。测试发送真实图片，验证图片识别、工具调用及工具结果读取；兼容文本接口并不表示支持视觉评测。模型可换为 DeepSeek 或其他兼容服务，具体以实际能力测试结果为准。
+3. 在“运行设置”选择单个阶段执行预算和每视口采集次数上限；默认分别为 300 秒和 2 次，可配置范围分别为 30–1800 秒和 1–3 次。预算用于单个视口采集及每次模型请求；页面导航超时、视口与采集范围继续在版本化评分规则中维护。
+4. 新建一项首页评测，填写生成站地址和视觉参考站。查看每阶段状态、采集诊断和实际截图，再核对分项引用。没有视觉参考时不生成 UI 还原度。
+5. 将插件投递接口改为 `http://127.0.0.1:4180/api/evaluations`，使用设置页提供的投递令牌；Admin 使用查询令牌读取结果。远程 Admin 无法直接访问此本机回环地址，需要后续部署或受控接入方案。
 
-`npm test` 使用真实临时 SQLite 和模拟的 Kooboo 绑定，验证迁移逻辑、权限和裁切坐标。`npm run smoke` 验证部署后的 HTTP/API、静态资源和 Cookie 登录会话，不启动浏览器或模型，不代表视觉验收与真实评分贯通。
+## 评测阶段与规则
 
-2026-11-05 的验证结果：类型检查、构建、Preflight 和 9 项测试通过；线上入口及 JS/CSS、配置导入、匿名管理接口拒绝访问、登录 Cookie 保持、退出时清除 Cookie 及退出后的会话拒绝访问、Job 心跳已通过 HTTP 验证。尚未执行真实 Puppeteer 采集、模型评分或浏览器视觉验收。
+流程分为资料准备、生成站采集、参考站采集、证据检查、模型评分、报告输出。任务进入持久队列后由 Node Worker 执行，管理页关闭后继续。执行记录按最新在前展示。
 
-Preflight 沿用 CLI skill 的扫描器，并对其命中的 Vue/Zod `ctx` 属性与代码字符串做 AST 复核，避免把第三方属性误判为 Express handler；薄 API 文件直接委托 `k.request/k.response` 调度器。
+首次使用时默认规则为 `agent-ui-v1`；发布自定义版本后，新任务默认使用最近发布的版本，也可明确指定旧版本。Agent 根据冻结的 SOP 与本轮规则自主调用 `get_task`、`capture_page`、`read_images`、`submit_review`、`submit_assessment` 或 `report_blocked`。旧 `visual-v1` 继续执行原流程。暂不提供可视化流程构建器。
+
+Playwright 在同一个页面中导航、有限滚动并等待字体和图片，保存桌面与移动视口的连续截图，跟随懒加载后的高度增长。Agent 可在次数和时限内调整等待并重采。overview 工具用真实截图生成带编号的图片表；每批实际像素输入模型后才接受审查引用，需要时可读取原图。必须看完每个视口的全部分段；整页诊断图不能代替分段证据。两站按语义区域配对，界面允许分别选择分段及使用报告中的配对导航。
+
+每轮最多 80 次模型请求、120 次工具调用；每视口采集次数由运行设置限定，服务恢复后继续计数。工具参数和结果、模型响应、使用量、派生图片及来源、原始截图和报告均保存。关闭管理页不影响运行，停止服务保留检查点。新建评测默认使用新规则；旧记录和历史投递的幂等契约保留。
+
+HTML 中未完成和损坏图片计数单独保存为 `*-image-load-diagnostics.json` 采集诊断，不自动进入问题清单、不影响页面可用性，也不关联首张截图。图片问题须由实际截图确认可见缺图、破图或加载占位，描述位置并引用对应分段。历史报告界面隐藏旧采集器生成的纯计数问题，保留原始报告及其他问题的操作序号。缺少截图、几何覆盖不完整、超过高度预算或截图期间继续增长仍阻止完整评分。
+
+实际证据完整与请求范围完整分别记录：`coverage.captureComplete` 表示实际首页采集完整，`coverage.complete` 表示用户请求的范围已全部覆盖。全站请求仍只采集首页时可以输出明确标注的首页评分，保留 `requested=site`、`actual=homepage`、`complete=false`，不输出全站任务完成度，并强制注明范围局限，进入人工复核；这不代表全站评分通过。旧检查点没有可验证的实际采集完成标记时不自动升级，需要重新采集。
+
+程序校验实际看图后提交的证据 ID、两站引用、移动截图和完整分项，计算加权总分。缺少证据、预算用尽或模型响应无效时保留失败和检查点。报告可从详情页下载 JSON，其中包含本轮规则与 SOP 版本快照。
+
+“重试失败步骤”复用有效检查点；单步重试执行该阶段及其后续处理。例如重采参考站保留生成站截图，重新评分复用两站截图，重新输出报告复用已校验的评分。“完整重评”重新采集全部证据。截图通过来源轮次读取，历史记录保留；规则或采集器不兼容、证据丢失时不能直接沿用旧分数。
+
+后续阶段重试发现缺失、损坏或视觉检查拒绝的截图时，可在本轮次数预算内补采该视口，其他有效视口继续复用。强制重采有效分支仍需选择对应采集阶段，避免重评分把成功证据全部重跑。
+
+评分规则或采集器变化时重新采集；仅 SOP 更新时保留已完成的资料准备和截图，清除旧审查与评分，按新 SOP 重新看图、审查并评分。旧报告与原始证据保留在历史轮次，报告重试也不能绕过这项重新审查。
+
+评分规则支持编辑草稿并发布新版本，发布版本不覆盖。编辑器支持新增、删除评分项，允许 1–30 项；每项名称、评分标准和权重可配置，发布时权重合计必须为 100%。草稿不参与评分。最近发布版本作为新任务的默认规则，明确指定版本的投递保持指定版本；已有任务、重试和历史投递继续保留原版本。每轮冻结规则、模型名称与接口、采集策略、SOP 版本和哈希。Agent 和旧评分流程均收到本轮完整维度配置，配置优先于评分指引中遗留的固定数量或维度示例。模型返回结构化分项与证据引用；程序拒绝缺项、重复项或未知项，校验引用并按本轮权重计算加权总分。没有参考时 UI 还原度为 `null`，没有可验证资料时任务完成度为 `null`。证据不足或模型结果无效时保留诊断，不把失败转换成零分。
+
+当前覆盖首页静态视觉；全站请求会标记覆盖不足。截图不代表交互、动画、未采集页面和业务流程已经验收。规则尚未校准，分数用于辅助批量筛选与人工复核。
+
+## 插件与 Admin 接口
+
+站点唯一标识为 Kooboo 实际生成站的完整域名，参考站域名不作为站点键。同域名保留历史与多轮重评。
+
+插件投递：
+
+```http
+POST /api/evaluations
+Authorization: Bearer <投递令牌>
+Idempotency-Key: <attemptId>
+Content-Type: application/json
+```
+
+请求沿用 `schemaVersion: 1` 的站点任务协议，包含 `attemptId`、`requestId`、`jobId`、`trigger: "chat_stopped"`、`occurredAt`、`target: { koobooOrigin, siteId }`、`inputs`、`scope` 和可选的 `ruleSetVersion`。`Idempotency-Key` 必须等于 `attemptId`。`inputs` 可包含 `sourceUrl`、`referenceUrl` 和 `materialsPath`；内容来源地址不会自动当作视觉参考。
+
+Admin 查询：
+
+```http
+GET /api/sites/{domain}/evaluations/latest
+GET /api/sites/{domain}/evaluations
+GET /api/jobs/{jobId}/evaluations/latest
+GET /api/evaluations/{evaluationId}
+GET /api/evaluations?needsReview=true
+GET /api/evaluations?fidelityBelow=80&latestPerSite=true
+Authorization: Bearer <查询令牌>
+```
+
+查询包含 `scoringStatus`：`pending` 为执行中，`failed` 为执行失败，`unscored` 为无有效分数，`partial` 为仅有任务完成度，`scored` 为已有 UI 还原度。`status=completed` 只表示执行生命周期结束；Admin 应结合评分状态、分数、置信度和覆盖情况决定后续处理。
+
+管理页重试接口使用当前本机会话：
+
+```http
+POST /api/evaluations/{id}/runs
+Content-Type: application/json
+
+{ "mode": "reference", "sourceRunId": "当前轮次 UUID" }
+```
+
+`mode` 支持 `failed`、`all`、`prepare`、`target`、`reference`、`check`、`score`、`report`。`sourceRunId` 用于拒绝过期页面的重试请求；执行中不能并行重评。详情中的 `run.pipeline.steps` 与视口检查点提供阶段状态、耗时和错误。
+
+
+## 报告复核与站点修复
+
+截图对照默认连续浏览、两侧联动，可解除联动后独立切换。区域导航优先使用报告的语义配对；旧报告缺少配对时按分段顺序联动并明确提示。连续展示只裁剪重叠区域，不修改原始证据。问题下可展开对应截图，截图下同步显示当前可见证据关联的问题。
+
+问题支持多选、忽略与恢复。状态按不可变的 run 和问题序号保存，忽略不改写原报告或原评分；历史轮次独立保存，发送修复仅允许当前已结束且有报告的轮次。
+
+发送流程：选择问题 → 预览并确认所属站点 → 新窗口打开该站点 AI Chat → 新建修复会话 → 按正常 AI Chat 队列发送文本与真实 PNG 证据。站点通过已配置 Kooboo 环境的 Site/List 和生成站完整主机名匹配，不按站点名称猜测。图片按来源轮次与哈希校验，总量最多 32 MiB、100 张；超过时需分批发送。
+
+此入口需要目标 Kooboo 环境运行包含 evaluationHandoff 接收端的管理前端；该接收端位于 Kooboo 仓库的 `Frontend/src/views/ai-chat/composables/useEvaluationHandoff.ts`。发送与接收两侧验证窗口、精确 origin、交接编号及站点 ID；URL 只放交接编号和来源，凭据与截图不放 URL。当前仅信任本机 4180/4181 端口的评测平台。浏览器必须允许新窗口并保留 opener，跨域隔离策略清除 opener 时无法自动交接。
+
+“已接收”表示 AI Chat 消息已进入队列，不代表代码修复或重评通过。接收端以 sessionStorage 记录交接编号防止重复创建会话；接收中刷新、关闭窗口或回执超时，平台提示先检查站点会话，不能自动重发。忽略与交接元数据保存在本机 SQLite；当前不跟踪修复完成进度，不支持直接从原建站会话继续。
+
+复核相关测试：`tests-node/comparison.test.ts`、`tests-node/issue-actions.test.ts`、`tests-node/repair-window.test.ts`。Kooboo 接收端的定向校验：在 Kooboo 仓库执行 `node Frontend/scripts/check-evaluation-handoff.cjs`。这些模拟与代码检查不代表真实浏览器或远端 AI Chat 验收。

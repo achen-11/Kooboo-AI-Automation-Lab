@@ -8,6 +8,7 @@ const tab = ref(new URLSearchParams(window.location.hash.split('?')[1] || '').ge
 function initialForm() {
   const settings = structuredClone(JSON.parse(JSON.stringify(platform.settings!)));
   return { threshold: settings.threshold as number, paused: settings.paused as boolean,
+    execution: { timeoutSeconds: (settings.execution?.timeoutSeconds ?? 300) as number, captureAttempts: (settings.execution?.captureAttempts ?? 2) as number },
     model: { endpoint: settings.model.endpoint as string, name: settings.model.name as string, apiKey: '', clearKey: false, hasApiKey: settings.model.hasApiKey as boolean },
     environments: (settings.environments as { id: string; name: string; origin: string; apiOrigin: string; hasToken: boolean }[]).map((env) => ({ ...env, token: '', clearToken: false })),
   };
@@ -76,13 +77,16 @@ async function copy(value: string): Promise<void> {
         <div class="inline-actions"><button type="button" class="button secondary small" :disabled="dirty || !!testing" @click="testConnection(env.id)"><LoaderCircle v-if="testing === env.id" class="spin" :size="16" /><Cable v-else :size="16" />测试连接</button><span v-if="testMessages[env.id]" :class="testMessages[env.id].ok ? 'success-text' : 'error-text'" role="status">{{ testMessages[env.id].text }}</span><span v-else-if="dirty" class="text-muted small-text">保存后可测试连接</span></div>
       </section>
       <button v-if="form.environments.length" type="button" class="button secondary" @click="addEnvironment()"><Plus :size="17" />添加环境</button>
-      <p class="page-footnote">环境地址需与插件所报地址一致。访问令牌在 Kooboo 站点数据库中加密保存，不读取浏览器登录态。</p>
+      <p class="page-footnote">环境地址需与插件所报地址一致。访问令牌在本机数据目录中加密保存，不读取浏览器登录态。</p>
     </template>
 
     <template v-else-if="tab === 'runtime'">
       <section class="panel settings-panel"><h2>任务执行</h2><div class="choice-grid">
         <label class="choice-card" :class="{ chosen: !form.paused }"><input v-model="form.paused" type="radio" :value="false" /><span><strong><Play :size="17" />持续执行</strong><small>自动处理已接收的任务，当前每次执行一项</small></span></label>
         <label class="choice-card" :class="{ chosen: form.paused }"><input v-model="form.paused" type="radio" :value="true" /><span><strong><Pause :size="17" />暂停队列</strong><small>保留待处理任务，已开始的任务继续完成</small></span></label>
+      </div><div class="form-grid">
+        <label class="field"><span>单个阶段执行预算</span><div class="input-with-unit"><input v-model.number="form.execution.timeoutSeconds" type="number" min="30" max="1800" step="1" required /><span>秒</span></div><p>用于单个视口采集和最终评分，默认 300 秒</p></label>
+        <label class="field"><span>每个视口的采集次数上限</span><div class="input-with-unit"><input v-model.number="form.execution.captureAttempts" type="number" min="1" max="3" step="1" required /><span>次</span></div><p>包含首次采集，默认最多 2 次</p></label>
       </div></section>
       <section class="panel settings-panel"><h2>人工复核</h2><div class="form-grid"><label class="field"><span>低分筛选阈值</span><p>低于此分数的结果进入需复核，调整不会重新调用模型</p><div class="input-with-unit"><input v-model.number="form.threshold" type="number" min="0" max="100" step="1" required /><span>分</span></div></label><div class="field"><span>需复核范围</span><p>同时包含无法评分、低可信度、严重页面问题和覆盖不足</p><div class="readonly-value">低分 + 证据或覆盖异常</div></div></div></section>
       <section class="panel settings-panel"><h2>采集范围</h2><p class="section-note">当前采集首页静态视觉。视口尺寸、采样区域和超时在<a href="#/rules">评分规则</a>中维护，每个任务按所选版本执行。全站任务会标记覆盖不足。</p></section>
@@ -94,18 +98,18 @@ async function copy(value: string): Promise<void> {
           <label class="field full-width"><span>Chat Completions 接口</span><input v-model="form.model.endpoint" type="url" class="input" placeholder="https://服务地址/v1/chat/completions" /><p>填写支持图片输入与 JSON 输出的兼容接口完整地址</p></label>
           <label class="field"><span>模型名称</span><input v-model="form.model.name" class="input" placeholder="服务提供的视觉模型名称" /></label>
           <div class="field">
-            <span>API Key <small>{{ form.model.hasApiKey ? '已保存，留空保留' : '本地服务可留空' }}</small></span>
+            <span>API Key <small>{{ form.model.hasApiKey ? '已保存，留空保留' : '填写服务访问密钥' }}</small></span>
             <div class="input-with-action"><input v-model="form.model.apiKey" aria-label="模型 API Key" :type="reveal.model ? 'text' : 'password'" autocomplete="new-password" placeholder="填写访问密钥" /><button type="button" class="icon-button" :aria-label="reveal.model ? '隐藏密钥' : '显示密钥'" @click="reveal.model = !reveal.model"><EyeOff v-if="reveal.model" :size="18" /><Eye v-else :size="18" /></button></div>
             <label v-if="form.model.hasApiKey" class="checkbox-field"><input v-model="form.model.clearKey" type="checkbox" />清除已保存的密钥</label>
           </div>
         </div>
-        <div class="model-test-actions"><button type="button" class="button secondary" :disabled="modelTesting || saving || modelDirty || !form.model.endpoint || !form.model.name" @click="testModelConnection()"><LoaderCircle v-if="modelTesting" class="spin" :size="17" /><Cable v-else :size="17" />{{ modelTesting ? '测试中…' : '测试连接' }}</button><span class="section-note">{{ modelDirty ? '先保存模型配置，再进行测试' : '发送一张测试图片，验证图片识别和 JSON 输出' }}</span></div>
+        <div class="model-test-actions"><button type="button" class="button secondary" :disabled="modelTesting || saving || modelDirty || !form.model.endpoint || !form.model.name" @click="testModelConnection()"><LoaderCircle v-if="modelTesting" class="spin" :size="17" /><Cable v-else :size="17" />{{ modelTesting ? '测试中…' : '测试连接' }}</button><span class="section-note">{{ modelDirty ? '先保存模型配置，再进行测试' : '发送一张测试图片，验证图片识别、工具调用和结果读取' }}</span></div>
         <p v-if="modelTestResult" class="alert" :class="modelTestResult.ok ? 'success' : 'error'" :role="modelTestResult.ok ? 'status' : 'alert'">{{ modelTestResult.text }}</p>
       </section>
-      <section class="panel settings-panel"><h2>评分约定</h2><div class="settings-facts"><p><span>结果形式</span><strong>分项评分 + 真实证据引用</strong></p><p><span>调用时限</span><strong>测试 50 秒 · 评分 90 秒 / 次</strong></p><p><span>历史报告</span><strong>保留实际模型与规则快照</strong></p></div><p class="section-note">模型输出需通过结构与证据校验。当前规则尚未校准，分数用于辅助人工筛选。</p></section>
+      <section class="panel settings-panel"><h2>评分约定</h2><div class="settings-facts"><p><span>结果形式</span><strong>分项评分 + 真实证据引用</strong></p><p><span>调用时限</span><strong>测试 45 秒 · 评分 {{ form.execution.timeoutSeconds }} 秒 / 次</strong></p><p><span>历史报告</span><strong>保留实际模型与规则快照</strong></p></div><p class="section-note">模型输出需通过结构与证据校验。当前规则尚未校准，分数用于辅助人工筛选。</p></section>
     </template>
     <template v-else-if="tab === 'integration'">
-      <section class="panel settings-panel"><h2>建站插件接入</h2><label class="field"><span>任务接收接口</span><div class="input-with-action"><input :value="endpoint" readonly /><button type="button" class="icon-button" aria-label="复制接收接口" @click="copy(endpoint)"><Copy :size="17" /></button></div></label><label class="field"><span>插件投递令牌</span><div class="input-with-action"><input :value="platform.settings?.credentials.ingestToken" :type="reveal.ingest ? 'text' : 'password'" readonly /><button type="button" class="icon-button" :aria-label="reveal.ingest ? '隐藏投递令牌' : '显示投递令牌'" @click="reveal.ingest = !reveal.ingest"><EyeOff v-if="reveal.ingest" :size="17" /><Eye v-else :size="17" /></button><button type="button" class="icon-button" aria-label="复制投递令牌" @click="copy(platform.settings?.credentials.ingestToken || '')"><Copy :size="17" /></button></div></label><p class="section-note">在建站插件的“设置 → 评分平台”填写以上接口与令牌，规则版本填写“评分规则”中的已发布版本，初始为 visual-v1。</p></section>
+      <section class="panel settings-panel"><h2>建站插件接入</h2><label class="field"><span>任务接收接口</span><div class="input-with-action"><input :value="endpoint" readonly /><button type="button" class="icon-button" aria-label="复制接收接口" @click="copy(endpoint)"><Copy :size="17" /></button></div></label><label class="field"><span>插件投递令牌</span><div class="input-with-action"><input :value="platform.settings?.credentials.ingestToken" :type="reveal.ingest ? 'text' : 'password'" readonly /><button type="button" class="icon-button" :aria-label="reveal.ingest ? '隐藏投递令牌' : '显示投递令牌'" @click="reveal.ingest = !reveal.ingest"><EyeOff v-if="reveal.ingest" :size="17" /><Eye v-else :size="17" /></button><button type="button" class="icon-button" aria-label="复制投递令牌" @click="copy(platform.settings?.credentials.ingestToken || '')"><Copy :size="17" /></button></div></label><p class="section-note">在建站插件的“设置 → 评分平台”填写以上接口与令牌，规则版本填写“评分规则”中的已发布版本，新流程为 agent-ui-v1。</p></section>
       <section class="panel settings-panel"><h2>Admin 查询</h2><label class="field"><span>结果查询令牌</span><div class="input-with-action"><input :value="platform.settings?.credentials.readToken" :type="reveal.read ? 'text' : 'password'" readonly /><button type="button" class="icon-button" :aria-label="reveal.read ? '隐藏查询令牌' : '显示查询令牌'" @click="reveal.read = !reveal.read"><EyeOff v-if="reveal.read" :size="17" /><Eye v-else :size="17" /></button><button type="button" class="icon-button" aria-label="复制查询令牌" @click="copy(platform.settings?.credentials.readToken || '')"><Copy :size="17" /></button></div></label><pre class="code-block">GET /api/sites/{domain}/evaluations/latest
 GET /api/sites/{domain}/evaluations
 GET /api/jobs/{jobId}/evaluations/latest

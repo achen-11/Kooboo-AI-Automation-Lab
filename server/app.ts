@@ -1,3 +1,4 @@
+import { registerPublicApi } from './public-api.js';
 import { repairTargets, repairPayload } from './lib/issue-repair.js';
 import Fastify, { type FastifyRequest } from 'fastify';
 import staticFiles from '@fastify/static';
@@ -75,6 +76,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
     if (localAdmin(request) && !extension) return;
     const token = bearer(request);
     if (request.method === 'POST' && request.url.split('?')[0] === '/api/evaluations' && matches(token, vault.credentials.ingestToken)) return;
+    if (request.method === 'GET' && /^\/api\/v1\/evaluations(?:[/?]|$)/.test(request.url) && matches(token, vault.credentials.readToken)) return;
     if (request.method === 'GET' && /^\/api\/(evaluations(?:\/|\?|$)|jobs\/|sites\/|rules(?:\?|$))/.test(request.url) && matches(token, vault.credentials.readToken)) return;
     return reply.code(401).send({ error: '请重新打开平台页面，或提供此接口对应的访问令牌' });
   });
@@ -95,7 +97,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   app.post('/api/logout', async (_request, reply) => { session = randomUUID() + randomUUID(); reply.header('Set-Cookie', 'evaluator_session=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0'); return { ok: true }; });
   app.get('/api/health', async () => {
     const settings = vault.get();
-    return { ok: true, version: '0.3.0', pipelineVersion: 1, executor: 'openai-compatible-tool-agent', paused: settings.paused, modelReady: Boolean(settings.model.endpoint && settings.model.name), browserReady: existsSync(chromium.executablePath()), storage: 'sqlite', worker: options.startWorker !== false, homeOnly: true };
+    return { ok: true, version: '0.4.0', pipelineVersion: 1, executor: 'openai-compatible-tool-agent', paused: settings.paused, modelReady: Boolean(settings.model.endpoint && settings.model.name), browserReady: existsSync(chromium.executablePath()), storage: 'sqlite', worker: options.startWorker !== false, homeOnly: true };
   });
   app.get('/api/settings', async (_request, reply) => { reply.header('Cache-Control', 'no-store'); return vault.public(); });
   app.put('/api/settings', async (request) => vault.update(request.body));
@@ -247,6 +249,8 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
     reply.header('Cache-Control', 'private, no-store').type('image/png');
     return reply.send(Buffer.from(content, 'base64'));
   });
+
+  registerPublicApi(app, store, vault, artifacts);
 
   const dist = resolve(process.cwd(), 'dist');
   if (options.serveWeb !== false && existsSync(dist)) await app.register(staticFiles, { root: dist, prefix: '/' });

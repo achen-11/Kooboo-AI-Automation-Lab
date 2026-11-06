@@ -1,5 +1,7 @@
 # Site Evaluator
 
+交付安装与 Git 更新见 [docs/HANDOFF.md](docs/HANDOFF.md)，Admin 查询契约见 [docs/PUBLIC_API.md](docs/PUBLIC_API.md)，同事的 Codex 入口见 [docs/CODEX_INTEGRATION.md](docs/CODEX_INTEGRATION.md)。
+
 独立的站点 UI 评分平台，使用 Vue 前端与 Node.js 服务端。Kooboo 建站插件投递任务，后台 Worker 启动 Agent，由 Agent 按 SOP 自主调用采集、看图、审查和评分提交工具，并向 Admin 提供结果接口。
 
 当前在本机运行，默认地址 `http://127.0.0.1:4180`。后续统一在此项目维护；旧 `../ai_site_evaluator` 仅作历史来源。原 Kooboo 运行资源已从当前项目移除，旧实现可从 Git 历史查阅。
@@ -139,3 +141,13 @@ Content-Type: application/json
 “已接收”表示 AI Chat 消息已进入队列，不代表代码修复或重评通过。接收端以 sessionStorage 记录交接编号防止重复创建会话；接收中刷新、关闭窗口或回执超时，平台提示先检查站点会话，不能自动重发。忽略与交接元数据保存在本机 SQLite；当前不跟踪修复完成进度，不支持直接从原建站会话继续。
 
 复核相关测试：`tests-node/comparison.test.ts`、`tests-node/issue-actions.test.ts`、`tests-node/repair-window.test.ts`。Kooboo 接收端的定向校验：在 Kooboo 仓库执行 `node Frontend/scripts/check-evaluation-handoff.cjs`。这些模拟与代码检查不代表真实浏览器或远端 AI Chat 验收。
+
+## 制作交付包
+
+先完成测试和构建并提交源码，再执行（Python 3）：
+
+```sh
+python3 scripts/package-delivery.py --plugin /path/to/kooboo_material_site_builder --output /path/outside/projects/new-delivery
+```
+
+生成插件、平台及组合 ZIP、版本清单与 SHA-256。仅复制 Git 源码与明确的插件文件目录、构建产物，不复制 `.data/`、`.env`、node_modules 或 Git 元数据。交付前重新构建两个项目，避免同版本旧产物。

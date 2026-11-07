@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ScanLine, ClipboardCheck, SlidersHorizontal, FolderOpen, FileChartColumn, Settings2, ChevronLeft, RotateCw } from '@lucide/vue';
+import { ClipboardCheck, SlidersHorizontal, FolderOpen, FileChartColumn, Settings2, ChevronLeft, RotateCw } from '@lucide/vue';
 import { initialize, platform } from './api';
 import MessageHost from './components/MessageHost.vue';
 import AutomationNotifications from './components/AutomationNotifications.vue';
@@ -40,7 +40,7 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
   <div class="workspace" :class="{ 'sidebar-collapsed': collapsed }">
     <aside class="sidebar">
       <a href="#/tasks" class="brand" aria-label="Kooboo 自动化首页">
-        <span class="brand-mark"><ScanLine :size="26" :stroke-width="1.6" /></span>
+        <img class="brand-mark" src="/logo.png?v=kooboo-03" alt="" width="45" height="45" />
         <span class="brand-text"><strong>Kooboo 自动化</strong></span>
       </a>
       <nav class="navigation" aria-label="主导航">

@@ -42,7 +42,7 @@ input[type=range] { accent-color: var(--blue); }
 .workspace { min-height: 100vh; }
 .sidebar { position: fixed; inset: 0 auto 0 0; z-index: 20; width: 240px; padding: 26px 16px 22px; background: #fff; display: flex; flex-direction: column; }
 .brand { display: flex; align-items: center; gap: 12px; padding: 0 5px; margin-bottom: 36px; }
-.brand-mark { width: 45px; height: 45px; border-radius: 12px; background: #182131; color: #fff; display: flex; align-items: center; justify-content: center; box-shadow: 0 4px 12px #17213112; }
+.brand-mark { width: 45px; height: 45px; flex: none; display: block; object-fit: contain; }
 .brand-text { display: flex; flex-direction: column; gap: 1px; white-space: nowrap; }
 .brand strong { font-size: 19px; font-weight: 750; letter-spacing: .3px; }
 .brand small { font-size: 11px; color: #7d8797; letter-spacing: 1px; }

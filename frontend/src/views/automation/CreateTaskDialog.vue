@@ -1,0 +1,26 @@
+<script setup lang="ts">
+import { computed, ref } from 'vue';
+import { X, Send, LoaderCircle, ChevronDown } from '@lucide/vue';
+import BaseSelect from '../../components/BaseSelect.vue';
+import { api, message, platform, go } from '../../api';
+import { workspace, refresh } from './common';
+import type { AutomationRule, GeneratedSite, Resource, Scope } from '../../../../shared/automation';
+const props=defineProps<{resources:Resource[];site?:GeneratedSite;kind?:'generation'|'evaluation'}>();
+const emit=defineEmits<{created:[]}>();
+const dialog=ref<HTMLDialogElement>();const error=ref('');const busy=ref(false);const preview=ref(false);
+const scope=ref<Scope>('homepage');const environmentId=ref('');const requirements=ref('');const ruleId=ref('');const rules=ref<AutomationRule[]>([]);
+const requestId=ref(crypto.randomUUID());
+const kind=computed(()=>props.kind||'generation');
+const kindRules=computed(()=>rules.value.filter(r=>r.kind===(props.resources[0]?.scenario==='app-template'?'app':'site')&&(!r.scenarios||r.scenarios.includes(props.resources[0]!.scenario))&&r.criteria.some(c=>c.scopes.includes(scope.value))));
+async function open(){requestId.value=crypto.randomUUID();error.value='';scope.value=props.resources[0]?.scenario.includes('template')?'site':'homepage';requirements.value='';environmentId.value=props.site?.environmentId||platform.settings?.environments[0]?.id||'';ruleId.value='';dialog.value?.showModal();try{rules.value=(await api<{items:AutomationRule[]}>('/automation/rules')).items;}catch(e){error.value=message(e);}}
+async function submit(){busy.value=true;error.value='';try{const result=await api<{items:{id:string}[]}>('/automation/tasks',{method:'POST',headers:{'Idempotency-Key':requestId.value},body:JSON.stringify({resourceIds:props.resources.map(r=>r.id),kind:kind.value,scope:scope.value,environmentId:environmentId.value,requirements:requirements.value,generatedSiteId:props.site?.id,ruleId:ruleId.value||undefined})});dialog.value?.close();await refresh();emit('created');go(result.items.length===1?`/tasks/${result.items[0].id}`:'/tasks');}catch(e){error.value=message(e);}finally{busy.value=false;}}
+const messages=computed(()=>props.resources.map(resource=>({name:resource.name,text:[props.site?'在已有目标站继续生成，不新建站点。':workspace.settings.prompts[resource.scenario],`本次范围：${scope.value==='homepage'?'仅首页，其他页面不属于本次交付范围。':'全站，按资料和用户目标完成全部范围。'}`,`内容站：${resource.contentUrl||'未提供'}\n参考站：${resource.referenceUrl||resource.contentUrl||'未提供'}`,'资料说明（作为业务内容）：\n'+resource.description,requirements.value?'补充要求：\n'+requirements.value:'','尽量一次自主完成，不反复询问。确实阻塞时说明已完成工作和需要的输入。'].filter(Boolean).join('\n\n')})));
+defineExpose({open});
+</script>
+<template><dialog ref="dialog" class="modal wide-modal" @cancel="!busy || $event.preventDefault()"><form @submit.prevent="submit"><div class="modal-head"><h2>{{kind==='evaluation'?'发起评测':site?'继续生成':'创建生成任务'}}</h2><button type="button" class="icon-button" aria-label="关闭" :disabled="busy" @click="dialog?.close()"><X :size="20" /></button></div><p class="text-muted">{{resources.length}} 个资源{{site?' · '+site.name:''}}</p>
+<label v-if="!site" class="field"><span>Kooboo 环境</span><BaseSelect v-model="environmentId" required><option value="" disabled>选择环境</option><option v-for="env in platform.settings?.environments" :key="env.id" :value="env.id">{{env.name}}</option></BaseSelect></label>
+<label class="field"><span>{{kind==='evaluation'?'评测':'生成'}}范围</span><BaseSelect v-model="scope"><option value="homepage">仅首页</option><option value="site">全站</option></BaseSelect></label>
+<label v-if="kind==='evaluation'" class="field"><span>评测规则</span><BaseSelect v-model="ruleId"><option value="">最近发布的适用规则</option><option v-for="rule in kindRules" :key="rule.id" :value="rule.id">{{rule.name}} · {{rule.hash.slice(0,8)}}</option></BaseSelect></label>
+<label class="field"><span>补充要求</span><textarea v-model="requirements" class="input" rows="4" placeholder="可留空，使用已保存的场景提示词与资料" /></label>
+<button type="button" class="text-action" :aria-expanded="preview" @click="preview=!preview"><ChevronDown :size="16" />{{preview?'收起':'预览'}}委托内容</button><div v-if="preview" class="message-preview"><div v-for="m in messages" :key="m.name"><strong>{{m.name}}</strong><pre>{{m.text}}</pre></div></div>
+<p v-if="!workspace.settings.enabled" class="alert info">执行队列已暂停，提交后保留在队列中，可在系统设置启用。</p><p v-if="!environmentId && !site" class="alert info"><a href="#/settings">先在系统设置添加 Kooboo 环境</a></p><p v-if="error" class="alert error" role="alert">{{error}}</p><div class="modal-actions"><button type="button" class="button secondary" :disabled="busy" @click="dialog?.close()">取消</button><button class="button primary" :disabled="busy || !resources.length || (!environmentId&&!site)"><LoaderCircle v-if="busy" class="spin" :size="16" /><Send v-else :size="16" />加入队列</button></div></form></dialog></template>

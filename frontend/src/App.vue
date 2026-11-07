@@ -1,35 +1,35 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { ScanLine, ClipboardCheck, SlidersHorizontal, Cable, Settings2, ChevronLeft, CircleHelp, RotateCw, LogOut } from '@lucide/vue';
-import { api, initialize, message, platform } from './api';
-import LoginView from './views/LoginView.vue';
+import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ScanLine, ClipboardCheck, SlidersHorizontal, FolderOpen, FileChartColumn, Settings2, ChevronLeft, CircleHelp, RotateCw } from '@lucide/vue';
+import { initialize, platform } from './api';
+import MessageHost from './components/MessageHost.vue';
 import TasksView from './views/TasksView.vue';
 import EvaluationView from './views/EvaluationView.vue';
-import SettingsView from './views/SettingsView.vue';
-import RulesView from './views/RulesView.vue';
+import ResourcesView from './views/automation/ResourcesView.vue';
+import AutomationTasks from './views/automation/TasksView.vue';
+import SettingsView from './views/automation/SettingsView.vue';
+import RulesView from './views/automation/RulesView.vue';
 
-const route = ref(window.location.hash.slice(1) || '/evaluations');
-const collapsed = ref(false);
-const loggingOut = ref(false);
+const route = ref(window.location.hash.slice(1) || '/tasks');
+const collapsed = ref(localStorage.getItem('automation-sidebar-collapsed')===null?window.matchMedia('(max-width: 800px)').matches:localStorage.getItem('automation-sidebar-collapsed')==='true');
+watch(collapsed,value=>localStorage.setItem('automation-sidebar-collapsed',String(value)));
 const ruleEditor = ref<{ dirty: boolean }>();
 const nav = [
-  { path: '/evaluations', label: '评测任务', icon: ClipboardCheck },
-  { path: '/rules', label: '评分规则', icon: SlidersHorizontal },
-  { path: '/environments', label: '环境连接', icon: Cable },
+  { path: '/resources', label: '资源库', icon: FolderOpen },
+  { path: '/tasks', label: '任务中心', icon: ClipboardCheck },
+  { path: '/reports', label: '评测报告', icon: FileChartColumn },
+  { path: '/rules', label: '评测规则', icon: SlidersHorizontal },
   { path: '/settings', label: '系统设置', icon: Settings2 },
 ];
 const detailId = computed(() => /^\/evaluations\/([a-f0-9-]+)$/.exec(route.value)?.[1]);
+const resourceId = computed(() => /^\/resources\/([a-f0-9-]+)$/.exec(route.value)?.[1]);
+const taskId = computed(() => /^\/tasks\/([a-f0-9-]+)$/.exec(route.value)?.[1]);
+const settingsEditor = ref<{dirty:boolean}>();
 function onHash(): void {
-  if (route.value === '/rules' && ruleEditor.value?.dirty && !window.confirm('评分规则有未保存的修改，确定离开？')) {
+  if (((route.value === '/rules' && ruleEditor.value?.dirty) || (route.value.startsWith('/settings') && settingsEditor.value?.dirty)) && !window.confirm('有未保存的修改，确定离开？')) {
     window.history.replaceState(null, '', `#${route.value}`); return;
   }
-  route.value = window.location.hash.slice(1) || '/evaluations';
-}
-async function logout(): Promise<void> {
-  if (ruleEditor.value?.dirty && !window.confirm('评分规则有未保存的修改，确定退出登录？')) return;
-  loggingOut.value = true;
-  try { await api('/logout', { method: 'POST' }); window.location.replace('/'); }
-  catch (error) { platform.error = message(error); loggingOut.value = false; }
+  route.value = window.location.hash.slice(1) || '/tasks';
 }
 onMounted(() => { window.addEventListener('hashchange', onHash); void initialize(); });
 onUnmounted(() => window.removeEventListener('hashchange', onHash));
@@ -38,9 +38,9 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
 <template>
   <div class="workspace" :class="{ 'sidebar-collapsed': collapsed }">
     <aside class="sidebar">
-      <a href="#/evaluations" class="brand" aria-label="站点评测首页">
+      <a href="#/tasks" class="brand" aria-label="Kooboo 自动化首页">
         <span class="brand-mark"><ScanLine :size="26" :stroke-width="1.6" /></span>
-        <span class="brand-text"><strong>站点评测</strong><small>Site Evaluator</small></span>
+        <span class="brand-text"><strong>Kooboo 自动化</strong></span>
       </a>
       <nav class="navigation" aria-label="主导航">
         <a v-for="item in nav" :key="item.path" :href="`#${item.path}`" :title="item.label" :aria-current="route.startsWith(item.path) ? 'page' : undefined" :class="{ active: route.startsWith(item.path) }">
@@ -49,23 +49,26 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
       </nav>
       <div class="sidebar-bottom">
         <div class="local-note"><CircleHelp :size="17" /><span>本机工作区 <span class="version">v0.3.0</span></span></div>
-        <button v-if="platform.ready" type="button" class="sidebar-logout" title="退出登录" aria-label="退出登录" :disabled="loggingOut" @click="logout"><LogOut :size="19" :stroke-width="1.7" /><span>{{ loggingOut ? '正在退出…' : '退出登录' }}</span></button>
         <div class="sidebar-toolbar">
           <span class="online-state" :class="{ offline: !platform.online }"><i />{{ platform.online ? '在线' : '未连接' }}</span>
-          <button class="icon-button" :aria-label="collapsed ? '展开导航' : '收起导航'" @click="collapsed = !collapsed"><ChevronLeft :size="18" :class="{ rotated: collapsed }" /></button>
+          <button class="icon-button" :title="collapsed ? '展开导航' : '收起导航'" :aria-label="collapsed ? '展开导航' : '收起导航'" :aria-expanded="!collapsed" @click="collapsed = !collapsed"><ChevronLeft :size="18" :class="{ rotated: collapsed }" /></button>
         </div>
       </div>
     </aside>
     <main class="main-content">
-      <LoginView v-if="platform.authenticationRequired" />
-      <div v-if="platform.error && !platform.authenticationRequired" class="alert error" role="alert"><span>{{ platform.error }}</span><button class="button small secondary" @click="initialize()"><RotateCw :size="15" />重试连接</button></div>
+      <div v-if="platform.error" class="alert error" role="alert"><span>{{ platform.error }}</span><button class="button small secondary" @click="initialize()"><RotateCw :size="15" />重试连接</button></div>
       <template v-if="platform.ready">
         <EvaluationView v-if="detailId" :key="detailId" :id="detailId" />
+        <ResourcesView v-else-if="route.startsWith('/resources')" :id="resourceId" />
+        <AutomationTasks v-else-if="taskId" :key="taskId" :id="taskId" />
+        <AutomationTasks v-else-if="route.startsWith('/reports')" :key="route" reports />
         <RulesView v-else-if="route === '/rules'" ref="ruleEditor" />
-        <SettingsView v-else-if="route.startsWith('/settings') || route === '/environments'" :key="route" :environments-only="route === '/environments'" />
-        <TasksView v-else />
+        <SettingsView v-else-if="route.startsWith('/settings') || route === '/environments'" :key="route" ref="settingsEditor" />
+        <TasksView v-else-if="route === '/legacy-evaluations' || route === '/evaluations'" />
+        <AutomationTasks v-else />
       </template>
-      <div v-else-if="!platform.error && !platform.authenticationRequired" class="boot-state"><span class="spinner" />正在连接本机工作区…</div>
+      <div v-else-if="!platform.error" class="boot-state"><span class="spinner" />正在连接本机工作区…</div>
     </main>
   </div>
+  <MessageHost />
 </template>

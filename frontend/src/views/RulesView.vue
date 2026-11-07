@@ -1,6 +1,8 @@
 <script setup lang="ts">
+import { notify } from '../lib/notifications';
+import BaseSelect from '../components/BaseSelect.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
-import { FileText, Pencil, Save, Check, Upload, ArrowLeft, LoaderCircle, Plus, Trash2 } from '@lucide/vue';
+import { FileText, Pencil, Save, Upload, ArrowLeft, LoaderCircle, Plus, Trash2 } from '@lucide/vue';
 import { api, message } from '../api';
 import type { RuleDraft, RuleSet } from '../../../shared/types';
 import { maxRuleDimensions } from '../../../shared/rules';
@@ -12,7 +14,7 @@ const selectedVersion = ref('agent-ui-v1');
 const rule = computed(() => rules.value.find((item) => item.version === selectedVersion.value) || rules.value[0] || null);
 const editor = ref<RuleDraft | null>(null), saved = ref<RuleDraft | null>(null);
 const editorForm = ref<HTMLFormElement>();
-const busy = ref(false), error = ref(''), notice = ref('');
+const busy = ref(false), error = ref('');
 const dirty = computed(() => editor.value !== null && JSON.stringify(editor.value.rule) !== JSON.stringify(saved.value?.rule));
 const totalWeight = computed(() => Math.round((editor.value?.rule.dimensions.reduce((sum, item) => sum + (Number(item.weight) || 0), 0) ?? 0) * 10000) / 10000);
 const validWeights = computed(() => totalWeight.value === 100);
@@ -25,8 +27,7 @@ defineExpose({ dirty });
 function edit(draft: RuleDraft): void {
   saved.value = JSON.parse(JSON.stringify(draft));
   editor.value = JSON.parse(JSON.stringify(draft));
-  error.value = ''; notice.value = '';
-}
+  error.value = ''; }
 function addDimension(): void {
   if (!editor.value || editor.value.rule.dimensions.length >= maxRuleDimensions) return;
   editor.value.rule.dimensions.push(newDimension(editor.value.rule.dimensions));
@@ -47,7 +48,7 @@ onMounted(async () => {
 onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload));
 async function createDraft(): Promise<void> {
   if (!rule.value) return;
-  busy.value = true; error.value = ''; notice.value = '';
+  busy.value = true; error.value = '';
   try {
     const draft = await api<RuleDraft>('/rule-drafts', { method: 'POST', body: JSON.stringify({ sourceVersion: rule.value.version }) });
     drafts.value.unshift(draft); edit(draft);
@@ -61,21 +62,21 @@ async function persist(): Promise<void> {
   edit(draft);
 }
 async function save(): Promise<void> {
-  busy.value = true; error.value = ''; notice.value = '';
-  try { await persist(); notice.value = '草稿已保存'; }
+  busy.value = true; error.value = '';
+  try { await persist(); notify.success('草稿已保存'); }
   catch (reason) { error.value = message(reason); }
   finally { busy.value = false; }
 }
 async function publish(): Promise<void> {
   if (!editor.value || !validWeights.value || !editorForm.value?.reportValidity()) return;
-  busy.value = true; error.value = ''; notice.value = '';
+  busy.value = true; error.value = '';
   try {
     if (dirty.value) await persist();
     const result = await api<{ rule: RuleSet; hash: string }>(`/rule-drafts/${editor.value!.id}/publish`, { method: 'POST', body: JSON.stringify({ revision: editor.value!.revision }) });
     drafts.value = drafts.value.filter((item) => item.id !== editor.value!.id);
     rules.value.push({ ...result.rule, hash: result.hash }); selectedVersion.value = result.rule.version;
     editor.value = null; saved.value = null;
-    notice.value = `已发布 ${result.rule.version}，新任务默认使用此版本`;
+    notify.success(`已发布 ${result.rule.version}，新任务默认使用此版本`);
   } catch (reason) { error.value = message(reason); }
   finally { busy.value = false; }
 }
@@ -95,13 +96,13 @@ async function reloadDraft(): Promise<void> {
   <header class="page-header">
     <div><h1>{{ editor ? '编辑评分规则' : '评分规则' }}</h1><p>{{ editor ? '保存草稿，发布后新任务默认使用' : '维护评分维度、评分指引和采集范围' }}</p></div>
     <div v-if="!editor" class="toolbar-actions">
-      <select v-model="selectedVersion" class="input compact-select" :disabled="busy" aria-label="查看规则版本"><option v-for="item in rules" :key="item.version" :value="item.version">{{ item.version }}</option></select>
+      <BaseSelect v-model="selectedVersion" class="input compact-select" :disabled="busy" aria-label="查看规则版本"><option v-for="item in rules" :key="item.version" :value="item.version">{{ item.version }}</option></BaseSelect>
       <button class="button primary" :disabled="busy || !rule" @click="createDraft()"><LoaderCircle v-if="busy" class="spin" :size="17" /><Pencil v-else :size="17" />编辑新版本</button>
     </div>
-    <button v-else class="button secondary" :disabled="busy || dirty" @click="editor = null; saved = null; error = ''; notice = ''"><ArrowLeft :size="17" />返回已发布</button>
+    <button v-else class="button secondary" :disabled="busy || dirty" @click="editor = null; saved = null; error = ''"><ArrowLeft :size="17" />返回已发布</button>
   </header>
   <div v-if="error" class="alert error" role="alert"><span>{{ error }}</span><button v-if="editor" class="button small secondary" :disabled="busy" @click="reloadDraft()">重新载入草稿</button></div>
-  <p v-if="notice" class="alert success" role="status"><Check :size="17" />{{ notice }}</p>
+
 
   <form v-if="editor" ref="editorForm" @submit.prevent="save()">
     <fieldset class="rule-editor" :disabled="busy">
@@ -142,7 +143,7 @@ async function reloadDraft(): Promise<void> {
             <label class="field"><span>采集策略版本</span><input v-model="editor.rule.capture.version" class="input" maxlength="80" required /></label>
             <label class="field"><span>最大采集高度 px</span><input v-model.number="editor.rule.capture.maxHeight" class="input" type="number" min="900" max="40000" step="1" required /></label>
             <label class="field"><span>页面导航与截图超时（秒）</span><input v-model.number="pageTimeoutSeconds" class="input" type="number" min="1" max="120" step="0.001" required /><p>每次浏览器操作最多等待 120 秒；单个视口的总预算在运行设置中维护。</p></label>
-            <label v-if="editor.rule.executor !== 'agent'" class="field"><span>采样区域数量</span><select v-model.number="editor.rule.capture.regions" class="input"><option :value="1">顶部</option><option :value="2">顶部、中部</option><option :value="3">顶部、中部、底部</option></select></label>
+            <label v-if="editor.rule.executor !== 'agent'" class="field"><span>采样区域数量</span><BaseSelect v-model.number="editor.rule.capture.regions" class="input"><option :value="1">顶部</option><option :value="2">顶部、中部</option><option :value="3">顶部、中部、底部</option></BaseSelect></label>
           </div>
           <p class="section-note">延长等待会自动增加本轮任务总预算。发布后，新任务默认使用此版本；已有任务保留原版本。</p>
         </details>

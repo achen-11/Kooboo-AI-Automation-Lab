@@ -3,6 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSy
 import { resolve } from 'node:path';
 import type { PublicSettings, RuntimeSettings } from '../../shared/types.js';
 import { settingsSchema } from './validation.js';
+import { defaultAutomationSettings, type AutomationSettings } from '../../shared/automation.js';
 
 export class Vault {
   private key: Buffer;
@@ -59,6 +60,7 @@ export class Vault {
     const input = settingsSchema.parse(raw);
     this.refresh();
     this.current = {
+      automation: this.current.automation,
       threshold: input.threshold, paused: input.paused, execution: input.execution,
       model: { endpoint: input.model.endpoint.replace(/\/$/, ''), name: input.model.name, apiKey: input.model.clearKey ? '' : input.model.apiKey || this.current.model.apiKey },
       environments: input.environments.map((env) => ({
@@ -68,5 +70,15 @@ export class Vault {
     };
     this.persist();
     return this.public();
+  }
+  automation(): AutomationSettings {
+    const saved = this.get().automation;
+    return structuredClone({ ...defaultAutomationSettings, ...saved, prompts: { ...defaultAutomationSettings.prompts, ...saved?.prompts } });
+  }
+  updateAutomation(input: AutomationSettings): AutomationSettings {
+    this.refresh();
+    this.current.automation = structuredClone(input);
+    this.persist();
+    return this.automation();
   }
 }

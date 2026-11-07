@@ -1,10 +1,20 @@
-# Site Evaluator
+# Kooboo AI Automation Lab
+
+统一管理资源库、生成 / 评测队列、报告、评测规则与系统设置，沿用 CPR 界面。新功能使用 `frontend/src/views/automation/`、`server/automation/` 和 `shared/automation.ts`；原有评测记录、接口和执行器保留。
+
+运行与验收边界、操作说明及新 API 见 [统一自动化说明](docs/UNIFIED_AUTOMATION.md)。新队列首次默认暂停，既有模型凭证与 Kooboo 环境配置保留。
+
+项目目录：`/Users/achen/Priv/Yardi/AI-App/Kooboo-AI-Automation-Lab`。完整讨论与决策见 [讨论记录](docs/automation-evaluation-discussion.md)。
+
+---
+
+# 保留的 Site Evaluator 功能
 
 交付安装与 Git 更新见 [docs/HANDOFF.md](docs/HANDOFF.md)，Admin 查询契约见 [docs/PUBLIC_API.md](docs/PUBLIC_API.md)，同事的 Codex 入口见 [docs/CODEX_INTEGRATION.md](docs/CODEX_INTEGRATION.md)。
 
 独立的站点 UI 评分平台，使用 Vue 前端与 Node.js 服务端。Kooboo 建站插件投递任务，后台 Worker 启动 Agent，由 Agent 按 SOP 自主调用采集、看图、审查和评分提交工具，并向 Admin 提供结果接口。
 
-当前在本机运行，默认地址 `http://127.0.0.1:4180`。后续统一在此项目维护；旧 `../ai_site_evaluator` 仅作历史来源。原 Kooboo 运行资源已从当前项目移除，旧实现可从 Git 历史查阅。
+当前在本机运行，默认地址 `http://127.0.0.1:4180`。后续统一在 `Kooboo-AI-Automation-Lab` 目录维护；`../site_evaluator_impl` 保留为原独立评分平台，旧 `../ai_site_evaluator` 仅作历史来源。原 Kooboo 运行资源已从当前项目移除，旧实现可从 Git 历史查阅。
 
 ## 安装与启动
 
@@ -17,7 +27,7 @@ npm run build
 npm start
 ```
 
-打开 `http://127.0.0.1:4180`，点击“进入本机工作区”。入口不再要求 Kooboo 用户名和密码；侧栏仍提供退出入口。退出或刷新页面不影响后台任务。当前会话机制只用于本机工作区，生产网络部署的身份认证与访问控制另行设计。
+打开 `http://127.0.0.1:4180` 后自动连接本机工作区，无需手动进入或登录。会话失效时自动重新建立并最多重试一次请求，连接失败时可手动重试。关闭或刷新页面不影响后台任务。当前会话机制只用于本机工作区，生产网络部署的身份认证与访问控制另行设计。
 
 开发时运行 `npm run dev` 启动 Node API 与 Worker；另开终端运行 `npm run dev:web` 可使用 `http://127.0.0.1:4181` 的前端热更新，API 代理到 4180。
 

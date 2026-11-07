@@ -143,3 +143,6 @@ vite.config.ts.timestamp-*
 /.data/
 /kooboo.d.ts
 /.build/
+
+# macOS folder metadata
+.DS_Store

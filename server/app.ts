@@ -19,6 +19,9 @@ import { testAgentModel } from './lib/model.js';
 import { Worker, type Dependencies } from './worker.js';
 import type { Evaluation } from '../shared/types.js';
 import { normalizeSiteDomain } from './lib/site-domain.js';
+import { AutomationStore } from './automation/store.js';
+import { AutomationWorker } from './automation/worker.js';
+import { registerAutomationApi } from './automation/api.js';
 
 const domainSchema = z.string().max(253).transform((value, context) => {
   try { return normalizeSiteDomain(value); }
@@ -41,6 +44,12 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   const latestRuleVersion = () => store.rules().at(-1)?.rule.version || defaultRuleVersion;
   const artifacts = new Artifacts(store.db, resolve(directory,'artifacts'));
   const worker = new Worker(store, vault, artifacts, directory, options.workerDependencies);
+  const automationStore = new AutomationStore(store.db,value=>{
+    const settings=vault.get();
+    for(const secret of [settings.model.apiKey,...settings.environments.map(e=>e.token)])if(secret)value=value.replaceAll(secret,'[已隐藏]');
+    return value.replace(/Bearer\s+[^\s"',;]+/gi,'Bearer [已隐藏]');
+  });
+  const automationWorker = new AutomationWorker(automationStore, vault, directory);
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, requestTimeout: 30000 });
   let session = randomUUID() + randomUUID();
   let modelTestRunning = false;
@@ -75,6 +84,8 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
     }
     if (localAdmin(request) && !extension) return;
     const token = bearer(request);
+    if(request.method==='POST' && request.url.split('?')[0]==='/api/v1/resources/import' && matches(token,vault.credentials.ingestToken)) return;
+    if(request.method==='GET' && /^\/api\/v1\/automation\/(?:reports|tasks)(?:[/?]|$)/.test(request.url) && matches(token,vault.credentials.readToken)) return;
     if (request.method === 'POST' && request.url.split('?')[0] === '/api/evaluations' && matches(token, vault.credentials.ingestToken)) return;
     if (request.method === 'GET' && /^\/api\/v1\/evaluations(?:[/?]|$)/.test(request.url) && matches(token, vault.credentials.readToken)) return;
     if (request.method === 'GET' && /^\/api\/(evaluations(?:\/|\?|$)|jobs\/|sites\/|rules(?:\?|$))/.test(request.url) && matches(token, vault.credentials.readToken)) return;
@@ -251,10 +262,11 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   });
 
   registerPublicApi(app, store, vault, artifacts);
+  registerAutomationApi(app, automationStore, vault, directory, id => automationWorker.cancel(id), id => automationWorker.owns(id));
 
   const dist = resolve(process.cwd(), 'dist');
   if (options.serveWeb !== false && existsSync(dist)) await app.register(staticFiles, { root: dist, prefix: '/' });
-  app.addHook('onClose', async () => { await worker.stop(); store.close(); });
-  if (options.startWorker !== false) worker.start();
-  return { app, store, vault, worker };
+  app.addHook('onClose', async () => { await Promise.all([worker.stop(), automationWorker.stop()]); store.close(); });
+  if (options.startWorker !== false) { automationWorker.start(); worker.start(); }
+  return { app, store, vault, worker, automationStore, automationWorker };
 }

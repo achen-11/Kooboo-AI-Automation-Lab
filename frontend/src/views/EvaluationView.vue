@@ -1,4 +1,6 @@
 <script setup lang="ts">
+import { notify } from '../lib/notifications';
+import BaseSelect from '../components/BaseSelect.vue';
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ArrowLeft, ArrowUpRight, RotateCw, Check, Flag, LoaderCircle, X, Clock3, CircleAlert } from '@lucide/vue';
 import EvaluationStages from '../components/EvaluationStages.vue';
@@ -13,7 +15,7 @@ import { presentedIssues, presentedHealth } from '../../../shared/issue-presenta
 
 const props = defineProps<{ id: string }>();
 interface Detail extends Evaluation { siteEvaluations: Evaluation[]; runs: Run[]; issueActions: Record<string, IssueActions>; runEvents: Record<string, { seq: number; occurredAt: number; message: string }[]> }
-const item = ref<Detail | null>(null), error = ref(''), notice = ref(''), busy = ref(false);
+const item = ref<Detail | null>(null), error = ref(''), busy = ref(false);
 const selectedRunId = ref(''), tab = ref('compare');
 const comparison = ref<InstanceType<typeof ScreenshotComparison>>();
 const issuePreviews = ref<Record<number, { open: boolean; id?: string }>>({});
@@ -48,7 +50,7 @@ async function decideIssues(indices: number[], value: boolean): Promise<void> {
     const result = await api<IssueActions>(`/evaluations/${props.id}/issue-decisions`, { method: 'POST', body: JSON.stringify({ runId, indices, ignored: value }) });
     if (item.value) item.value.issueActions[runId] = result;
     if (value) selectedIssues.value = selectedIssues.value.filter(i => !indices.includes(i));
-    notice.value = value ? '已忽略选中问题，原始评分保留' : '已恢复问题';
+    notify.success(value ? '已忽略选中问题，原始评分保留' : '已恢复问题');
   } catch (reason) { error.value = message(reason); }
   finally { actionBusy.value = false; }
 }
@@ -78,12 +80,12 @@ async function sendRepair(): Promise<void> {
       const status = receipt.accepted ? 'accepted' : receipt.error === 'unknown' ? 'unknown' : 'failed';
       try {
         await api(`/evaluations/${evaluationId}/issue-handoffs/${id}/receipt`, { method: 'POST', body: JSON.stringify({ runId, siteId: target.siteId, status, sessionId: receipt.sessionId }) });
-        notice.value = receipt.accepted ? '站点 AI Chat 已接收，正在新会话中处理；修复结果请查看该会话' : status === 'unknown' ? '未收到接收回执，请先检查站点 AI Chat，避免重复发送' : receipt.error || 'AI Chat 未接收，请检查站点会话';
+        notify[receipt.accepted ? 'success' : 'warning'](receipt.accepted ? '站点 AI Chat 已接收，正在新会话中处理；修复结果请查看该会话' : status === 'unknown' ? '未收到接收回执，请先检查站点 AI Chat，避免重复发送' : receipt.error || 'AI Chat 未接收，请检查站点会话');
         await load();
       } catch (reason) { error.value = `接收状态保存失败：${message(reason)}。请检查站点会话，避免重复发送`; }
     });
     popup.location.href = result.url;
-    repairDialog.value?.close(); notice.value = '已打开站点 AI Chat，等待接收回执';
+    repairDialog.value?.close(); notify.info('已打开站点 AI Chat，等待接收回执');
     await load();
   } catch (reason) { popup.close(); repairError.value = message(reason); }
   finally { actionBusy.value = false; }
@@ -111,8 +113,8 @@ onMounted(() => { void load(); timer = setInterval(() => { void load(); }, 4000)
 onUnmounted(() => { disposed = true; clearInterval(timer); disconnectRepair?.(); });
 function dimensionName(id: string): string { return run.value?.snapshot?.rule.dimensions.find((entry) => entry.id === id)?.label || id; }
 async function rerun(mode: RetryMode = 'failed'): Promise<void> {
-  busy.value = true; error.value = ''; notice.value = '';
-  try { await api(`/evaluations/${props.id}/runs`, { method: 'POST', body: JSON.stringify({ mode, sourceRunId: item.value?.run.id }) }); selectedRunId.value = ''; await load(); notice.value = mode === 'all' ? '已加入完整重评队列，将重新采集全部证据' : '已加入阶段重试队列，成功证据将复用，历史记录保留'; }
+  busy.value = true; error.value = '';
+  try { await api(`/evaluations/${props.id}/runs`, { method: 'POST', body: JSON.stringify({ mode, sourceRunId: item.value?.run.id }) }); selectedRunId.value = ''; await load(); notify.success(mode === 'all' ? '已加入完整重评队列，将重新采集全部证据' : '已加入阶段重试队列，成功证据将复用，历史记录保留'); }
   catch (reason) { error.value = message(reason); }
   finally { busy.value = false; }
 }
@@ -120,7 +122,7 @@ function openReview(value: 'accepted' | 'rework'): void { decision.value = value
 async function review(): Promise<void> {
   if (!item.value) return;
   busy.value = true;
-  try { await api(`/evaluations/${props.id}/reviews`, { method: 'POST', body: JSON.stringify({ decision: decision.value, note: reviewNote.value, runId: item.value.run.id }) }); reviewDialog.value?.close(); await load(); notice.value = decision.value === 'accepted' ? '已记录人工复核通过' : '已标记需返工'; }
+  try { await api(`/evaluations/${props.id}/reviews`, { method: 'POST', body: JSON.stringify({ decision: decision.value, note: reviewNote.value, runId: item.value.run.id }) }); reviewDialog.value?.close(); await load(); notify.success(decision.value === 'accepted' ? '已记录人工复核通过' : '已标记需返工'); }
   catch (reason) { reviewError.value = message(reason); }
   finally { busy.value = false; }
 }
@@ -143,10 +145,10 @@ function toggleIssue(index: number, event: Event): void {
 <template>
   <a class="back-link" href="#/evaluations"><ArrowLeft :size="17" />评测任务</a>
   <header class="page-header detail-header"><div><h1>{{ item?.siteDomain || item?.submission.jobId || '评测报告' }}</h1><p v-if="item">{{ item.targetUrl || item.submission.target.koobooOrigin }}<span class="dot-separator">·</span>{{ formatDate(item.createdAt) }}</p></div><div class="toolbar-actions"><button class="button secondary" :disabled="!terminal || busy || !current" @click="rerun('all')"><RotateCw :size="17" />完整重评</button><button class="button primary" :disabled="!terminal || busy || !current" @click="openReview('accepted')"><Check :size="17" />人工通过</button></div></header>
-  <p v-if="error" class="alert error" role="alert">{{ error }}</p><p v-if="notice" class="alert success" role="status">{{ notice }}</p>
+  <p v-if="error" class="alert error" role="alert">{{ error }}</p>
   <template v-if="item && run">
-    <label v-if="item.siteEvaluations.length > 1" class="site-history"><span>站点评测记录</span><select :value="item.id" class="input compact-select" @change="go(`/evaluations/${($event.target as HTMLSelectElement).value}`)"><option v-for="entry in item.siteEvaluations" :key="entry.id" :value="entry.id">{{ formatDate(entry.submission.occurredAt) }} · {{ entry.submission.jobId }} · {{ runStatusName(entry.run) }}</option></select></label>
-    <div class="report-meta"><span class="status-badge" :class="[run.status, { unscored: run.status === 'completed' && report?.fidelityScore == null }]"><i />{{ runStatusName(run) }}</span><span v-if="current && item.needsReview" class="badge warning">需复核</span><span v-if="current && item.review" class="badge" :class="item.review.decision === 'accepted' ? 'good' : 'warning'">{{ item.review.decision === 'accepted' ? '人工已通过' : '需返工' }}</span><select v-model="selectedRunId" class="history-select" aria-label="选择评测记录"><option value="">当前评测</option><option v-for="(entry, index) in item.runs" :key="entry.id" :value="entry.id">{{ index === 0 ? '当前' : '历史' }} · {{ formatDate(entry.createdAt) }} · {{ runStatusName(entry) }}</option></select></div>
+    <label v-if="item.siteEvaluations.length > 1" class="site-history"><span>站点评测记录</span><BaseSelect :value="item.id" class="input compact-select" @change="go(`/evaluations/${($event.target as HTMLSelectElement).value}`)"><option v-for="entry in item.siteEvaluations" :key="entry.id" :value="entry.id">{{ formatDate(entry.submission.occurredAt) }} · {{ entry.submission.jobId }} · {{ runStatusName(entry.run) }}</option></BaseSelect></label>
+    <div class="report-meta"><span class="status-badge" :class="[run.status, { unscored: run.status === 'completed' && report?.fidelityScore == null }]"><i />{{ runStatusName(run) }}</span><span v-if="current && item.needsReview" class="badge warning">需复核</span><span v-if="current && item.review" class="badge" :class="item.review.decision === 'accepted' ? 'good' : 'warning'">{{ item.review.decision === 'accepted' ? '人工已通过' : '需返工' }}</span><BaseSelect v-model="selectedRunId" class="history-select" aria-label="选择评测记录"><option value="">当前评测</option><option v-for="(entry, index) in item.runs" :key="entry.id" :value="entry.id">{{ index === 0 ? '当前' : '历史' }} · {{ formatDate(entry.createdAt) }} · {{ runStatusName(entry) }}</option></BaseSelect></div>
     <p v-if="run.error" class="alert error" role="alert"><CircleAlert :size="18" /><span>{{ run.error }}</span></p>
     <div v-if="['queued','collecting','scoring'].includes(run.status)" class="alert info"><LoaderCircle class="spin" :size="18" /><div class="execution-progress"><p>{{ run.status === 'queued' && platform.settings?.paused ? '队列已暂停，恢复后会继续处理' : events[0]?.message || '等待后台执行' }}</p><p>任务在服务器后台执行，刷新或关闭页面不会中断。</p></div><a v-if="run.status === 'queued'" href="#/settings">设置<ArrowUpRight :size="15" /></a></div>
 
@@ -202,7 +204,7 @@ function toggleIssue(index: number, event: Event): void {
     <p class="text-muted">新建该站点的修复会话，携带以下问题和关联截图。</p>
     <ul class="repair-selection"><li v-for="index in selection" :key="index">{{ issues[index]?.title }}</li></ul>
     <p v-if="targetLoading">正在匹配站点…</p>
-    <label v-else-if="repairTargets.length" class="field"><span>修复站点</span><select v-model.number="targetIndex" class="input"><option v-for="(target, index) in repairTargets" :key="`${target.environmentId}:${target.siteId}`" :value="index">{{ target.environmentName }} · {{ target.siteName }}（{{ target.origin }}）</option></select></label>
+    <label v-else-if="repairTargets.length" class="field"><span>修复站点</span><BaseSelect v-model.number="targetIndex" class="input"><option v-for="(target, index) in repairTargets" :key="`${target.environmentId}:${target.siteId}`" :value="index">{{ target.environmentName }} · {{ target.siteName }}（{{ target.origin }}）</option></BaseSelect></label>
     <p v-else class="alert info">未找到域名匹配的站点，请在设置中配置该站点所属的 Kooboo 环境。</p>
     <p v-if="repairError" class="alert error" role="alert">{{ repairError }}</p><div class="modal-actions"><button type="button" class="button secondary" @click="repairDialog?.close()">取消</button><button class="button primary" :disabled="targetLoading || !repairTargets.length || !selection.length || !current || actionBusy">{{ actionBusy ? '准备中…' : '新建会话并发送' }}</button></div>
   </form></dialog>

@@ -1,14 +1,17 @@
 import { reactive } from 'vue';
 import type { PublicSettings, Run, Stage } from '../../shared/types';
 import { scoringStatus } from '../../shared/result';
+import { createSessionFetch } from './lib/local-session';
+
+const sessionFetch = createSessionFetch((...args) => fetch(...args));
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
-  const response = await fetch(`/api${path}`, { credentials: 'same-origin', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
+  const response = await sessionFetch(`/api${path}`, { credentials: 'same-origin', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });
   const result = await response.json();
-  if (!response.ok) { if (response.status === 401) { platform.authenticationRequired = true; platform.ready = false; } throw new Error(result.error || `请求失败：${response.status}`); }
+  if (!response.ok) { if (response.status === 401) { platform.ready = false; platform.online = false; platform.error = result.error || '无法连接本机工作区，请重试连接'; } throw new Error(result.error || `请求失败：${response.status}`); }
   return result as T;
 }
-export const platform = reactive({ settings: null as PublicSettings | null, online: false, ready: false, authenticationRequired: false, browserReady: false, error: '', notice: '' });
+export const platform = reactive({ settings: null as PublicSettings | null, online: false, ready: false, browserReady: false, error: '' });
 export async function initialize(): Promise<void> {
   platform.error = '';
   try {
@@ -17,7 +20,7 @@ export async function initialize(): Promise<void> {
     const health = await api<{ browserReady: boolean }>('/health');
     platform.browserReady = health.browserReady;
     platform.online = true;
-    platform.ready = true; platform.authenticationRequired = false;
+    platform.ready = true;
   } catch (error) { platform.online = false; platform.error = message(error); }
 }
 export async function saveSettings(input: unknown): Promise<void> {

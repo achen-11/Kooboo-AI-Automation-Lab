@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import BaseSelect from '../components/BaseSelect.vue';
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { Plus, Search, RotateCw, ChevronRight, ChevronLeft, ArrowUpRight, ScanLine, X, CircleAlert, LoaderCircle } from '@lucide/vue';
 import { api, platform, statusNames, runStatusName, formatDate, score, scoreClass, go, message } from '../api';
@@ -74,7 +75,7 @@ function targetLabel(item: Evaluation): string {
     <div class="table-toolbar">
       <label class="search-field"><Search :size="18" /><input v-model="query" aria-label="搜索任务" placeholder="搜索任务标识、站点或环境…" /><button v-if="query" class="icon-button" aria-label="清除搜索" @click="query = ''"><X :size="15" /></button></label>
       <div class="toolbar-actions">
-        <select v-model="status" class="input compact-select" aria-label="执行状态"><option value="all">全部状态</option><option v-for="(name, key) in statusNames" :key="key" :value="key">{{ name }}</option></select>
+        <BaseSelect v-model="status" class="input compact-select" aria-label="执行状态"><option value="all">全部状态</option><option v-for="(name, key) in statusNames" :key="key" :value="key">{{ name }}</option></BaseSelect>
         <button class="icon-button refresh" aria-label="刷新列表" @click="load()"><RotateCw :size="17" /></button>
       </div>
     </div>
@@ -109,8 +110,8 @@ function targetLabel(item: Evaluation): string {
       <label class="field"><span>任务标识</span><input v-model="form.jobId" class="input" required maxlength="200" /></label>
       <label class="field"><span>目标站点</span><input v-model="form.targetUrl" class="input" type="url" placeholder="https://生成的站点" required /></label>
       <label class="field"><span>视觉参考站 <small>可选</small></span><input v-model="form.referenceUrl" class="input" type="url" placeholder="https://参考站点" /></label>
-      <label class="field"><span>评测范围</span><select v-model="form.scope" class="input"><option value="homepage">首页 · 桌面与移动</option><option value="site">全站 · 当前仅采集首页，结果需复核</option></select></label>
-      <label class="field"><span>评分规则</span><select v-model="form.ruleSetVersion" class="input"><option value="">最近发布版本</option><option v-for="rule in rules" :key="rule.version" :value="rule.version">{{ rule.name }} · {{ rule.version }}</option></select></label>
+      <label class="field"><span>评测范围</span><BaseSelect v-model="form.scope" class="input"><option value="homepage">首页 · 桌面与移动</option><option value="site">全站 · 当前仅采集首页，结果需复核</option></BaseSelect></label>
+      <label class="field"><span>评分规则</span><BaseSelect v-model="form.ruleSetVersion" class="input"><option value="">最近发布版本</option><option v-for="rule in rules" :key="rule.version" :value="rule.version">{{ rule.name }} · {{ rule.version }}</option></BaseSelect></label>
       <p v-if="formError" class="alert error" role="alert">{{ formError }}</p>
       <div class="modal-actions"><button type="button" class="button secondary" @click="manualDialog?.close()">取消</button><button class="button primary" :disabled="saving"><LoaderCircle v-if="saving" class="spin" :size="17" />{{ saving ? '提交中…' : '开始评测' }}</button></div>
     </form>

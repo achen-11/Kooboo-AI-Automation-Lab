@@ -133,6 +133,7 @@ export interface Evaluation {
   } | null;
 }
 export interface RuntimeSettings {
+  automation?: import('./automation.js').AutomationSettings;
   threshold: number;
   paused: boolean;
   execution: { timeoutSeconds: number; captureAttempts: number };

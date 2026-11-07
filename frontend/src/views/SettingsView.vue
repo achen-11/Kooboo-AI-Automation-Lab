@@ -1,6 +1,7 @@
 <script setup lang="ts">
+import { notify } from '../lib/notifications';
 import { computed, ref, watch } from 'vue';
-import { Save, Plus, Trash2, Copy, Eye, EyeOff, Cable, Check, LoaderCircle, Pause, Play } from '@lucide/vue';
+import { Save, Plus, Trash2, Copy, Eye, EyeOff, Cable, LoaderCircle, Pause, Play } from '@lucide/vue';
 import { api, platform, saveSettings, message } from '../api';
 
 const props = defineProps<{ environmentsOnly: boolean }>();
@@ -16,7 +17,7 @@ function initialForm() {
 const form = ref(initialForm());
 const baseline = ref(JSON.stringify(form.value));
 const dirty = computed(() => JSON.stringify(form.value) !== baseline.value);
-const saving = ref(false), error = ref(''), notice = ref('');
+const saving = ref(false), error = ref('');
 const testing = ref(''), testMessages = ref<Record<string, { ok: boolean; text: string }>>({});
 const reveal = ref<Record<string, boolean>>({});
 const modelTesting = ref(false);
@@ -26,8 +27,8 @@ const endpoint = `${window.location.origin}/api/evaluations`;
 watch(() => form.value.model, () => { modelTestResult.value = null; }, { deep: true });
 
 async function save(): Promise<void> {
-  saving.value = true; error.value = ''; notice.value = '';
-  try { await saveSettings(form.value); form.value = initialForm(); baseline.value = JSON.stringify(form.value); testMessages.value = {}; notice.value = '设置已保存，对之后开始执行的任务生效'; }
+  saving.value = true; error.value = '';
+  try { await saveSettings(form.value); form.value = initialForm(); baseline.value = JSON.stringify(form.value); testMessages.value = {}; notify.success('设置已保存，对之后开始执行的任务生效'); }
   catch (reason) { error.value = message(reason); }
   finally { saving.value = false; }
 }
@@ -53,7 +54,7 @@ async function testModelConnection(): Promise<void> {
   finally { modelTesting.value = false; }
 }
 async function copy(value: string): Promise<void> {
-  try { await navigator.clipboard.writeText(value); notice.value = '已复制'; error.value = ''; }
+  try { await navigator.clipboard.writeText(value); notify.success('已复制'); error.value = ''; }
   catch { error.value = '复制失败，请选择文本后手动复制'; }
 }
 </script>
@@ -62,7 +63,7 @@ async function copy(value: string): Promise<void> {
   <form @submit.prevent="save()">
     <header class="page-header"><div><h1>{{ props.environmentsOnly ? '环境连接' : '系统设置' }}</h1><p>{{ props.environmentsOnly ? '配置平台独立访问 Kooboo 的地址与凭据' : '管理任务执行、视觉模型与插件接入' }}</p></div><button class="button primary" :disabled="!dirty || saving || modelTesting"><LoaderCircle v-if="saving" class="spin" :size="18" /><Save v-else :size="18" />{{ saving ? '保存中…' : '保存设置' }}</button></header>
     <div v-if="!props.environmentsOnly" class="toolbar settings-tabs"><div class="segmented"><button type="button" :class="{ selected: tab === 'runtime' }" @click="tab = 'runtime'">运行设置</button><button type="button" :class="{ selected: tab === 'model' }" @click="tab = 'model'">模型接口</button><button type="button" :class="{ selected: tab === 'integration' }" @click="tab = 'integration'">插件与 Admin 接入</button></div></div>
-    <p v-if="error" class="alert error" role="alert">{{ error }}</p><p v-if="notice" class="alert success" role="status"><Check :size="17" />{{ notice }}</p>
+    <p v-if="error" class="alert error" role="alert">{{ error }}</p>
 
     <template v-if="props.environmentsOnly">
       <section v-if="!form.environments.length" class="panel empty-state"><span class="empty-icon"><Cable :size="30" :stroke-width="1.4" /></span><h2>添加第一个 Kooboo 环境</h2><p>插件提交站点身份后，平台通过这里的配置读取站点地址和资料</p><button type="button" class="button primary" @click="addEnvironment()"><Plus :size="17" />添加环境</button></section>

@@ -3,7 +3,7 @@ import type { PublicSettings, Run, Stage } from '../../shared/types';
 import { scoringStatus } from '../../shared/result';
 import { createSessionFetch } from './lib/local-session';
 
-const sessionFetch = createSessionFetch((...args) => fetch(...args));
+export const sessionFetch = createSessionFetch((...args) => fetch(...args));
 
 export async function api<T>(path: string, options: RequestInit = {}): Promise<T> {
   const response = await sessionFetch(`/api${path}`, { credentials: 'same-origin', ...options, headers: { ...(options.body ? { 'Content-Type': 'application/json' } : {}), ...options.headers } });

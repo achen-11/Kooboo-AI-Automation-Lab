@@ -11,6 +11,8 @@ import { Conflict } from '../lib/store.js';
 import { queueDelivery, deliveryReceipt } from './delivery.js';
 import { probeCodex } from './probe.js';
 import { brief, compactNotice, taskSummary } from '../../shared/task-presentation.js';
+import { registerExecutionLogApi } from './execution-log.js';
+import { executionTaskIds } from '../../shared/execution-log.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -35,6 +37,7 @@ const pageNumber=z.coerce.number().int().min(1).max(1000000),pageSizeNumber=z.co
 const pagination=z.object({page:pageNumber.default(1),pageSize:pageSizeNumber.default(20)});
 
 export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,cancel:(id:string)=>void,owns:(id:string)=>boolean){
+  registerExecutionLogApi(app,store);
   let probing=false;
   const files=resolve(directory,'materials');mkdirSync(files,{recursive:true,mode:0o700});
   store.db.exec(`CREATE TABLE IF NOT EXISTS auto_files(id TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE INDEX IF NOT EXISTS auto_files_content ON auto_files(json_extract(json,'$.name'),json_extract(json,'$.sha256'));`);
@@ -113,9 +116,9 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     if(!task)return reply.code(404).send({error:'任务不存在'});
     if(section==='input')return {message:task.message,version:store.version(task.versionId),rule:task.rule,threadId:task.threadId,model:task.model};
     if(section==='execution'){
-      const q=pagination.parse(request.query),total=Number(store.db.prepare('SELECT COUNT(*) AS total FROM auto_events WHERE task_id=?').get(id).total),pages=Math.max(1,Math.ceil(total/q.pageSize)),page=Math.min(q.page,pages);
-      const items=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT ? OFFSET ?').all(id,q.pageSize,(page-1)*q.pageSize);
-      return {context:task.context,followup:task.followup,interruption:task.interruption,error:task.error,items,total,pages,page,pageSize:q.pageSize};
+      const q=pagination.extend({taskId:uuid.optional()}).parse(request.query);if(q.taskId&&!executionTaskIds(task).includes(q.taskId))throw new Conflict('执行记录不属于本工作流');const selected=q.taskId?store.task(q.taskId)!:task;const total=Number(store.db.prepare('SELECT COUNT(*) AS total FROM auto_events WHERE task_id=?').get(selected.id).total),pages=Math.max(1,Math.ceil(total/q.pageSize)),page=Math.min(q.page,pages);
+      const items=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT ? OFFSET ?').all(selected.id,q.pageSize,(page-1)*q.pageSize);
+      return {context:selected.context,followup:selected.followup,interruption:selected.interruption,error:selected.error,items,total,pages,page,pageSize:q.pageSize};
     }
     const source=task.kind==='evaluation'?task:task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
     if(section==='delivery')return {task:source?{id:source.id,kind:source.kind,environmentId:source.environmentId,status:source.status,delivery:source.delivery,report:source.report?{quality:source.report.quality}:null}:null};

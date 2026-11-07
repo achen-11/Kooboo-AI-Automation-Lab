@@ -127,4 +127,7 @@ Authorization: Bearer &lt;查询令牌&gt;</pre><p class="section-note">以上�
 
 <style scoped>
 .delivery-config{display:flex;flex-direction:column;gap:20px;padding:20px;margin-top:16px;background:var(--field);border-radius:12px;}
+.delivery-config>.credential-field{margin-top:0;}
+.delivery-config .input,.delivery-config :deep(.ui-select-trigger){background:var(--paper);}
+.delivery-config .input:not(:focus),.delivery-config :deep(.ui-select-trigger:not(:focus-visible):not(.is-open):not(.is-invalid)){border-color:#dfe5ef;}
 </style>

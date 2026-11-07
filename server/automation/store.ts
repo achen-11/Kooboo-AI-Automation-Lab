@@ -24,7 +24,8 @@ export class AutomationStore {
       CREATE TABLE IF NOT EXISTS auto_tasks(id TEXT PRIMARY KEY, status TEXT NOT NULL, kind TEXT NOT NULL, site_key TEXT, created_at INTEGER NOT NULL, json TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS auto_queue ON auto_tasks(status,kind,created_at);
       CREATE TABLE IF NOT EXISTS auto_notifications(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,title TEXT NOT NULL,json TEXT NOT NULL,UNIQUE(task_id,title));
-      CREATE TABLE IF NOT EXISTS auto_events(task_id TEXT NOT NULL, seq INTEGER PRIMARY KEY AUTOINCREMENT, time INTEGER NOT NULL, message TEXT NOT NULL);`);
+      CREATE TABLE IF NOT EXISTS auto_events(task_id TEXT NOT NULL, seq INTEGER PRIMARY KEY AUTOINCREMENT, time INTEGER NOT NULL, message TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS auto_events_task_seq ON auto_events(task_id,seq);`);
     if (!this.rules().length) {
       this.publish({ name: 'Site UI · 初始规则', kind: 'site', sop: initialSop, references: '', criteria: [
         { id: 'hero', label: 'Hero 首屏', weight: 40, instruction: '首屏构图、主体与背景、文字和 CTA 层级、留白及设计意图。', required: false, viewports: ['desktop','mobile'], scopes: ['homepage','site'] },

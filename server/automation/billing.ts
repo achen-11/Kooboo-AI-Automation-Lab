@@ -1,6 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../runtime.js';
-import type { PriceSnapshot, TokenUsage, UsageEntry, UsageObservation, UsageSummary } from '../../shared/billing.js';
+import type { PriceSnapshot, TokenUsage, UsageEntry, UsageObservation, UsageSummary, UsageStage } from '../../shared/billing.js';
 
 // Calendar source: https://www.gov.cn/zhengce/content/202511/content_7047090.htm (verified 2026-11-07).
 // DeepSeek explicitly makes all weekends offpeak, including government make-up workdays.
@@ -60,8 +60,16 @@ export class UsageLedger {
     const row=calculateUsage(value,taskId,price);this.db.prepare('UPDATE auto_usage SET json=? WHERE task_id=? AND source=? AND event_id=?').run(JSON.stringify(row),taskId,value.source,value.id);return row;
   }
   entries(taskId:string):UsageEntry[]{return this.db.prepare('SELECT json FROM auto_usage WHERE task_id=? ORDER BY rowid').all(taskId).map(r=>JSON.parse(r.json));}
+  page(taskId:string,children:string[],page:number,pageSize:number,stage?:UsageStage){
+    const ids=[...new Set([taskId,...children])],where=`task_id IN (${ids.map(()=>'?').join(',')})${stage?" AND json_extract(json,'$.stage')=?":''}`,args=[...ids,...(stage?[stage]:[])];
+    const total=Number(this.db.prepare(`SELECT COUNT(*) AS total FROM auto_usage WHERE ${where}`).get(...args).total);
+    const pages=Math.max(1,Math.ceil(total/pageSize)),current=Math.min(page,pages);
+    const items=this.db.prepare(`SELECT json FROM auto_usage WHERE ${where} ORDER BY json_extract(json,'$.startedAt') DESC,rowid DESC LIMIT ? OFFSET ?`).all(...args,pageSize,(current-1)*pageSize).map(r=>JSON.parse(r.json) as UsageEntry);
+    return {items,total,page:current,pageSize,pages};
+  }
   summary(taskId:string,children:string[]=[]):UsageSummary{
-    const entries=[...new Set([taskId,...children])].flatMap(id=>this.entries(id));
-    return {requests:entries.length,priced:entries.filter(e=>e.cny!==null).length,input:entries.reduce((s,e)=>s+(e.tokens?.input||0),0),output:entries.reduce((s,e)=>s+(e.tokens?.output||0),0),cached:entries.reduce((s,e)=>s+(e.tokens?.cached||0),0),knownCny:entries.reduce((s,e)=>s+(e.cny||0),0),missing:entries.filter(e=>e.cny===null).length,estimated:true,children};
+    const ids=[...new Set([taskId,...children])];
+    const row=this.db.prepare(`SELECT COUNT(*) AS requests,COUNT(json_extract(json,'$.cny')) AS priced,COALESCE(SUM(json_extract(json,'$.tokens.input')),0) AS input,COALESCE(SUM(json_extract(json,'$.tokens.output')),0) AS output,COALESCE(SUM(json_extract(json,'$.tokens.cached')),0) AS cached,COALESCE(SUM(json_extract(json,'$.cny')),0) AS knownCny FROM auto_usage WHERE task_id IN (${ids.map(()=>'?').join(',')})`).get(...ids);
+    return {requests:Number(row.requests),priced:Number(row.priced),input:Number(row.input),output:Number(row.output),cached:Number(row.cached),knownCny:Number(row.knownCny),missing:Number(row.requests)-Number(row.priced),estimated:true,children};
   }
 }

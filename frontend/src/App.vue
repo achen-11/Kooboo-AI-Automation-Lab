@@ -24,7 +24,7 @@ const nav = [
 ];
 const detailId = computed(() => /^\/evaluations\/([a-f0-9-]+)$/.exec(route.value)?.[1]);
 const resourceId = computed(() => /^\/resources\/([a-f0-9-]+)$/.exec(route.value)?.[1]);
-const taskId = computed(() => /^\/tasks\/([a-f0-9-]+)$/.exec(route.value)?.[1]);
+const taskId = computed(() => /^\/tasks\/([a-f0-9-]+)(?:\?.*)?$/.exec(route.value)?.[1]);
 const settingsEditor = ref<{dirty:boolean}>();
 function onHash(): void {
   if (((route.value === '/rules' && ruleEditor.value?.dirty) || (route.value.startsWith('/settings') && settingsEditor.value?.dirty)) && !window.confirm('有未保存的修改，确定离开？')) {

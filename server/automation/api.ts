@@ -10,6 +10,7 @@ import { scenarios, defaultFollowupSettings } from '../../shared/automation.js';
 import { Conflict } from '../lib/store.js';
 import { queueDelivery, deliveryReceipt } from './delivery.js';
 import { probeCodex } from './probe.js';
+import { brief, compactNotice, taskSummary } from '../../shared/task-presentation.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -37,8 +38,14 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   store.db.exec(`CREATE TABLE IF NOT EXISTS auto_files(id TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE INDEX IF NOT EXISTS auto_files_content ON auto_files(json_extract(json,'$.name'),json_extract(json,'$.sha256'));`);
   store.db.exec('CREATE TABLE IF NOT EXISTS auto_requests(id TEXT PRIMARY KEY,hash TEXT NOT NULL,json TEXT NOT NULL)');
   function checkFiles(items:z.infer<typeof file>[]){for(const item of items){const saved=store.db.prepare('SELECT json FROM auto_files WHERE id=?').get(item.id);if(!saved||JSON.stringify(JSON.parse(saved.json))!==JSON.stringify(item))throw new Conflict('附件不存在或元数据不一致，请重新上传');}}
-  app.get('/api/automation/overview',async()=>({resources:store.resources(),sites:store.sites(),tasks:store.tasks(),settings:vault.automation()}));
-  app.get('/api/automation/notifications',async()=>({items:store.notices()}));
+  app.get('/api/automation/overview',async(request)=>{
+    const {view}=z.object({view:z.enum(['compact']).optional()}).parse(request.query);
+    return {resources:store.resources(),sites:store.sites(),tasks:view==='compact'?store.tasks().map(taskSummary):store.tasks(),settings:vault.automation()};
+  });
+  app.get('/api/automation/notifications',async(request)=>{
+    const {view}=z.object({view:z.enum(['compact']).optional()}).parse(request.query);
+    return {items:view==='compact'?store.notices().map(n=>compactNotice(n,store.task(n.taskId))):store.notices()};
+  });
   app.post('/api/automation/notifications/:id/read',async(request)=>{const{id}=params.parse(request.params);store.readNotice(id);return {ok:true};});
   app.post('/api/automation/tasks/:id/resume',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task||owns(id)||!task.stopped||!['pending','interrupted','failed'].includes(task.status))throw new Conflict('只能恢复已确认停止的任务');store.scheduleFollowup(task,vault.automation().followup,true);return task;});
   app.get('/api/automation/resources',async()=>({items:store.resources()}));
@@ -80,6 +87,34 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     });return reply.code(201).send(result);
   });
   app.get('/api/automation/tasks/:id',async(request,reply)=>{const{id}=params.parse(request.params);const task=store.task(id);return task?{task,usageEntries:store.usage.entries(id),childUsageEntries:task.evaluationTaskId?store.usage.entries(task.evaluationTaskId):[],events:store.events(id),version:store.version(task.versionId),site:task.generatedSiteId?store.site(task.generatedSiteId):null}:reply.code(404).send({error:'任务不存在'});});
+  app.get('/api/automation/tasks/:id/summary',async(request,reply)=>{
+    const {id}=params.parse(request.params),task=store.task(id);
+    if(!task)return reply.code(404).send({error:'任务不存在'});
+    const evaluation=task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
+    const latestId=task.status==='completed'&&evaluation?evaluation.id:id;
+    const latest=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT 1').get(latestId);
+    return {task:taskSummary(task),evaluation:evaluation?taskSummary(evaluation):null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
+  });
+  const pagination=z.object({page:z.coerce.number().int().min(1).max(1000000).default(1),pageSize:z.coerce.number().int().min(1).max(100).default(20)});
+  app.get('/api/automation/tasks/:id/usage',async(request,reply)=>{
+    const {id}=params.parse(request.params),task=store.task(id);
+    if(!task)return reply.code(404).send({error:'任务不存在'});
+    const q=pagination.extend({stage:z.enum(['generation','followup','evaluation','delivery']).optional()}).parse(request.query);
+    return store.usage.page(id,task.evaluationTaskId?[task.evaluationTaskId]:[],q.page,q.pageSize,q.stage);
+  });
+  app.get('/api/automation/tasks/:id/sections/:section',async(request,reply)=>{
+    const {id,section}=params.extend({section:z.enum(['execution','input','report','delivery'])}).parse(request.params),task=store.task(id);
+    if(!task)return reply.code(404).send({error:'任务不存在'});
+    if(section==='input')return {message:task.message,version:store.version(task.versionId),rule:task.rule,threadId:task.threadId,model:task.model};
+    if(section==='execution'){
+      const q=pagination.parse(request.query),total=Number(store.db.prepare('SELECT COUNT(*) AS total FROM auto_events WHERE task_id=?').get(id).total),pages=Math.max(1,Math.ceil(total/q.pageSize)),page=Math.min(q.page,pages);
+      const items=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT ? OFFSET ?').all(id,q.pageSize,(page-1)*q.pageSize);
+      return {context:task.context,followup:task.followup,interruption:task.interruption,error:task.error,items,total,pages,page,pageSize:q.pageSize};
+    }
+    const source=task.kind==='evaluation'?task:task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
+    if(section==='delivery')return {task:source?{id:source.id,kind:source.kind,environmentId:source.environmentId,status:source.status,delivery:source.delivery,report:source.report?{quality:source.report.quality}:null}:null};
+    return {taskId:source?.id||null,report:source?.report||null,rule:source?.rule||null};
+  });
   app.post('/api/automation/tasks/:id/delivery',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task)throw new Conflict('任务不存在');return queueDelivery(task,store,vault);});
   app.post('/api/automation/tasks/:id/delivery/receipt',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||!['uncertain','failed'].includes(task.delivery.status))throw new Conflict('只能为已停止且待核查的交付补录回执');if(task.delivery.target)throw new Conflict('已有目标回执，请恢复核验；不能替换目标');task.delivery.target=deliveryReceipt(request.body);task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'操作者补录目标回执；仅核验目标环境，不重发迁移');return task;});
   app.post('/api/automation/tasks/:id/delivery/retry',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||task.delivery.target||task.delivery.status!=='failed'||task.delivery.attemptedAt)throw new Conflict('只有确认从未发出迁移请求的交付才可直接重试');task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'重新排队未发送过的迁移准备；保留源站与评测记录');return task;});

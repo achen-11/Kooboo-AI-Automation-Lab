@@ -30,7 +30,7 @@ function filter(value: string | number | undefined) { stage.value = String(value
     <Disclosure label="计费口径"><p class="text-muted small-text">按每次请求的模型、北京时间时段和价格快照估算，最终以官方账单为准。缓存命中已包含在输入中；缺失用量、后台压缩及独立 Search / Fetch 等费用可能未包含。生成任务的汇总包含其自动评测子任务，请勿重复相加。</p></Disclosure>
   </section>
   <section class="panel task-data-panel">
-    <div class="table-toolbar"><h2>请求明细</h2><div class="toolbar-actions"><BaseSelect :model-value="stage" aria-label="按执行阶段筛选用量" @update:model-value="filter"><option value="">全部阶段</option><option v-for="(name, key) in stages" :key="key" :value="key">{{ name }}</option></BaseSelect><button class="icon-button" :disabled="loading" aria-label="刷新用量" @click="load"><RefreshCw :size="17" /></button></div></div>
+    <div class="table-toolbar"><h2>请求明细</h2><div class="toolbar-actions"><BaseSelect :model-value="stage" aria-label="按执行阶段筛选用量" @update:model-value="filter" :options="[{ value: '', label: '全部阶段' }, ...Object.entries(stages).map(([key, name]) => ({ value: key, label: (name) }))]" /><button class="icon-button" :disabled="loading" aria-label="刷新用量" @click="load"><RefreshCw :size="17" /></button></div></div>
     <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
     <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="17" />正在加载明细…</p>
     <div v-if="data" class="table-scroll" :aria-busy="loading"><table class="task-table usage-table"><thead><tr><th>阶段 / 模型</th><th>请求时间</th><th>输入 / 缓存 / 输出</th><th>时段 / 金额</th><th>详情</th></tr></thead><tbody>

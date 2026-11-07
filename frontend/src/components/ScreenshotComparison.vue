@@ -2,6 +2,7 @@
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ArrowUpRight, ChevronLeft, ChevronRight, Columns2, Layers2, Link2, Unlink2, Monitor, Smartphone, PanelsTopLeft, RotateCw } from '@lucide/vue';
 import LiveSiteFrame from './LiveSiteFrame.vue';
+import BaseSelect from './BaseSelect.vue';
 import type { Issue, Screenshot } from '../../../shared/types.js';
 import { continuousSlices, opposite, pairOptions, relatedIssues, roleShots, scopedShots, selectPair, selectShot } from '../../../shared/comparison';
 import type { Pairing, Role, Selection, Viewport } from '../../../shared/comparison';
@@ -180,7 +181,7 @@ onUnmounted(() => { observer?.disconnect(); for (const role of roles) if (frames
 
     <div v-if="mode !== 'iframe'" class="comparison-region-nav">
       <button class="text-button" :disabled="options.length ? regionPosition === 0 : position(activeRole) <= 0" @click="stepRegion(-1)"><ChevronLeft :size="16" />上一处</button>
-      <select v-if="options.length" :value="selection.pairIndex" class="input compact-select" aria-label="选择对应区域" @change="changeRegion(Number(($event.target as HTMLSelectElement).value))"><option value="-1" disabled>选择对应区域</option><option v-for="entry in options" :key="entry.index" :value="entry.index">{{ entry.pair.name }}</option></select>
+      <BaseSelect v-if="options.length" :model-value="selection.pairIndex" size="small" aria-label="选择对应区域" @update:model-value="changeRegion(Number($event))" :options="[{ value: '-1', label: '选择对应区域', disabled: true }, ...options.map((entry) => ({ value: entry.index, label: (entry.pair.name) }))]" />
       <span v-else class="text-muted small-text">{{ activeRole === 'reference' ? '参考站' : '生成站' }}分段</span>
       <button class="text-button" :disabled="options.length ? regionPosition === options.length - 1 : position(activeRole) >= list(activeRole).length - 1" @click="stepRegion(1)">下一处<ChevronRight :size="16" /></button>
       <span v-if="linkNote" class="comparison-link-note" role="status">{{ linkNote }}</span>
@@ -194,7 +195,7 @@ onUnmounted(() => { observer?.disconnect(); for (const role of roles) if (frames
         <figure v-for="role in roles" :key="role" :class="{ 'active-comparison-side': !linked && activeRole === role }">
           <figcaption>
             <button class="comparison-side-title" :aria-pressed="activeRole === role" :title="`切换到${names[role]}`" @click="activeRole = role">{{ names[role] }}</button>
-            <div class="shot-navigation"><button class="icon-button" :disabled="position(role) <= 0" :aria-label="`${names[role]}上一段`" @click="stepShot(role, -1)"><ChevronLeft :size="15" /></button><select v-if="list(role).length" :value="selection[role]" class="input compact-select" :aria-label="`${names[role]}分段`" @change="changeShot(role, ($event.target as HTMLSelectElement).value)"><option v-for="(entry, index) in list(role)" :key="entry.id" :value="entry.id">第 {{ index + 1 }} 段 / {{ list(role).length }}</option></select><button class="icon-button" :disabled="position(role) >= list(role).length - 1" :aria-label="`${names[role]}下一段`" @click="stepShot(role, 1)"><ChevronRight :size="15" /></button></div>
+            <div class="shot-navigation"><button class="icon-button" :disabled="position(role) <= 0" :aria-label="`${names[role]}上一段`" @click="stepShot(role, -1)"><ChevronLeft :size="15" /></button><BaseSelect v-if="list(role).length" :model-value="selection[role]" size="small" :aria-label="`${names[role]}分段`" @update:model-value="changeShot(role, String($event))" :options="list(role).map((entry, index) => ({ value: entry.id, label: '第 ' + (index + 1) + ' 段 / ' + (list(role).length) }))" /><button class="icon-button" :disabled="position(role) >= list(role).length - 1" :aria-label="`${names[role]}下一段`" @click="stepShot(role, 1)"><ChevronRight :size="15" /></button></div>
             <a v-if="siteUrl(role)" :href="siteUrl(role)" target="_blank" rel="noreferrer" :aria-label="`打开${names[role]}`"><ArrowUpRight :size="16" /></a>
           </figcaption>
           <div v-if="!list(role).length" class="image-placeholder">{{ role === 'reference' ? referenceMissing || (compact ? '该问题未关联参考站截图' : '暂无参考站截图') : targetMissing || (compact ? '该问题未关联生成站截图' : '暂无生成站截图') }}</div>

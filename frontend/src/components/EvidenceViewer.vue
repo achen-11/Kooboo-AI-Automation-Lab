@@ -20,7 +20,6 @@ const selected = computed(() => images.value.find(file => file.name === selected
 const pair = computed(() => selected.value ? comparisonFor(images.value, selected.value) : null);
 const comparing = computed(() => mode.value === 'compare' && !!pair.value);
 const choices = (role: 'reference' | 'target') => images.value.filter(file => file.role === role && file.viewport === selected.value?.viewport);
-const multipleChoices = computed(() => choices('reference').length > 1 || choices('target').length > 1);
 const label = (file: MaterialFile) => evidenceLabel(file, images.value.findIndex(item => item.name === file.name));
 const artifact = (file: MaterialFile) => `/api/v1/automation/reports/${props.taskId}/artifacts/${encodeURIComponent(file.name)}`;
 const panes = computed(() => comparing.value
@@ -56,7 +55,7 @@ function stepImage(delta: number) {
   if (file) choose(file);
 }
 function onKeydown(event: KeyboardEvent) {
-  if (event.altKey || event.ctrlKey || event.metaKey || (event.target as HTMLElement).closest('select,input,textarea,a,[contenteditable]')) return;
+  if (event.altKey || event.ctrlKey || event.metaKey || (event.target as HTMLElement).closest('select,input,textarea,a,[contenteditable],[role="combobox"]')) return;
   if (event.key === 'ArrowLeft' || event.key === 'ArrowRight') { event.preventDefault(); stepImage(event.key === 'ArrowLeft' ? -1 : 1); }
 }
 function changeZoom(delta: number) {
@@ -105,7 +104,9 @@ defineExpose({ open });
         </div>
         <div class="evidence-viewer-panes" :class="{ comparing }">
           <EvidenceImagePane v-for="file in panes" :key="comparing ? file.role : 'single'" :ref="value => setPane(file.name, value)" :src="artifact(file)" :label="label(file)" :zoom="zoom">
-            <div v-if="comparing && multipleChoices && (file.role === 'reference' || file.role === 'target')" class="evidence-side-choice"><BaseSelect :model-value="file.name" :aria-label="'切换' + (file.role === 'reference' ? '参考站' : '生成站') + '截图'" :disabled="choices(file.role).length < 2" @update:model-value="selectSide(file.role as 'reference' | 'target', String($event))"><option v-for="option in choices(file.role)" :key="option.name" :value="option.name">{{ label(option) }}</option></BaseSelect></div>
+            <template v-if="comparing && (file.role === 'reference' || file.role === 'target') && choices(file.role).length > 1" #heading>
+              <BaseSelect variant="title" :model-value="file.name" :aria-label="'切换' + (file.role === 'reference' ? '参考站' : '生成站') + '截图'" @update:model-value="selectSide(file.role as 'reference' | 'target', String($event))" :options="choices(file.role).map(option => ({ value: option.name, label: label(option) }))" />
+            </template>
           </EvidenceImagePane>
           <p v-if="!panes.length" class="empty-state">此项没有可预览的图片证据。</p>
         </div>
@@ -124,7 +125,7 @@ defineExpose({ open });
 .evidence-viewer-heading{display:flex;align-items:center;gap:18px;flex:none}.evidence-viewer-title{display:flex;align-items:center;gap:12px;min-width:0;flex:1}.evidence-viewer-title h2{font-size:18px;line-height:1.5;overflow-wrap:anywhere}.evidence-viewer-title .status-badge{flex:none}
 .evidence-context-nav{display:flex;align-items:center;gap:4px;white-space:nowrap;color:var(--muted);font-size:13px;font-variant-numeric:tabular-nums}.evidence-viewer-close{flex:none}.evidence-context-detail{max-height:18vh;overflow:auto;line-height:1.8;font-size:13px;white-space:pre-wrap;flex:none}
 .evidence-viewer-toolbar{display:flex;align-items:center;flex-wrap:wrap;gap:12px 24px;flex:none}.evidence-viewer-toolbar .segmented button{display:inline-flex;align-items:center;gap:7px}.evidence-viewer-toolbar button:disabled{opacity:.4}.evidence-zoom-controls{display:flex;align-items:center;gap:8px}.evidence-zoom-value{min-width:65px;justify-content:center;font-variant-numeric:tabular-nums}.evidence-viewer .icon-button{width:38px;height:38px}.evidence-viewer .text-action{min-height:36px}
-.evidence-viewer-panes{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr);gap:16px}.evidence-viewer-panes.comparing{grid-template-columns:repeat(2,minmax(0,1fr))}.evidence-side-choice{order:1;flex-basis:100%;min-width:0;font-size:12px}
+.evidence-viewer-panes{flex:1;min-height:0;display:grid;grid-template-columns:minmax(0,1fr);gap:16px}.evidence-viewer-panes.comparing{grid-template-columns:repeat(2,minmax(0,1fr))}
 .evidence-filmstrip{display:flex;gap:10px;overflow:auto;flex:none;padding:3px 2px 5px;max-height:108px}.evidence-filmstrip>button{flex:none;width:148px;border:2px solid transparent;border-radius:7px;padding:4px;text-align:left;transition:border-color .15s,background .15s}.evidence-filmstrip>button:hover,.evidence-filmstrip>button.paired{background:var(--field)}.evidence-filmstrip>button.selected{border-color:var(--blue)}.evidence-filmstrip img{display:block;width:100%;height:54px;object-fit:contain;background:#e9edf4;border-radius:3px}.evidence-filmstrip span{display:block;font-size:11px;color:var(--muted);margin-top:4px;white-space:nowrap;overflow:hidden;text-overflow:ellipsis}
 @media(max-width:760px){.evidence-viewer{width:100vw;max-width:none;height:100dvh;border-radius:0}.evidence-viewer-content{padding:14px 12px 8px;gap:10px}.evidence-viewer-heading{flex-wrap:wrap;gap:8px}.evidence-viewer-title{flex-basis:calc(100% - 48px)}.evidence-viewer-title h2{font-size:15px}.evidence-viewer-close{position:absolute;right:12px;top:12px}.evidence-context-detail{max-height:13vh}.evidence-viewer-panes{gap:8px}.evidence-context-nav{order:1}.evidence-filmstrip{max-height:91px}.evidence-filmstrip>button{width:125px}.evidence-filmstrip img{height:42px}.evidence-viewer-toolbar{gap:6px 12px}}
 </style>

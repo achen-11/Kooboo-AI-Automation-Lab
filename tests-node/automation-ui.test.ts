@@ -1,9 +1,9 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { mkdirSync, mkdtempSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
-import { randomUUID } from 'node:crypto';
+import { createHash, randomUUID } from 'node:crypto';
 import { createApp } from '../server/app.js';
 import { defaultAutomationSettings } from '../shared/automation.js';
 import { initialTaskTab } from '../shared/task-presentation.js';
@@ -20,7 +20,7 @@ async function fixture() {
   const parent = f.automationStore.create({ resourceIds: [resource.id], kind: 'generation', scope: 'homepage', environmentId: site.environmentId, generatedSiteId: site.id, requirements: '' }, defaultAutomationSettings)[0];
   parent.status = 'completed'; f.automationStore.put(parent);
   const child = f.automationStore.ensureEvaluation(parent, defaultAutomationSettings);
-  return { ...f, headers, parent, child, async close() { await f.app.close(); rmSync(directory, { recursive: true, force: true }); } };
+  return { ...f, directory, headers, parent, child, async close() { await f.app.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 function usage(id: string, stage: UsageObservation['stage'] = 'generation', time = 0): UsageObservation {
   return { id, source: 'codex', stage, endpoint: 'https://api.deepseek.com', model: 'deepseek-flash-1017', startedAt: Date.parse('2026-11-07T01:00:00Z') + time, endedAt: Date.parse('2026-11-07T01:00:00Z') + time + 1, status: 'completed', basis: 'request', raw: { input_tokens: 1000, output_tokens: 100, cached_input_tokens: 500 } };
@@ -93,4 +93,30 @@ test('execution history is paginated newest first and compact notices retain his
 
 test('report and notification deep links select the requested section, default task entry stays on overview', () => {
   assert.equal(initialTaskTab(''), 'overview'); assert.equal(initialTaskTab('tab=report'), 'report'); assert.equal(initialTaskTab('tab=usage'), 'usage'); assert.equal(initialTaskTab('tab=invalid'), 'overview');
+});
+
+test('report PNG evidence previews inline, downloads only on request and retains access and integrity checks', async () => {
+  const f = await fixture();
+  try {
+    const png = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+    const json = Buffer.from('{"observation":"screenshot"}');
+    const files = [{ name: randomUUID() + '.png', type: 'image/png', bytes: png }, { name: randomUUID() + '.json', type: 'application/json', bytes: json }];
+    const folder = join(f.directory, 'automation-runs', f.child.id, 'evidence');
+    mkdirSync(folder, { recursive: true });
+    for (const file of files) writeFileSync(join(folder, file.name), file.bytes);
+    f.child.report = { summary: '', quality: 'unverified', scores: [], issues: [], assessments: [], coverage: { verified: [], unverified: [], outOfScope: [] }, artifacts: files.map(file => ({ id: randomUUID(), name: file.name, type: file.type, size: file.bytes.length, sha256: createHash('sha256').update(file.bytes).digest('hex') })) };
+    f.automationStore.put(f.child);
+    const url = `/api/v1/automation/reports/${f.child.id}/artifacts/${files[0].name}`;
+    const preview = await f.app.inject({ url, headers: f.headers });
+    assert.equal(preview.statusCode, 200); assert.match(String(preview.headers['content-type']), /^image\/png/);
+    assert.match(String(preview.headers['content-disposition']), /^inline;/); assert.deepEqual(preview.rawPayload, png);
+    const download = await f.app.inject({ url: url + '?download=1', headers: f.headers });
+    assert.match(String(download.headers['content-disposition']), /^attachment;/); assert.deepEqual(download.rawPayload, png);
+    const observation = await f.app.inject({ url: url.replace(files[0].name, files[1].name), headers: f.headers });
+    assert.match(String(observation.headers['content-disposition']), /^attachment;/);
+    assert.equal((await f.app.inject({ url })).statusCode, 401);
+    assert.equal((await f.app.inject({ url: url.replace(files[0].name, randomUUID() + '.png'), headers: f.headers })).statusCode, 404);
+    writeFileSync(join(folder, files[0].name), 'corrupt');
+    assert.equal((await f.app.inject({ url, headers: f.headers })).statusCode, 409);
+  } finally { await f.close(); }
 });

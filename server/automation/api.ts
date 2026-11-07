@@ -157,8 +157,10 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.get('/api/v1/automation/reports/:id',async(request,reply)=>{const{id}=params.parse(request.params);const task=store.task(id);return task?.kind==='evaluation'?{task,usageEntries:store.usage.entries(id),workflow:task.parentId&&store.task(task.parentId)?.evaluationTaskId===id?{taskId:task.parentId,usage:store.task(task.parentId)!.usage,usageEntries:[...store.usage.entries(task.parentId),...store.usage.entries(id)]}:null,source:store.version(task.versionId),events:store.events(id)}:reply.code(404).send({error:'评测不存在'});});
   app.get('/api/v1/automation/reports/:id/artifacts/:file',async(request,reply)=>{
     const {id,file:name}=params.extend({file:z.string().regex(/^[a-f0-9-]{36}\.[a-z0-9]{1,8}$/)}).parse(request.params);
+    const {download}=z.object({download:z.literal('1').optional()}).parse(request.query);
     const task=store.task(id);const artifact=task?.report?.artifacts.find(f=>f.name===name);if(!artifact)return reply.code(404).send({error:'证据不存在'});
     const bytes=readFileSync(resolve(directory,'automation-runs',id,'evidence',name));if(createHash('sha256').update(bytes).digest('hex')!==artifact.sha256)return reply.code(409).send({error:'证据校验失败'});
-    return reply.header('Content-Disposition',`attachment; filename="${name}"`).type(artifact.type).send(bytes);
+    const disposition=artifact.type==='image/png'&&!download?'inline':'attachment';
+    return reply.header('Content-Disposition',`${disposition}; filename="${name}"`).type(artifact.type).send(bytes);
   });
 }

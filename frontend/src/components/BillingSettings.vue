@@ -4,7 +4,16 @@ import { api, message, formatDate } from '../api';
 import type { PriceSnapshot } from '../../../shared/billing';
 import { notify } from '../lib/notifications';
 const prices=ref<PriceSnapshot[]>([]),draft=ref<PriceSnapshot>(),calendar=ref(''),error=ref(''),busy=ref(false);
-async function load(){try{prices.value=(await api<{items:PriceSnapshot[]}>('/automation/prices')).items;draft.value=structuredClone(prices.value.at(-1));calendar.value=JSON.stringify(draft.value?.holidays||{},null,2);}catch(e){error.value=message(e);}}
+async function load(){
+  error.value='';
+  try{
+    const {items}=await api<{items:PriceSnapshot[]}>('/automation/prices');
+    const latest=items.at(-1);
+    // Clone the plain API data before Vue wraps the saved versions in reactive proxies.
+    const nextDraft=latest?structuredClone(latest):undefined;
+    prices.value=items;draft.value=nextDraft;calendar.value=JSON.stringify(nextDraft?.holidays||{},null,2);
+  }catch(e){error.value=message(e);}
+}
 onMounted(load);
 async function publish(){if(!draft.value)return;busy.value=true;error.value='';try{await api('/automation/prices',{method:'POST',body:JSON.stringify({...draft.value,id:undefined,verifiedAt:Date.now(),effectiveFrom:Date.now(),holidays:JSON.parse(calendar.value)})});await load();notify.success('新价格版本已发布，仅用于之后的请求');}catch(e){error.value=message(e);}finally{busy.value=false;}}
 </script>

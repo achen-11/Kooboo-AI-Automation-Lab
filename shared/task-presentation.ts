@@ -11,6 +11,7 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
 };
 export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; deliveryEnabled: boolean; latest: { seq: number; time: number; message: string; taskId: string } | null }
 export interface CompactNotice { id: string; taskId: string; resourceName: string; title: string; summary: string; tab: TaskTab; createdAt: number; readAt: number | null; currentStatus?: TaskStatus; superseded: boolean }
+export interface NoticePage<T = CompactNotice> { items: T[]; total: number; unread: number; page: number; pages: number; pageSize: number }
 
 export const stageNames: Record<string, string> = { prepare: '资料准备', generation: '站点生成', handoff: '交接评测', evaluation: '独立评测', delivery: '交付核验' };
 export function brief(text: string, max = 160): string {

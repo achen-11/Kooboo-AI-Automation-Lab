@@ -31,6 +31,8 @@ const followupInput=z.object({enabled:z.boolean(),concurrency:z.number().int().m
 const settingsInput=z.object({followup:followupInput.default(defaultFollowupSettings),enabled:z.boolean(),autoEvaluate:z.boolean().default(true),generationConcurrency:z.number().int().min(1).max(10),evaluationConcurrency:z.number().int().min(1).max(5),timeoutMinutes:z.number().int().min(1).max(240),evaluationModel:z.string().trim().min(1).max(100),evaluationEndpoint:url,prompts:z.object({materials:prompt,migration:prompt,upgrade:prompt,'site-template':prompt,'app-template':prompt})});
 const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional()});
 const params=z.object({id:uuid});
+const pageNumber=z.coerce.number().int().min(1).max(1000000),pageSizeNumber=z.coerce.number().int().min(1).max(100);
+const pagination=z.object({page:pageNumber.default(1),pageSize:pageSizeNumber.default(20)});
 
 export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,cancel:(id:string)=>void,owns:(id:string)=>boolean){
   let probing=false;
@@ -43,10 +45,15 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     return {resources:store.resources(),sites:store.sites(),tasks:view==='compact'?store.tasks().map(taskSummary):store.tasks(),settings:vault.automation()};
   });
   app.get('/api/automation/notifications',async(request)=>{
-    const {view}=z.object({view:z.enum(['compact']).optional()}).parse(request.query);
+    const {view,page,pageSize}=z.object({view:z.enum(['compact']).optional(),page:pageNumber.optional(),pageSize:pageSizeNumber.optional()}).parse(request.query);
+    if(page!==undefined||pageSize!==undefined){
+      const result=store.noticePage(page??1,pageSize??10);
+      return {...result,items:view==='compact'?result.items.map(n=>compactNotice(n,store.task(n.taskId))):result.items};
+    }
     return {items:view==='compact'?store.notices().map(n=>compactNotice(n,store.task(n.taskId))):store.notices()};
   });
-  app.post('/api/automation/notifications/:id/read',async(request)=>{const{id}=params.parse(request.params);store.readNotice(id);return {ok:true};});
+  app.post('/api/automation/notifications/:id/read',async(request,reply)=>{const{id}=params.parse(request.params);const notice=store.readNotice(id);return notice?{ok:true,readAt:notice.readAt}:reply.code(404).send({error:'通知不存在或已更新'});});
+  app.post('/api/automation/notifications/read',async()=>({ok:true,readAt:store.readAllNotices()}));
   app.post('/api/automation/tasks/:id/resume',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task||owns(id)||!task.stopped||!['pending','interrupted','failed'].includes(task.status))throw new Conflict('只能恢复已确认停止的任务');store.scheduleFollowup(task,vault.automation().followup,true);return task;});
   app.get('/api/automation/resources',async()=>({items:store.resources()}));
   app.get('/api/automation/resources/:id',async(request,reply)=>{const {id}=params.parse(request.params);const item=store.resource(id);return item?{resource:item,versions:store.versions(id),sites:store.sites(id),tasks:store.tasks().filter(t=>t.resourceId===id)}:reply.code(404).send({error:'资源不存在'});});
@@ -95,7 +102,6 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const latest=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT 1').get(latestId);
     return {task:taskSummary(task),evaluation:evaluation?taskSummary(evaluation):null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
   });
-  const pagination=z.object({page:z.coerce.number().int().min(1).max(1000000).default(1),pageSize:z.coerce.number().int().min(1).max(100).default(20)});
   app.get('/api/automation/tasks/:id/usage',async(request,reply)=>{
     const {id}=params.parse(request.params),task=store.task(id);
     if(!task)return reply.code(404).send({error:'任务不存在'});

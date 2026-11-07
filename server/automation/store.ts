@@ -2,6 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Database } from '../runtime.js';
 import { UsageLedger } from './billing.js';
 import { Conflict } from '../lib/store.js';
+import type { NoticePage } from '../../shared/task-presentation.js';
 import type { AutomationRule, AutomationSettings, AutomationTask, AutomationNotice, FollowupSettings, TaskInterruption, GeneratedSite, InputVersion, Resource, ResourceInput } from '../../shared/automation.js';
 
 const initialSop = `你是独立评测员，只做审查与取证，不修改目标站。
@@ -24,6 +25,7 @@ export class AutomationStore {
       CREATE TABLE IF NOT EXISTS auto_tasks(id TEXT PRIMARY KEY, status TEXT NOT NULL, kind TEXT NOT NULL, site_key TEXT, created_at INTEGER NOT NULL, json TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS auto_queue ON auto_tasks(status,kind,created_at);
       CREATE TABLE IF NOT EXISTS auto_notifications(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,title TEXT NOT NULL,json TEXT NOT NULL,UNIQUE(task_id,title));
+      CREATE INDEX IF NOT EXISTS auto_notifications_created ON auto_notifications(json_extract(json,'$.createdAt') DESC,id DESC);
       CREATE TABLE IF NOT EXISTS auto_events(task_id TEXT NOT NULL, seq INTEGER PRIMARY KEY AUTOINCREMENT, time INTEGER NOT NULL, message TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS auto_events_task_seq ON auto_events(task_id,seq);`);
     if (!this.rules().length) {
@@ -123,11 +125,26 @@ export class AutomationStore {
   }
   sanitize<T>(value:T):T { return JSON.parse(this.redact(JSON.stringify(value))); }
   notices():AutomationNotice[] { return this.all<AutomationNotice>('auto_notifications').sort((a,b)=>b.createdAt-a.createdAt).slice(0,200); }
+  noticePage(requestedPage:number,pageSize:number):NoticePage<AutomationNotice> {
+    const counts=this.db.prepare("SELECT COUNT(*) AS total, COUNT(CASE WHEN json_extract(json,'$.readAt') IS NULL THEN 1 END) AS unread FROM auto_notifications").get();
+    const total=Number(counts.total),unread=Number(counts.unread),pages=Math.max(1,Math.ceil(total/pageSize)),page=Math.min(requestedPage,pages);
+    const items=this.db.prepare("SELECT json FROM auto_notifications ORDER BY json_extract(json,'$.createdAt') DESC,id DESC LIMIT ? OFFSET ?").all(pageSize,(page-1)*pageSize).map(row=>JSON.parse(row.json) as AutomationNotice);
+    return {items,total,unread,page,pages,pageSize};
+  }
   notice(task:AutomationTask,title:string,message:string) {
     const value:AutomationNotice={id:randomUUID(),taskId:task.id,title,message:this.redact(message),createdAt:Date.now(),readAt:null};
     this.db.prepare('INSERT INTO auto_notifications VALUES(?,?,?,?) ON CONFLICT(task_id,title) DO UPDATE SET id=excluded.id,json=excluded.json').run(value.id,task.id,title,JSON.stringify(value));
   }
-  readNotice(id:string) { const value=this.all<AutomationNotice>('auto_notifications','WHERE id=?',[id])[0];if(value){value.readAt=Date.now();this.db.prepare('UPDATE auto_notifications SET json=? WHERE id=?').run(JSON.stringify(value),id);} }
+  readNotice(id:string) {
+    const value=this.all<AutomationNotice>('auto_notifications','WHERE id=?',[id])[0];
+    if(value&&value.readAt===null){value.readAt=Date.now();this.db.prepare('UPDATE auto_notifications SET json=? WHERE id=?').run(JSON.stringify(value),id);}
+    return value;
+  }
+  readAllNotices() {
+    const readAt=Date.now();
+    this.db.prepare("UPDATE auto_notifications SET json=json_set(json,'$.readAt',?) WHERE json_extract(json,'$.readAt') IS NULL").run(readAt);
+    return readAt;
+  }
   scheduleFollowup(task:AutomationTask,policy:FollowupSettings,reset=false) {
     if(!task.generation&&task.kind==='generation'&&task.generatedSiteId)task.generation={legacySubmitted:true,prepared:!!(task.threadId||task.context),conversationId:task.threadId||undefined};
     if(reset||!task.followup)task.followup={state:'queued',attempts:0,elapsedMs:0,startedAt:Date.now(),nextAt:Date.now(),tokens:0,threadId:'',policy:structuredClone(policy),executionStopped:task.stopped,observations:[]};

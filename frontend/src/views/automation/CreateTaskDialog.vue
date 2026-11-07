@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { X, Send, LoaderCircle, ChevronDown } from '@lucide/vue';
+import { X, Send, LoaderCircle, ChevronDown, ChevronRight } from '@lucide/vue';
 import BaseSelect from '../../components/BaseSelect.vue';
 import { api, message, platform, go } from '../../api';
 import { workspace, refresh } from './common';
@@ -22,5 +22,5 @@ defineExpose({open});
 <label class="field"><span>{{kind==='evaluation'?'评测':'生成'}}范围</span><BaseSelect v-model="scope" :options="[{ value: 'homepage', label: '仅首页' }, { value: 'site', label: '全站' }]" /></label>
 <label v-if="kind==='evaluation'" class="field"><span>评测规则</span><BaseSelect v-model="ruleId" :options="[{ value: '', label: '最近发布的适用规则' }, ...kindRules.map((rule) => ({ value: rule.id, label: (rule.name) + ' · ' + (rule.hash.slice(0,8)) }))]" /></label>
 <label class="field"><span>补充要求</span><textarea v-model="requirements" class="input" rows="4" placeholder="可留空，使用已保存的场景提示词与资料" /></label>
-<button type="button" class="text-action" :aria-expanded="preview" @click="preview=!preview"><ChevronDown :size="16" />{{preview?'收起':'预览'}}委托内容</button><div v-if="preview" class="message-preview"><div v-for="m in messages" :key="m.name"><strong>{{m.name}}</strong><pre>{{m.text}}</pre></div></div>
+<button type="button" class="text-action" :aria-expanded="preview" @click="preview=!preview"><ChevronDown v-if="preview" :size="16" aria-hidden="true" /><ChevronRight v-else :size="16" aria-hidden="true" />{{preview?'收起':'预览'}}委托内容</button><div v-if="preview" class="message-preview"><div v-for="m in messages" :key="m.name"><strong>{{m.name}}</strong><pre>{{m.text}}</pre></div></div>
 <p v-if="!workspace.settings.enabled" class="alert info">执行队列已暂停，提交后保留在队列中，可在系统设置启用。</p><p v-if="!environmentId && !site" class="alert info"><a href="#/settings">先在系统设置添加 Kooboo 环境</a></p><p v-if="error" class="alert error" role="alert">{{error}}</p><div class="modal-actions"><button type="button" class="button secondary" :disabled="busy" @click="dialog?.close()">取消</button><button class="button primary" :disabled="busy || !resources.length || (!environmentId&&!site)"><LoaderCircle v-if="busy" class="spin" :size="16" /><Send v-else :size="16" />加入队列</button></div></form></dialog></template>

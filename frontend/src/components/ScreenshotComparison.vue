@@ -217,7 +217,7 @@ onUnmounted(() => { observer?.disconnect(); for (const role of roles) if (frames
 
     <section v-if="!compact && mode !== 'iframe' && currentIssues.length" class="comparison-issues" aria-label="当前截图关联问题">
       <h3>关联问题 <span>{{ currentIssues.length }}</span></h3>
-      <details v-for="issue in currentIssues" :key="`${issue.dimension}:${issue.title}`"><summary><span class="severity-dot" :class="issue.severity" />{{ issue.title }}</summary><p>{{ issue.detail }}</p><slot name="issue-actions" :issue="issue" /><div class="evidence-links"><button v-for="id in issue.evidence.filter(id => shots.some(s => s.id === id))" :key="id" class="evidence-link" @click="focusEvidence(id)">{{ shots.find(s => s.id === id)?.role === 'reference' ? '参考站' : '生成站' }} · {{ shots.find(s => s.id === id)?.region }}</button></div></details>
+      <details v-for="issue in currentIssues" :key="`${issue.dimension}:${issue.title}`"><summary class="disclosure-summary"><ChevronRight class="disclosure-chevron" :size="16" aria-hidden="true" /><span class="severity-dot" :class="issue.severity" />{{ issue.title }}</summary><p>{{ issue.detail }}</p><slot name="issue-actions" :issue="issue" /><div class="evidence-links"><button v-for="id in issue.evidence.filter(id => shots.some(s => s.id === id))" :key="id" class="evidence-link" @click="focusEvidence(id)">{{ shots.find(s => s.id === id)?.role === 'reference' ? '参考站' : '生成站' }} · {{ shots.find(s => s.id === id)?.region }}</button></div></details>
     </section>
   </div>
 </template>
@@ -253,7 +253,7 @@ onUnmounted(() => { observer?.disconnect(); for (const role of roles) if (frames
 .comparison-issues > h3 span { font-size: 11px; color: var(--muted); font-weight: 500; margin-left: 5px; }
 .comparison-issues details { padding: 10px 0; border-top: 1px solid var(--line); }
 .comparison-issues summary { cursor: pointer; font-size: 12px; color: #536078; }
-.comparison-issues summary .severity-dot { display: inline-block; margin-inline: 5px 7px; vertical-align: middle; }
+.comparison-issues summary .severity-dot { display: inline-block; vertical-align: middle; }
 .comparison-issues details p { font-size: 12px; color: var(--muted); line-height: 1.8; margin-top: 9px; }
 .compact-comparison { margin-top: 12px; padding: 15px; border: 1px solid var(--line); border-radius: 12px; }
 .compact-comparison .capture-stream { height: 430px; }

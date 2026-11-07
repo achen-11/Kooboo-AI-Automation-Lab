@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronRight } from '@lucide/vue';
 import type {
   CaptureCheckpoint,
   EvaluationStep,
@@ -74,7 +75,7 @@ function available(step: EvaluationStep): boolean {
           </div>
           <p v-if="step.message || step.error">{{ step.error || step.message }}</p>
           <details v-if="captures(step.id).length" class="stage-output">
-            <summary>查看视口与证据</summary>
+            <summary class="disclosure-summary"><ChevronRight class="disclosure-chevron" :size="16" aria-hidden="true" />查看视口与证据</summary>
             <div
               v-for="capture in captures(step.id)"
               :key="capture.viewport"
@@ -96,7 +97,7 @@ function available(step: EvaluationStep): boolean {
             </div>
           </details>
           <details v-if="step.id === 'prepare' && run.pipeline.prepared" class="stage-output">
-            <summary>查看资料</summary>
+            <summary class="disclosure-summary"><ChevronRight class="disclosure-chevron" :size="16" aria-hidden="true" />查看资料</summary>
             <p>{{ run.pipeline.prepared.targetUrl }}</p>
             <pre v-if="run.pipeline.prepared.readme">{{ run.pipeline.prepared.readme }}</pre>
             <p v-else>未取得资料包文本</p>

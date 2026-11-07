@@ -29,6 +29,12 @@ button, input, select, textarea { outline: none; }
 :focus-visible { outline: 2px solid #9ab0f3; outline-offset: 2px; }
 button { border: 0; background: none; }
 svg { flex: none; vertical-align: middle; }
+.disclosure-summary { display: flex; align-items: center; gap: 8px; min-height: 32px; cursor: pointer; list-style: none; }
+.disclosure-summary::-webkit-details-marker { display: none; }
+.disclosure-summary::marker { content: ''; }
+.disclosure-chevron { flex: none; color: var(--muted); transition: transform .15s; }
+details[open] > .disclosure-summary > .disclosure-chevron { transform: rotate(90deg); }
+@media (prefers-reduced-motion: reduce) { .disclosure-chevron { transition: none; } }
 h1, h2, h3, p, figure { margin: 0; }
 input[type=radio], input[type=checkbox] { accent-color: var(--blue); width: 17px; height: 17px; flex: none; }
 input[type=range] { accent-color: var(--blue); }

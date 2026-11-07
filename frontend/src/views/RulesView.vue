@@ -1,4 +1,5 @@
 <script setup lang="ts">
+import { ChevronRight } from '@lucide/vue';
 import { notify } from '../lib/notifications';
 import BaseSelect from '../components/BaseSelect.vue';
 import { computed, onMounted, onUnmounted, ref } from 'vue';
@@ -131,7 +132,7 @@ async function reloadDraft(): Promise<void> {
         <p class="section-note">AI 按本版本的评分标准与指引评分，程序按权重计算总分。维度列表自动传入，无需手动同步标识或数量。</p>
       </section>
       <section class="panel settings-panel">
-        <details class="capture-editor"><summary>采集设置</summary>
+        <details class="capture-editor"><summary class="disclosure-summary"><ChevronRight class="disclosure-chevron" :size="16" aria-hidden="true" />采集设置</summary>
           <div v-for="viewport in editor.rule.viewports" :key="viewport.id" class="capture-fields">
             <h3>{{ viewport.id === 'desktop' ? '桌面视口' : '移动视口' }}</h3>
             <div class="form-grid">
@@ -163,7 +164,7 @@ async function reloadDraft(): Promise<void> {
     </section>
     <template v-if="rule">
       <section class="panel rules-panel"><div class="section-heading"><h2>{{ rule.name }}</h2><span class="badge muted">待校准</span></div><div class="dimension-list"><div v-for="dimension in rule.dimensions" :key="dimension.id" class="dimension-row"><div><h3>{{ dimension.label }}</h3><p>{{ dimension.instruction }}</p></div><div class="weight-track"><i :style="{ width: `${dimension.weight}%` }" /></div><strong>{{ dimension.weight }}<small>%</small></strong></div></div><p class="section-note">各分项按 0–100 分评估，再按权重汇总。没有可用视觉参考时，还原度为“不可评估”。</p></section>
-      <section class="panel settings-panel"><h2>证据与版本</h2><div class="form-grid"><div class="field"><span>评测视口</span><div class="readonly-value">{{ rule.viewports.map((item) => `${item.width} × ${item.height}`).join(' / ') }}</div></div><div class="field"><span>采集策略</span><div class="readonly-value">首页 · {{ rule.executor === 'agent' ? '连续分段截图' : `${rule.capture.regions} 个区域` }} · {{ rule.capture.version }}</div></div></div><p class="section-note">修改后发布新版本，历史结果与人工复核记录保留。低分筛选阈值在“系统设置 → 运行设置”维护。</p><details class="rule-prompt"><summary><FileText :size="17" />查看评分指引</summary><pre>{{ rule.prompt }}</pre></details><p class="hash-label">版本指纹 {{ rule.hash.slice(0, 24) }}</p></section>
+      <section class="panel settings-panel"><h2>证据与版本</h2><div class="form-grid"><div class="field"><span>评测视口</span><div class="readonly-value">{{ rule.viewports.map((item) => `${item.width} × ${item.height}`).join(' / ') }}</div></div><div class="field"><span>采集策略</span><div class="readonly-value">首页 · {{ rule.executor === 'agent' ? '连续分段截图' : `${rule.capture.regions} 个区域` }} · {{ rule.capture.version }}</div></div></div><p class="section-note">修改后发布新版本，历史结果与人工复核记录保留。低分筛选阈值在“系统设置 → 运行设置”维护。</p><details class="rule-prompt"><summary class="disclosure-summary"><ChevronRight class="disclosure-chevron" :size="16" aria-hidden="true" /><FileText :size="17" />查看评分指引</summary><pre>{{ rule.prompt }}</pre></details><p class="hash-label">版本指纹 {{ rule.hash.slice(0, 24) }}</p></section>
     </template>
   </template>
 </template>

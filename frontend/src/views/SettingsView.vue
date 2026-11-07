@@ -2,6 +2,9 @@
 import { notify } from '../lib/notifications';
 import { computed, ref, watch } from 'vue';
 import { Save, Plus, Trash2, Copy, Eye, EyeOff, Cable, LoaderCircle, Pause, Play } from '@lucide/vue';
+import BaseSelect from '../components/BaseSelect.vue';
+import { defaultDeliveryPolicy } from '../../../shared/automation';
+import type { PublicSettings } from '../../../shared/types';
 import { api, platform, saveSettings, message } from '../api';
 
 const props = defineProps<{ environmentsOnly: boolean }>();
@@ -11,7 +14,7 @@ function initialForm() {
   return { threshold: settings.threshold as number, paused: settings.paused as boolean,
     execution: { timeoutSeconds: (settings.execution?.timeoutSeconds ?? 300) as number, captureAttempts: (settings.execution?.captureAttempts ?? 2) as number },
     model: { endpoint: settings.model.endpoint as string, name: settings.model.name as string, apiKey: '', clearKey: false, hasApiKey: settings.model.hasApiKey as boolean },
-    environments: (settings.environments as { id: string; name: string; origin: string; apiOrigin: string; hasToken: boolean }[]).map((env) => ({ ...env, token: '', clearToken: false })),
+    environments: (settings.environments as PublicSettings['environments']).map((env) => ({ ...env, token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,...env.delivery,hasToken:env.delivery?.hasToken||false,token:'',clearToken:false} })),
   };
 }
 const form = ref(initialForm());
@@ -32,7 +35,7 @@ async function save(): Promise<void> {
   catch (reason) { error.value = message(reason); }
   finally { saving.value = false; }
 }
-function addEnvironment(): void { form.value.environments.push({ id: crypto.randomUUID(), name: '', origin: '', apiOrigin: '', hasToken: false, token: '', clearToken: false }); }
+function addEnvironment(): void { form.value.environments.push({ id: crypto.randomUUID(), name: '', origin: '', apiOrigin: '', hasToken: false, token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,hasToken:false,token:'',clearToken:false} }); }
 function updateOrigin(index: number, value: string): void {
   const env = form.value.environments[index];
   if (env.apiOrigin === env.origin || !env.apiOrigin) env.apiOrigin = value;
@@ -75,6 +78,8 @@ async function copy(value: string): Promise<void> {
           <label class="field"><span>平台访问地址</span><input v-model="env.apiOrigin" type="url" class="input" placeholder="默认与环境地址相同" required /></label>
         </div>
         <label class="field credential-field"><span>访问令牌 <small>{{ env.hasToken ? '已保存，留空保留' : 'Bearer Token' }}</small></span><div class="input-with-action"><input v-model="env.token" :type="reveal[env.id] ? 'text' : 'password'" autocomplete="new-password" :placeholder="env.hasToken ? '输入新令牌可替换当前令牌' : '填写平台自己的 Kooboo 访问令牌'" /><button type="button" class="icon-button" :aria-label="reveal[env.id] ? '隐藏令牌' : '显示令牌'" @click="reveal[env.id] = !reveal[env.id]"><EyeOff v-if="reveal[env.id]" :size="18" /><Eye v-else :size="18" /></button></div></label>
+        <label class="check-label"><input v-model="env.delivery.enabled" type="checkbox"/>启用跨环境交付</label>
+        <div v-if="env.delivery.enabled" class="delivery-config"><div class="form-grid"><label class="field"><span>迁移接口</span><input v-model="env.delivery.endpoint" type="url" class="input" required/></label><label class="field"><span>目标环境</span><BaseSelect v-model="env.delivery.targetEnvironmentId" required><option value="" disabled>选择交付环境</option><option v-for="target in form.environments.filter(e=>e.id!==env.id)" :key="target.id" :value="target.id">{{target.name||target.origin}}</option></BaseSelect></label></div><label class="field credential-field"><span>迁移服务令牌 <small>{{env.delivery.hasToken?'已保存，留空保留':'独立于 Kooboo 访问令牌'}}</small></span><input v-model="env.delivery.token" class="input" type="password" autocomplete="new-password"/></label><div class="form-grid"><label class="field"><span>交付方式</span><BaseSelect :model-value="env.delivery.auto?'auto':'manual'" @update:model-value="v=>env.delivery.auto=v==='auto'"><option value="manual">评测后按需发起</option><option value="auto">迁移 / 升级的全站评测后自动交付</option></BaseSelect></label><label class="field"><span>迁移接口超时（秒）</span><input v-model.number="env.delivery.timeoutSeconds" class="input" type="number" min="30" max="900" required/></label></div><label class="check-label"><input v-model="env.delivery.requirePassed" type="checkbox"/>源站评测通过后才允许交付</label><p class="text-muted small-text">先在源环境完成评测，迁移后再核验两端站点。首版保留源站，不覆盖已有目标站；结果不确定时先核查回执。</p></div>
         <div class="inline-actions"><button type="button" class="button secondary small" :disabled="dirty || !!testing" @click="testConnection(env.id)"><LoaderCircle v-if="testing === env.id" class="spin" :size="16" /><Cable v-else :size="16" />测试连接</button><span v-if="testMessages[env.id]" :class="testMessages[env.id].ok ? 'success-text' : 'error-text'" role="status">{{ testMessages[env.id].text }}</span><span v-else-if="dirty" class="text-muted small-text">保存后可测试连接</span></div>
       </section>
       <button v-if="form.environments.length" type="button" class="button secondary" @click="addEnvironment()"><Plus :size="17" />添加环境</button>
@@ -119,3 +124,7 @@ Authorization: Bearer &lt;查询令牌&gt;</pre><p class="section-note">以上�
     </template>
   </form>
 </template>
+
+<style scoped>
+.delivery-config{display:flex;flex-direction:column;gap:20px;padding:20px;margin-top:16px;background:var(--field);border-radius:12px;}
+</style>

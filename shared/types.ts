@@ -138,11 +138,11 @@ export interface RuntimeSettings {
   paused: boolean;
   execution: { timeoutSeconds: number; captureAttempts: number };
   model: { endpoint: string; name: string; apiKey: string };
-  environments: { id: string; name: string; origin: string; apiOrigin: string; token: string }[];
+  environments: { id: string; name: string; origin: string; apiOrigin: string; token: string; delivery?: import('./automation.js').DeliveryPolicy & {token:string} }[];
 }
 export interface PublicSettings extends Omit<RuntimeSettings, 'model' | 'environments'> {
   model: Omit<RuntimeSettings['model'], 'apiKey'> & { hasApiKey: boolean };
-  environments: (Omit<RuntimeSettings['environments'][number], 'token'> & { hasToken: boolean })[];
+  environments: (Omit<RuntimeSettings['environments'][number], 'token'|'delivery'> & { hasToken: boolean; delivery?:import('./automation.js').DeliveryPolicy & {hasToken:boolean} })[];
   credentials: { ingestToken: string; readToken: string };
 }
 

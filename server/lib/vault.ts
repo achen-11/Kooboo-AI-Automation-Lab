@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSy
 import { resolve } from 'node:path';
 import type { PublicSettings, RuntimeSettings } from '../../shared/types.js';
 import { settingsSchema } from './validation.js';
-import { defaultAutomationSettings, type AutomationSettings } from '../../shared/automation.js';
+import { defaultAutomationSettings, defaultFollowupSettings, type AutomationSettings } from '../../shared/automation.js';
 
 export class Vault {
   private key: Buffer;
@@ -46,13 +46,13 @@ export class Vault {
   public(): PublicSettings {
     this.refresh();
     const { model, environments, ...rest } = this.current;
-    return { ...rest, execution: this.current.execution || { timeoutSeconds: 300, captureAttempts: 2 }, model: { endpoint: model.endpoint, name: model.name, hasApiKey: Boolean(model.apiKey) }, environments: environments.map(({ token, ...env }) => ({ ...env, hasToken: Boolean(token) })), credentials: this.credentials };
+    return { ...rest, execution: this.current.execution || { timeoutSeconds: 300, captureAttempts: 2 }, model: { endpoint: model.endpoint, name: model.name, hasApiKey: Boolean(model.apiKey) }, environments: environments.map(({ token, delivery, ...env }) => ({ ...env, hasToken: Boolean(token),...(delivery?{delivery:(({token,...policy})=>({...policy,hasToken:!!token}))(delivery)}:{}) })), credentials: this.credentials };
   }
   importInitial(settings: unknown, credentials: PublicSettings['credentials']): void {
     const input = settingsSchema.parse(settings);
     if (!credentials || ![credentials.ingestToken, credentials.readToken].every(token => typeof token === 'string' && token.length >= 32 && token.length < 201)) throw new Error('迁移令牌不合法');
     if (this.current.model.endpoint || this.current.environments.length) throw new Error('目标已有配置，不能覆盖');
-    this.current = { ...input, model: { endpoint: input.model.endpoint, name: input.model.name, apiKey: input.model.apiKey || '' }, environments: input.environments.map(env => ({ id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin, token: env.token || '' })) };
+    this.current = { ...input, model: { endpoint: input.model.endpoint, name: input.model.name, apiKey: input.model.apiKey || '' }, environments: input.environments.map(env => ({ id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin, token: env.token || '',...(env.delivery?{delivery:{...env.delivery,token:env.delivery.token||''}}:{}) })) };
     Object.assign(this.credentials, credentials);
     this.persist();
   }
@@ -65,6 +65,7 @@ export class Vault {
       model: { endpoint: input.model.endpoint.replace(/\/$/, ''), name: input.model.name, apiKey: input.model.clearKey ? '' : input.model.apiKey || this.current.model.apiKey },
       environments: input.environments.map((env) => ({
         id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin,
+        ...(env.delivery?{delivery:{enabled:env.delivery.enabled,endpoint:env.delivery.endpoint,targetEnvironmentId:env.delivery.targetEnvironmentId,auto:env.delivery.auto,requirePassed:env.delivery.requirePassed,timeoutSeconds:env.delivery.timeoutSeconds,token:env.delivery.clearToken?'':env.delivery.token||this.current.environments.find(old=>old.id===env.id)?.delivery?.token||''}}:(this.current.environments.find(old=>old.id===env.id)?.delivery?{delivery:this.current.environments.find(old=>old.id===env.id)!.delivery}:{})),
         token: env.clearToken ? '' : env.token || this.current.environments.find((old) => old.id === env.id)?.token || '',
       })),
     };
@@ -73,7 +74,7 @@ export class Vault {
   }
   automation(): AutomationSettings {
     const saved = this.get().automation;
-    return structuredClone({ ...defaultAutomationSettings, ...saved, prompts: { ...defaultAutomationSettings.prompts, ...saved?.prompts } });
+    return structuredClone({ ...defaultAutomationSettings, ...saved, followup: { ...defaultFollowupSettings, ...saved?.followup }, prompts: { ...defaultAutomationSettings.prompts, ...saved?.prompts } });
   }
   updateAutomation(input: AutomationSettings): AutomationSettings {
     this.refresh();

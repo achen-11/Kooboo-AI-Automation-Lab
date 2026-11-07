@@ -86,11 +86,13 @@ export const settingsSchema = z
           apiOrigin: webUrl.transform((url) => new URL(url).origin),
           token: z.string().max(10000).optional(),
           clearToken: z.boolean().optional(),
+          delivery:z.object({enabled:z.boolean(),endpoint:webUrl,targetEnvironmentId:z.string(),auto:z.boolean(),requirePassed:z.boolean(),timeoutSeconds:z.number().int().min(30).max(900),token:z.string().max(10000).optional(),clearToken:z.boolean().optional()}).optional(),
         })
       )
       .max(50),
   })
   .superRefine((settings, context) => {
+    for(const env of settings.environments){if(env.delivery?.enabled&&(!settings.environments.some(e=>e.id===env.delivery!.targetEnvironmentId)||env.delivery.targetEnvironmentId===env.id))context.addIssue({code:'custom',message:'交付目标必须是另一个已配置的环境'});}
     if (
       new Set(settings.environments.map((env) => env.origin)).size !==
         settings.environments.length ||

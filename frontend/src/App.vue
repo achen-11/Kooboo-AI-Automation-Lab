@@ -3,6 +3,7 @@ import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
 import { ScanLine, ClipboardCheck, SlidersHorizontal, FolderOpen, FileChartColumn, Settings2, ChevronLeft, CircleHelp, RotateCw } from '@lucide/vue';
 import { initialize, platform } from './api';
 import MessageHost from './components/MessageHost.vue';
+import AutomationNotifications from './components/AutomationNotifications.vue';
 import TasksView from './views/TasksView.vue';
 import EvaluationView from './views/EvaluationView.vue';
 import ResourcesView from './views/automation/ResourcesView.vue';
@@ -48,7 +49,8 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
         </a>
       </nav>
       <div class="sidebar-bottom">
-        <div class="local-note"><CircleHelp :size="17" /><span>本机工作区 <span class="version">v0.3.0</span></span></div>
+        <AutomationNotifications v-if="platform.ready" />
+        <div class="local-note"><CircleHelp :size="21" :stroke-width="1.7" /><span>本机工作区 <span class="version">v0.3.0</span></span></div>
         <div class="sidebar-toolbar">
           <span class="online-state" :class="{ offline: !platform.online }"><i />{{ platform.online ? '在线' : '未连接' }}</span>
           <button class="icon-button" :title="collapsed ? '展开导航' : '收起导航'" :aria-label="collapsed ? '展开导航' : '收起导航'" :aria-expanded="!collapsed" @click="collapsed = !collapsed"><ChevronLeft :size="18" :class="{ rotated: collapsed }" /></button>

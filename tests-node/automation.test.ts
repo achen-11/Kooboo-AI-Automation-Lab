@@ -151,7 +151,7 @@ test('Responses base URL conversion supports existing full Chat Completions endp
   assert.throws(()=>responsesBaseUrl('https://name:secret@provider.test/v1'));
 });
 
-test('failed cancellation cleanup keeps the slot pending until stop can be confirmed',async()=>{
+test('failed cancellation cleanup creates a clear interruption and keeps the slot until stop can be confirmed',async()=>{
   const f=await fixture();let worker:AutomationWorker|undefined;try{
     const r=await f.save();const settings={...defaultAutomationSettings,enabled:true,generationConcurrency:1};f.vault.updateAutomation(settings);
     const task=f.automationStore.create({resourceIds:[r.id],kind:'generation',scope:'homepage',environmentId:f.environmentId,requirements:''},settings)[0];
@@ -160,7 +160,7 @@ test('failed cancellation cleanup keeps the slot pending until stop can be confi
     worker=new AutomationWorker(f.automationStore,f.vault,f.directory,{generation:execute,evaluation:execute},()=>true);
     await worker.tick();const running=f.automationStore.task(task.id)!;running.status='cancelling';f.automationStore.put(running);worker.cancel(task.id);reject(new UnconfirmedStop('Cleanup not confirmed'));
     await new Promise(resolve=>setTimeout(resolve,20));
-    const after=f.automationStore.task(task.id)!;assert.equal(after.status,'pending');assert.equal(after.stopped,false);assert.match(after.error,/Cleanup/);
+    const after=f.automationStore.task(task.id)!;assert.equal(after.status,'interrupted');assert.equal(after.stopped,false);assert.match(after.error,/Cleanup/);assert.ok(after.interruption?.nextSteps.length);assert.equal(f.automationStore.notices().length,1);
     assert.equal((await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/confirm-stopped`,headers:f.headers})).statusCode,200);
   }finally{if(worker)await worker.stop();await f.close();}
 });

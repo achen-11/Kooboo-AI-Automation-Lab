@@ -46,7 +46,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   const worker = new Worker(store, vault, artifacts, directory, options.workerDependencies);
   const automationStore = new AutomationStore(store.db,value=>{
     const settings=vault.get();
-    for(const secret of [settings.model.apiKey,...settings.environments.map(e=>e.token)])if(secret)value=value.replaceAll(secret,'[已隐藏]');
+    for(const secret of [settings.model.apiKey,...settings.environments.flatMap(e=>[e.token,e.delivery?.token||''])])if(secret)value=value.replaceAll(secret,'[已隐藏]');
     return value.replace(/Bearer\s+[^\s"',;]+/gi,'Bearer [已隐藏]');
   });
   const automationWorker = new AutomationWorker(automationStore, vault, directory);

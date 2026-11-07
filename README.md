@@ -6,6 +6,8 @@
 
 项目目录：`/Users/achen/Priv/Yardi/AI-App/Kooboo-AI-Automation-Lab`。完整讨论与决策见 [讨论记录](docs/automation-evaluation-discussion.md)。
 
+经验库、请求级预算与全站交付清单见 [经验学习与完整度](docs/experience-learning-and-completeness.md)。新增任务固定策略快照；已有配置和历史报告保留。
+
 ---
 
 # 保留的 Site Evaluator 功能

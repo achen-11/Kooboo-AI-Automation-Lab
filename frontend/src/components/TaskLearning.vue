@@ -1,0 +1,19 @@
+<script setup lang="ts">
+import { ref, computed } from 'vue';
+import { RefreshCw } from '@lucide/vue';
+import { api, message, formatDate } from '../api';
+import { notify } from '../lib/notifications';
+import { useTaskSection } from '../views/automation/use-task-section';
+import { experienceStageNames, type LearningRun } from '../../../shared/experience';
+import Disclosure from './Disclosure.vue';
+import TablePagination from './TablePagination.vue';
+const props=defineProps<{taskId:string;mode:'input'|'execution'}>();
+const page=ref(1),error=ref(''),busy=ref(false);
+const {data,load,loading,error:loadError}=useTaskSection<{items:LearningRun[];page:number;pages:number;total:number}>(()=>`/automation/tasks/${props.taskId}/learning?page=${page.value}&pageSize=10${props.mode==='input'?'&kind=selection':''}`);
+const items=computed(()=>data.value?.items.filter(r=>props.mode==='input'?r.kind==='selection':true)||[]);
+const status={queued:'排队中',running:'执行中',completed:'已完成',failed:'未完成'};
+async function reflect(){busy.value=true;error.value='';try{const r=await api<{enabled:boolean;queued:boolean}>(`/automation/tasks/${props.taskId}/reflect`,{method:'POST'});await load();notify.success(!r.queued?'已有复盘记录；未完成的记录可点击恢复':r.enabled?'已加入经验复盘队列':'已入队；启动自动执行后处理');}catch(e){error.value=message(e);}finally{busy.value=false;}}
+async function retry(id:string){busy.value=true;error.value='';try{await api(`/automation/learning/${id}/retry`,{method:'POST',body:JSON.stringify({useCurrentPolicy:true})});await load();notify.success('已恢复复盘，累计用量保留');}catch(e){error.value=message(e);}finally{busy.value=false;}}
+</script>
+<template><section class="panel settings-panel"><div class="section-heading"><h2>{{mode==='input'?'经验采用快照':'经验学习'}}</h2><div class="learning-actions"><button v-if="mode==='execution'" class="text-action" :disabled="busy" @click="reflect">复盘本任务</button><button class="icon-button" aria-label="刷新经验记录" :disabled="loading" @click="load"><RefreshCw :size="16" /></button></div></div><p v-if="error||loadError" class="alert error">{{error||loadError}}</p><p v-if="!items.length" class="text-muted">{{loading?'正在加载…':'本页暂无经验记录'}}</p><div v-for="run in items" :key="run.id" class="version-entry"><div class="section-heading"><strong>{{experienceStageNames[run.phase]}} · {{run.kind==='selection'?'选择经验':'复盘'}}</strong><span class="text-muted small-text">{{status[run.status]}} · {{formatDate(run.createdAt)}}</span></div><button v-if="mode==='execution'&&run.kind==='reflection'&&run.status==='failed'" class="text-action" :disabled="busy" @click="retry(run.id)">采用当前设置恢复复盘</button><p class="task-prose">{{run.reason.length>220?run.reason.slice(0,220)+'…':run.reason}}</p><Disclosure v-if="run.reason.length>220" label="查看完整说明"><p class="task-prose">{{run.reason}}</p></Disclosure><Disclosure v-for="e in run.adoptions" :key="e.experienceId" :label="e.title+' · v'+e.revision"><p class="task-prose">{{e.reason}}</p><pre class="task-technical">{{e.guidance}}</pre><a class="text-action" :href="'#/experiences/'+e.experienceId">查看经验</a></Disclosure><a v-for="id in run.produced" :key="id" class="text-action" :href="'#/experiences/'+id">查看沉淀经验</a><Disclosure v-if="run.outcomes?.length" label="采用效果"><p v-for="o in run.outcomes" :key="o.experienceId" class="task-prose">{{({'applied-unverified':'已采用，效果待验证',supported:'有支持证据',counterexample:'有反例','not-applied':'未实际采用'})[o.state]}}：{{o.reason}}</p></Disclosure></div><TablePagination v-if="data&&data.total" :page="data.page" :pages="data.pages" :total="data.total" :busy="loading" @change="page=$event" /></section></template>
+<style scoped>.learning-actions{display:flex;align-items:center;gap:16px}</style>

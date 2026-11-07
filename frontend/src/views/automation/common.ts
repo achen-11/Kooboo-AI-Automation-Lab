@@ -3,7 +3,7 @@ import { api, message } from '../../api';
 import type { AutomationSettings, GeneratedSite, Resource } from '../../../../shared/automation';
 import type { TaskSummary } from '../../../../shared/task-presentation';
 import { defaultAutomationSettings } from '../../../../shared/automation';
-export const workspace=reactive({resources:[] as Resource[],sites:[] as GeneratedSite[],tasks:[] as TaskSummary[],settings:structuredClone(defaultAutomationSettings) as AutomationSettings,loaded:false,error:''});
+export const workspace=reactive({resources:[] as Resource[],sites:[] as GeneratedSite[],tasks:[] as TaskSummary[],queue:null as {generation:number;evaluation:number;queued:number}|null,settings:structuredClone(defaultAutomationSettings) as AutomationSettings,loaded:false,error:''});
 let loading:Promise<void>|null=null;
 export async function refresh(){
   if(loading)return loading;

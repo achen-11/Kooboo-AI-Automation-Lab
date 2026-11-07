@@ -1,14 +1,16 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
 import { LoaderCircle, FileText, ExternalLink, ChevronDown, ChevronRight, Image, Download } from '@lucide/vue';
-import type { AutomationReport, AutomationRule } from '../../../../shared/automation';
+import { taskStatusNames, type AutomationReport, type AutomationRule, type OptimizationProgress } from '../../../../shared/automation';
 import Disclosure from '../../components/Disclosure.vue';
 import TablePagination from '../../components/TablePagination.vue';
+import CompletenessReport from '../../components/CompletenessReport.vue';
 import EvidenceViewer from '../../components/EvidenceViewer.vue';
 import { evidenceLabel, type EvidenceContext } from '../../lib/evidence-preview';
 import { useTaskSection } from './use-task-section';
 const props = defineProps<{ taskId: string; revision: string }>();
-const { data, loading, error, load } = useTaskSection<{ taskId: string | null; report: AutomationReport | null; rule: AutomationRule | null }>(() => `/automation/tasks/${props.taskId}/sections/report`, () => props.revision);
+const selectedRound=ref<number|null>(null);
+const { data, loading, error, load } = useTaskSection<{ taskId: string | null; report: AutomationReport | null; rule: AutomationRule | null; historical?:boolean; selectedRound?:{brief?:string;progress?:OptimizationProgress}; optimization?:{rounds:{number:number;evaluationTaskId?:string;generationTaskId:string;status:keyof typeof taskStatusNames;scores:AutomationReport['scores']|null;summary:string}[]} }>(() => `/automation/tasks/${props.taskId}/sections/report${selectedRound.value===null?'':'?round='+selectedRound.value}`, () => props.revision);
 const names: Record<string, string> = { desktop: 'PC', mobile: '移动端', business: '业务' };
 const qualities = { passed: '达到标准', failed: '需要改进', unverified: '有待验证' };
 const severity = { critical: '严重', major: '主要', minor: '次要' };
@@ -32,8 +34,12 @@ function openGallery(name: string) {
 <template>
   <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
   <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="17" />正在加载评测结果…</p>
+  <section v-if="data?.optimization" class="panel settings-panel"><div class="section-heading"><h2>优化轮次</h2><button class="text-action" :disabled="selectedRound===null" @click="selectedRound=null">当前版本</button></div><div class="table-scroll"><table class="task-table"><thead><tr><th>轮次</th><th>状态</th><th>PC / 移动端</th><th>主要变化</th><th /></tr></thead><tbody><tr v-for="round in data.optimization.rounds" :key="round.number"><td>{{round.number?'修复 '+round.number:'初评'}}</td><td>{{taskStatusNames[round.status]}}</td><td>{{round.scores?round.scores.map(s=>(names[s.viewport]||s.viewport)+' '+(s.value??'未验证')).join(' / '):'待复评'}}</td><td class="wrapping-cell">{{round.summary}}</td><td><button class="text-action" :disabled="loading" @click="selectedRound=round.number">查看本轮</button></td></tr></tbody></table></div></section>
+  <p v-if="data?.historical" class="alert info">正在查看所选轮次的历史结果，不代表当前站点状态。</p>
+  <section v-if="data?.selectedRound?.brief||data?.selectedRound?.progress" class="panel settings-panel"><Disclosure v-if="data.selectedRound.brief" label="本轮修复委托"><pre class="task-technical">{{data.selectedRound.brief}}</pre></Disclosure><template v-if="data.selectedRound.progress"><p class="task-prose">{{data.selectedRound.progress.reason}}</p><Disclosure v-for="group in ([['resolved','已解决'],['remaining','仍存在'],['unverified','未验证'],['introduced','新增问题']] as const)" :key="group[0]" :label="group[1]"><ul class="task-text-list"><li v-for="text in data.selectedRound.progress[group[0]]" :key="text">{{text}}</li></ul></Disclosure></template></section>
   <section v-if="data && !data.report" class="panel empty-state"><FileText :size="30" /><h2>尚未生成有效报告</h2><p>任务仍在执行或尚未发起评测时，不显示零分。</p></section>
   <template v-if="data?.report">
+    <CompletenessReport v-if="data.report.completeness && data.taskId" :key="data.taskId" :task-id="data.taskId" />
     <div class="report-score-grid"><section class="panel report-verdict"><span>质量结论</span><h2 :class="data.report.quality === 'passed' ? 'success-text' : 'warning-text'">{{ qualities[data.report.quality] }}</h2></section><section v-for="item in data.report.scores" :key="item.viewport" class="panel report-score"><span>{{ names[item.viewport] || item.viewport }}</span><strong>{{ item.value ?? '—' }}</strong><small>{{ item.value === null ? '未验证' : '按本轮规则计算' }}</small></section></div>
     <section class="panel settings-panel">
       <h2>评测结论</h2><p class="report-summary">{{ data.report.summary }}</p>

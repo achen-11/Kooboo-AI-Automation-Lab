@@ -1,19 +1,25 @@
-import type { AutomationReport, AutomationTask, TaskStatus } from './automation.js';
+import type { AutomationReport, AutomationTask, TaskStatus, OptimizationPolicy, OptimizationRun } from './automation.js';
+export interface OptimizationSummary { state: OptimizationRun['state']; policy: Omit<OptimizationPolicy,'sop'>; round: number; activeTaskId: string; reportId: string | null; reason: string; nextStep: string }
 
 export type TaskTab = 'overview' | 'report' | 'execution' | 'usage' | 'input' | 'delivery';
 export type DeliveryTask = Pick<AutomationTask, 'id' | 'kind' | 'environmentId' | 'status' | 'delivery'> & { report: Pick<AutomationReport, 'quality'> | null };
 export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'resourceName' | 'scenario' | 'scope' | 'environmentId' | 'generatedSiteId' | 'parentId' | 'evaluationTaskId' | 'stage' | 'status' | 'stopped' | 'createdAt' | 'updatedAt' | 'siteUrl' | 'usage'> & {
   report: (Pick<AutomationReport, 'quality' | 'scores'> & { issueCount: number; unverifiedCount: number }) | null;
+  /** Compact list results remain accessible when a later task changes the site. */
+  reportCurrent?: boolean;
   attention: string;
   nextStep: string;
   deliveryStatus?: string;
+  optimization?: OptimizationSummary;
+  optimizationRootId?: string;
+  optimizationRound?: number;
   delivery?: Pick<NonNullable<AutomationTask['delivery']>, 'status'>;
 };
-export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; deliveryEnabled: boolean; latest: { seq: number; time: number; message: string; taskId: string } | null }
+export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; latest: { seq: number; time: number; message: string; taskId: string } | null }
 export interface CompactNotice { id: string; taskId: string; resourceName: string; title: string; summary: string; tab: TaskTab; createdAt: number; readAt: number | null; currentStatus?: TaskStatus; superseded: boolean }
 export interface NoticePage<T = CompactNotice> { items: T[]; total: number; unread: number; page: number; pages: number; pageSize: number }
 
-export const stageNames: Record<string, string> = { prepare: '资料准备', generation: '站点生成', handoff: '交接评测', evaluation: '独立评测', delivery: '交付核验' };
+export const stageNames: Record<string, string> = { prepare: '资料准备', generation: '站点生成', handoff: '交接评测', evaluation: '独立评测', delivery: '交付核验', optimization: '质量优化' };
 export function brief(text: string, max = 160): string {
   const value = text.replace(/\s+/g, ' ').trim();
   return value.length > max ? value.slice(0, max) + '…' : value;
@@ -21,6 +27,8 @@ export function brief(text: string, max = 160): string {
 export function taskSummary(task: AutomationTask): TaskSummary {
   const { id, kind, resourceId, resourceName, scenario, scope, environmentId, generatedSiteId, parentId, evaluationTaskId, stage, status, stopped, createdAt, updatedAt, siteUrl, usage } = task;
   return { id, kind, resourceId, resourceName, scenario, scope, environmentId, generatedSiteId, parentId, evaluationTaskId, stage, status, stopped, createdAt, updatedAt, siteUrl, usage,
+    optimization: task.optimization ? {state:task.optimization.state,policy:{targetScore:task.optimization.policy.targetScore,maxRounds:task.optimization.policy.maxRounds,maxCostCny:task.optimization.policy.maxCostCny},round:task.optimization.rounds.at(-1)!.number,activeTaskId:task.optimization.activeTaskId,reportId:task.optimization.reportId,reason:brief(task.optimization.reason),nextStep:brief(task.optimization.nextSteps[0]||'')} : undefined,
+    optimizationRootId: task.optimizationRootId, optimizationRound: task.optimizationRound,
     report: task.report ? { quality: task.report.quality, scores: task.report.scores, issueCount: task.report.issues.length, unverifiedCount: task.report.coverage.unverified.length } : null,
     attention: ['pending', 'failed', 'interrupted'].includes(status) ? brief(task.interruption?.reason || task.error || '当前阶段未完成，请查看执行记录。') : '',
     nextStep: brief(task.interruption?.nextSteps[0] || ''), deliveryStatus: task.delivery?.status, delivery: task.delivery ? { status: task.delivery.status } : undefined };

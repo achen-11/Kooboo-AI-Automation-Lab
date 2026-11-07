@@ -3,7 +3,7 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSy
 import { resolve } from 'node:path';
 import type { PublicSettings, RuntimeSettings } from '../../shared/types.js';
 import { settingsSchema } from './validation.js';
-import { defaultAutomationSettings, defaultFollowupSettings, type AutomationSettings } from '../../shared/automation.js';
+import { defaultAutomationSettings, defaultFollowupSettings, defaultOptimizationPolicy, type AutomationSettings } from '../../shared/automation.js';
 
 export class Vault {
   private key: Buffer;
@@ -74,7 +74,7 @@ export class Vault {
   }
   automation(): AutomationSettings {
     const saved = this.get().automation;
-    return structuredClone({ ...defaultAutomationSettings, ...saved, followup: { ...defaultFollowupSettings, ...saved?.followup }, prompts: { ...defaultAutomationSettings.prompts, ...saved?.prompts } });
+    return structuredClone({ ...defaultAutomationSettings, ...saved, completeness:{...defaultAutomationSettings.completeness!,...saved?.completeness}, learning:{...defaultAutomationSettings.learning!,...saved?.learning}, optimization: {...defaultOptimizationPolicy,...saved?.optimization}, followup: { ...defaultFollowupSettings, ...saved?.followup }, prompts: { ...defaultAutomationSettings.prompts, ...saved?.prompts } });
   }
   updateAutomation(input: AutomationSettings): AutomationSettings {
     this.refresh();

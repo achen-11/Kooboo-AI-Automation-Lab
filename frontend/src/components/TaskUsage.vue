@@ -5,18 +5,21 @@ import type { UsageSummary, UsageEntry } from '../../../shared/billing';
 import { formatDate } from '../api';
 import { useTaskSection } from '../views/automation/use-task-section';
 import BaseSelect from './BaseSelect.vue';
+import TaskBudget from './TaskBudget.vue';
 import Disclosure from './Disclosure.vue';
 import TablePagination from './TablePagination.vue';
 const props = defineProps<{ taskId: string; summary?: UsageSummary }>();
-const page = ref(1), stage = ref('');
-const stages: Record<string, string> = { generation: '生成', followup: 'AI 跟进', evaluation: '独立评测', delivery: '交付核验' };
+const page = ref(1), stage = ref(''), round=ref('');
+function filterRound(value:string|number|undefined){round.value=String(value??'');page.value=1;}
+const stages: Record<string, string> = { generation: '生成', followup: 'AI 跟进', evaluation: '独立评测', delivery: '交付核验', experience:'经验学习',planning:'交付清单规划' };
 const bands = { peak: '高峰', offpeak: '闲时', mixed: '跨时段', unknown: '未知' };
 const revision = computed(() => page.value === 1 ? JSON.stringify(props.summary) : '');
-const { data, loading, error, load } = useTaskSection<{ items: UsageEntry[]; total: number; page: number; pages: number }>(
-  () => '/automation/tasks/' + props.taskId + '/usage?page=' + page.value + '&pageSize=20' + (stage.value ? '&stage=' + stage.value : ''), () => revision.value);
+const { data, loading, error, load } = useTaskSection<{ rounds?:number[]; items: UsageEntry[]; total: number; page: number; pages: number }>(
+  () => '/automation/tasks/' + props.taskId + '/usage?page=' + page.value + '&pageSize=20' + (stage.value ? '&stage=' + stage.value : '')+(round.value!==''?'&round='+round.value:''), () => revision.value);
 function filter(value: string | number | undefined) { stage.value = String(value || ''); page.value = 1; }
 </script>
 <template>
+  <TaskBudget :task-id="taskId" />
   <section class="panel settings-panel">
     <div class="section-heading"><h2>模型用量与费用</h2><span class="text-muted small-text">已知用量估算</span></div>
     <div v-if="summary?.requests" class="usage-totals">
@@ -27,10 +30,10 @@ function filter(value: string | number | undefined) { stage.value = String(value
     </div>
     <p v-else class="text-muted">尚未收到实际 usage，费用待核算。</p>
     <p v-if="summary?.missing" class="warning-text usage-note">{{ summary.missing }} 条记录待核算，当前金额不代表全部费用。</p>
-    <Disclosure label="计费口径"><p class="text-muted small-text">按每次请求的模型、北京时间时段和价格快照估算，最终以官方账单为准。缓存命中已包含在输入中；缺失用量、后台压缩及独立 Search / Fetch 等费用可能未包含。生成任务的汇总包含其自动评测子任务，请勿重复相加。</p></Disclosure>
+    <Disclosure label="计费口径"><p class="text-muted small-text">按每次请求的模型、北京时间时段和价格快照估算，最终以官方账单为准。缓存命中已包含在输入中；缺失用量、后台压缩及独立 Search / Fetch 等费用可能未包含。生成任务的汇总包含其全部自动修复与评测子任务，请勿重复相加。</p></Disclosure>
   </section>
   <section class="panel task-data-panel">
-    <div class="table-toolbar"><h2>请求明细</h2><div class="toolbar-actions"><BaseSelect :model-value="stage" aria-label="按执行阶段筛选用量" @update:model-value="filter" :options="[{ value: '', label: '全部阶段' }, ...Object.entries(stages).map(([key, name]) => ({ value: key, label: (name) }))]" /><button class="icon-button" :disabled="loading" aria-label="刷新用量" @click="load"><RefreshCw :size="17" /></button></div></div>
+    <div class="table-toolbar"><h2>请求明细</h2><div class="toolbar-actions"><BaseSelect v-if="data?.rounds" :model-value="round" aria-label="按优化轮次筛选用量" :options="[{value:'',label:'全部轮次'},...data.rounds.map(n=>({value:String(n),label:n?'修复 '+n:'初始生成与评测'}))]" @update:model-value="filterRound" /><BaseSelect :model-value="stage" aria-label="按执行阶段筛选用量" @update:model-value="filter" :options="[{ value: '', label: '全部阶段' }, ...Object.entries(stages).map(([key, name]) => ({ value: key, label: (name) }))]" /><button class="icon-button" :disabled="loading" aria-label="刷新用量" @click="load"><RefreshCw :size="17" /></button></div></div>
     <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
     <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="17" />正在加载明细…</p>
     <div v-if="data" class="table-scroll" :aria-busy="loading"><table class="task-table usage-table"><thead><tr><th>阶段 / 模型</th><th>请求时间</th><th>输入 / 缓存 / 输出</th><th>时段 / 金额</th><th>详情</th></tr></thead><tbody>

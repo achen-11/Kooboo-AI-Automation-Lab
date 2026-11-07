@@ -1,4 +1,4 @@
-import type { MaterialFile } from '../../../shared/automation';
+import type { MaterialFile } from '../../../shared/automation.js';
 
 export interface EvidenceContext {
   title: string;

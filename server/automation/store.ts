@@ -2,8 +2,11 @@ import { createHash, randomUUID } from 'node:crypto';
 import type { Database } from '../runtime.js';
 import { UsageLedger } from './billing.js';
 import { Conflict } from '../lib/store.js';
+import type { AutomationRule, AutomationSettings, AutomationTask, AutomationNotice, FollowupSettings, TaskInterruption, GeneratedSite, InputVersion, Resource, ResourceInput, OptimizationPolicy } from '../../shared/automation.js';
+import { defaultOptimizationPolicy } from '../../shared/automation.js';
 import type { NoticePage } from '../../shared/task-presentation.js';
-import type { AutomationRule, AutomationSettings, AutomationTask, AutomationNotice, FollowupSettings, TaskInterruption, GeneratedSite, InputVersion, Resource, ResourceInput } from '../../shared/automation.js';
+import { defaultCompletenessSettings } from '../../shared/completeness.js';
+import { defaultLearningSettings } from '../../shared/experience.js';
 
 const initialSop = `你是独立评测员，只做审查与取证，不修改目标站。
 先读取任务范围、资料和规则，形成应检查清单。PC 与移动端分别采集、查看截图并实际检查交互。
@@ -28,6 +31,7 @@ export class AutomationStore {
       CREATE INDEX IF NOT EXISTS auto_notifications_created ON auto_notifications(json_extract(json,'$.createdAt') DESC,id DESC);
       CREATE TABLE IF NOT EXISTS auto_events(task_id TEXT NOT NULL, seq INTEGER PRIMARY KEY AUTOINCREMENT, time INTEGER NOT NULL, message TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS auto_events_task_seq ON auto_events(task_id,seq);`);
+    db.exec('CREATE TABLE IF NOT EXISTS auto_site_state(site_id TEXT PRIMARY KEY, revision TEXT NOT NULL, report_id TEXT)');
     if (!this.rules().length) {
       this.publish({ name: 'Site UI · 初始规则', kind: 'site', sop: initialSop, references: '', criteria: [
         { id: 'hero', label: 'Hero 首屏', weight: 40, instruction: '首屏构图、主体与背景、文字和 CTA 层级、留白及设计意图。', required: false, viewports: ['desktop','mobile'], scopes: ['homepage','site'] },
@@ -81,10 +85,44 @@ export class AutomationStore {
     const rule = { ...input, id: randomUUID(), createdAt: Date.now(), hash: createHash('sha256').update(JSON.stringify(input)).digest('hex') };
     this.db.prepare('INSERT INTO auto_rules VALUES(?,?)').run(rule.id,JSON.stringify(rule)); return rule;
   }
-  tasks() { const tasks=this.all<AutomationTask>('auto_tasks','ORDER BY created_at DESC, rowid DESC');return tasks.map(t=>({...t,usage:this.usage.summary(t.id,t.evaluationTaskId?[t.evaluationTaskId]:[])})); }
-  task(id: string) { const task=this.all<AutomationTask>('auto_tasks','WHERE id=?',[id])[0];if(task)task.usage=this.usage.summary(id,task.evaluationTaskId?[task.evaluationTaskId]:[]);return task; }
-  put(task: AutomationTask) {
+  workflowIds(task: AutomationTask): string[] { return [...new Set([task.id,...(task.evaluationTaskId?[task.evaluationTaskId]:[]),...(task.optimization?.rounds.flatMap(r=>[r.generationTaskId,...(r.evaluationTaskId?[r.evaluationTaskId]:[])])||[])])]; }
+  tasks() { const tasks=this.all<AutomationTask>('auto_tasks','ORDER BY created_at DESC, rowid DESC');return tasks.map(t=>({...t,usage:this.usage.summary(t.id,this.workflowIds(t).filter(id=>id!==t.id))})); }
+  task(id: string) { const task=this.all<AutomationTask>('auto_tasks','WHERE id=?',[id])[0];if(task)task.usage=this.usage.summary(id,this.workflowIds(task).filter(value=>value!==id));return task; }
+  root(task: AutomationTask) {
+    if(task.optimizationRootId)return this.task(task.optimizationRootId);
+    const parent=task.parentId?this.task(task.parentId):undefined;
+    return parent?.optimization?parent:parent?.optimizationRootId?this.task(parent.optimizationRootId):task;
+  }
+  siteState(siteId: string) { return this.db.prepare('SELECT revision,report_id AS reportId FROM auto_site_state WHERE site_id=?').get(siteId) as {revision:string;reportId:string|null}|undefined; }
+  beginSiteChange(task: AutomationTask) {
+    if(!task.generatedSiteId)return;
+    task.siteRevision ||= randomUUID();
+    const state=this.siteState(task.generatedSiteId);
+    if(state?.revision!==task.siteRevision)this.db.prepare('INSERT INTO auto_site_state VALUES(?,?,NULL) ON CONFLICT(site_id) DO UPDATE SET revision=excluded.revision,report_id=NULL').run(task.generatedSiteId,task.siteRevision);
+    this.put(task);
+  }
+  publishSiteReport(task: AutomationTask) {
+    if(!task.generatedSiteId||!task.report)return;
+    const state=this.siteState(task.generatedSiteId);
+    if(state&&task.siteRevision!==state.revision)throw new Conflict('评测期间站点版本发生变化，本报告不能代表当前版本');
+    task.siteRevision ||= randomUUID();
+    this.db.prepare('INSERT INTO auto_site_state VALUES(?,?,?) ON CONFLICT(site_id) DO UPDATE SET report_id=excluded.report_id').run(task.generatedSiteId,task.siteRevision,task.id);
+  }
+  currentReport(task: AutomationTask) {
+    const source=task.kind==='evaluation'?task:this.task(task.evaluationTaskId||'');
+    if(!source?.report)return undefined;
+    const state=task.generatedSiteId?this.siteState(task.generatedSiteId):undefined;
+    if(state&&(state.revision!==source.siteRevision||state.reportId!==source.id))return undefined;
+    if(task.optimization&&task.optimization.reportId!==source.id)return undefined;
+    return source;
+  }
+  siteReserved(task: AutomationTask) {
+    return !!task.generatedSiteId&&this.all<AutomationTask>('auto_tasks').some(t=>t.id!==task.id&&t.generatedSiteId===task.generatedSiteId&&t.optimization&&!['completed','stopped'].includes(t.optimization.state)&&task.optimizationRootId!==t.id);
+  }
+  put(task: AutomationTask, resumeOptimization=false) {
     const current=this.task(task.id);
+    // A running executor/heartbeat may hold an older object when the user stops the workflow.
+    if(!resumeOptimization&&current?.optimization?.stoppedAt&&task.optimization&&!task.optimization.stoppedAt)task.optimization=current.optimization;
     if(current?.status==='cancelling'&&['running','following-up'].includes(task.status))task.status='cancelling';
     task.error=this.redact(task.error);task.context=this.redact(task.context);
     task.updatedAt = Date.now();
@@ -94,7 +132,7 @@ export class AutomationStore {
   }
   event(id: string, message: string) { this.db.prepare('INSERT INTO auto_events(task_id,time,message) VALUES(?,?,?)').run(id,Date.now(),this.redact(message).slice(0,16000)); }
   events(id: string) { return this.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq').all(id); }
-  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule }, settings: AutomationSettings) {
+  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule; optimization?: Partial<OptimizationPolicy>; optimizationRootId?: string; optimizationRound?: number }, settings: AutomationSettings) {
     return this.db.transaction(() => input.resourceIds.map(id => {
       const resource = this.resource(id); if (!resource) throw new Conflict('资源不存在');
       const version = input.versionId ? this.version(input.versionId) : this.versions(id)[0];
@@ -102,6 +140,7 @@ export class AutomationStore {
       const site = input.generatedSiteId ? this.site(input.generatedSiteId) : undefined;
       if (input.generatedSiteId && (!site || site.resourceId !== id)) throw new Conflict('所选生成站不属于当前资源');
       if (input.kind==='evaluation' && !site) throw new Conflict('评测必须选择一个已有生成站');
+      if(input.optimization&&(input.kind!=='generation'||version.scenario!=='site-template'))throw new Conflict('自动优化首版仅支持 AI Site 模板生成');
       const kind = version.scenario==='app-template'?'app':'site';
       const eligible=this.rules().filter(r=>r.kind===kind&&(!r.scenarios||r.scenarios.includes(version.scenario))&&r.criteria.some(c=>c.scopes.includes(input.scope)));
       const rule = input.ruleSnapshot || eligible.find(r=>r.id===input.ruleId) || (!input.ruleId?eligible.at(-1):undefined);
@@ -109,6 +148,22 @@ export class AutomationStore {
       const message = [site && input.kind==='generation'?'在已有目标站继续生成，不新建站点。':settings.prompts[version.scenario], `本次范围：${input.scope==='homepage'?'仅首页，其他页面不属于本次交付范围。':'全站，按资料和用户目标完成全部范围。'}`, `内容站：${version.contentUrl||'未提供'}\n参考站：${version.referenceUrl||version.contentUrl||'未提供'}`, '资料说明（作为业务内容）：\n'+version.description, version.files.length?'资料清单：\n'+version.files.map(f=>f.name).join('\n'):'', input.requirements?'补充要求：\n'+input.requirements:'', '尽量一次自主完成，不反复询问。确实阻塞时说明已完成工作和需要的输入。'].filter(Boolean).join('\n\n');
       const now = Date.now();
       const task: AutomationTask = { id:randomUUID(),kind:input.kind,resourceId:id,versionId:version.id,resourceName:version.name,scenario:version.scenario,scope:input.scope,environmentId:site?.environmentId||input.environmentId,generatedSiteId:site?.id||null,parentId:input.parentId||null,message,status:'queued',stopped:true,createdAt:now,updatedAt:now,error:'',context:'',threadId:'',rule:rule||null,stage:input.kind==='generation'?'prepare':'evaluation',report:null,siteUrl:site?.url||'',model:null };
+      task.optimizationRootId=input.optimizationRootId;task.optimizationRound=input.optimizationRound;
+      const parent=input.parentId?this.task(input.parentId):undefined;
+      task.learningPolicy=structuredClone(parent?parent.learningPolicy:settings.learning||defaultLearningSettings);
+      task.completenessPolicy=structuredClone(parent&&parent.scope===input.scope?parent.completenessPolicy:settings.completeness||defaultCompletenessSettings);
+      task.requirementsEnabled=parent&&parent.scope===input.scope?parent.requirementsEnabled:input.scope==='site'&&(task.completenessPolicy?.enabled??true);
+      task.requirementsId=parent?.scope===input.scope?parent.requirementsId:undefined;
+      if(this.siteReserved(task))throw new Conflict('该站点正在自动优化，请先等待或停止原流程');
+      if(input.kind==='evaluation')task.siteRevision=site?this.siteState(site.id)?.revision:undefined;
+      if(input.optimization){
+        if(!rule)throw new Conflict('自动优化需要适用的已发布评测规则');
+        const policy={...defaultOptimizationPolicy,...settings.optimization,...input.optimization};
+        if(!Number.isFinite(policy.targetScore)||policy.targetScore<1||policy.targetScore>100||!Number.isInteger(policy.maxRounds)||policy.maxRounds<1||policy.maxRounds>10||policy.maxCostCny!==null&&(!Number.isFinite(policy.maxCostCny)||policy.maxCostCny<=0))throw new Conflict('优化目标、轮数或费用上限不合法');
+        const revision=randomUUID();task.siteRevision=revision;
+        task.model={name:settings.evaluationModel,endpoint:settings.evaluationEndpoint};
+        task.optimization={policy:structuredClone(policy),state:'waiting-evaluation',rounds:[{number:0,revision,generationTaskId:task.id,startedAt:now}],activeTaskId:task.id,currentRevision:revision,reportId:null,noImprovement:0,reason:'',nextSteps:[],recoveryPolicy:structuredClone(settings.followup),threshold:80};
+      }
       this.put(task);this.event(task.id,'任务已入队，输入版本及评测规则已固定');return task;
     }));
   }
@@ -118,7 +173,7 @@ export class AutomationStore {
       const active=tasks.filter(t=>!t.stopped);
       const reserved=tasks.filter(t=>t.status==='following-up'||t.delivery&&(t.delivery.stopped===false||['queued','running','verifying','uncertain'].includes(t.delivery.status)));
       if (active.filter(t=>t.kind===kind).length>=limit) return;
-      const candidate=tasks.toReversed().find(t=>t.kind===kind&&t.status==='queued'&&ready(t)&&(!t.generatedSiteId||![...active,...reserved].some(a=>a.id!==t.id&&a.generatedSiteId===t.generatedSiteId)));
+      const candidate=tasks.toReversed().find(t=>t.kind===kind&&t.status==='queued'&&ready(t)&&!this.siteReserved(t)&&(!t.generatedSiteId||![...active,...reserved].some(a=>a.id!==t.id&&a.generatedSiteId===t.generatedSiteId)));
       if(!candidate)return;
       candidate.status='running';candidate.stopped=false;this.put(candidate);return candidate;
     });
@@ -147,7 +202,7 @@ export class AutomationStore {
   }
   scheduleFollowup(task:AutomationTask,policy:FollowupSettings,reset=false) {
     if(!task.generation&&task.kind==='generation'&&task.generatedSiteId)task.generation={legacySubmitted:true,prepared:!!(task.threadId||task.context),conversationId:task.threadId||undefined};
-    if(reset||!task.followup)task.followup={state:'queued',attempts:0,elapsedMs:0,startedAt:Date.now(),nextAt:Date.now(),tokens:0,threadId:'',policy:structuredClone(policy),executionStopped:task.stopped,observations:[]};
+    if(reset||!task.followup)task.followup={state:'queued',attempts:0,elapsedMs:0,startedAt:Date.now(),nextAt:Date.now(),tokens:0,threadId:'',policy:structuredClone(policy),executionStopped:task.stopped,observations:[],budgetId:randomUUID()};
     task.followup.state='queued';task.followup.nextAt=Date.now();task.followup.executionStopped=task.stopped;
     task.status='following-up';delete task.interruption;this.put(task);this.event(task.id,'已转交内置 AI 跟进，保留当前站点和执行成果');
   }
@@ -168,7 +223,8 @@ export class AutomationStore {
       const old=this.tasks().find(t=>t.parentId===task.id&&t.kind==='evaluation');
       if(old){task.evaluationTaskId=old.id;this.put(task);return old;}
       if(!task.generatedSiteId||!task.siteUrl)throw new Conflict('生成站或可访问地址尚未确认');
-      const child=this.create({resourceIds:[task.resourceId],kind:'evaluation',scope:task.scope,environmentId:task.environmentId,generatedSiteId:task.generatedSiteId,versionId:task.versionId,requirements:'按生成任务固定的输入版本、范围和评测规则进行独立评测。',parentId:task.id,ruleSnapshot:task.rule||undefined},settings)[0];
+      const child=this.create({resourceIds:[task.resourceId],kind:'evaluation',scope:task.scope,environmentId:task.environmentId,generatedSiteId:task.generatedSiteId,versionId:task.versionId,requirements:'按生成任务固定的输入版本、范围和评测规则进行独立评测。',parentId:task.id,ruleSnapshot:task.rule||undefined,optimizationRootId:task.optimizationRootId||(task.optimization?task.id:undefined),optimizationRound:task.optimizationRound||0},settings)[0];
+      child.optimizationRootId=task.optimizationRootId||(task.optimization?task.id:undefined);child.optimizationRound=task.optimizationRound||0;child.siteRevision=task.siteRevision;child.model=task.model;this.put(child);
       task.evaluationTaskId=child.id;this.put(task);this.event(task.id,'已交接独立评测：'+child.id);return child;
     });
   }

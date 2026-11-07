@@ -16,7 +16,7 @@ import { AutomationWorker } from '../server/automation/worker.js';
 
 const time=(s:string)=>Date.parse(s+'+08:00');
 const obs=(patch:Partial<UsageObservation>={}):UsageObservation=>({id:'request',source:'codex',stage:'evaluation',model:'deepseek-flash-1017',endpoint:'https://api.deepseek.com',startedAt:time('2026-11-09T09:30:00'),endedAt:time('2026-11-09T09:31:00'),status:'completed',basis:'request',raw:{input_tokens:1000000,output_tokens:100000,input_tokens_details:{cached_tokens:200000},output_tokens_details:{reasoning_tokens:50000}},...patch});
-async function fixture(){const directory=mkdtempSync(join(tmpdir(),'todos-test-'));const f=await createApp({directory,serveWeb:false,startWorker:false});const login=await f.app.inject({method:'POST',url:'/api/login'}),headers={cookie:String(login.headers['set-cookie']).split(';')[0]};const env=randomUUID(),target=randomUUID();f.vault.update({threshold:80,paused:true,model:{endpoint:'https://api.deepseek.com',name:'deepseek-flash-1017',apiKey:'test-key'},environments:[{id:env,name:'HK',origin:'https://hk.test',apiOrigin:'https://hk.test',token:'test-hk',delivery:{...defaultDeliveryPolicy,enabled:true,targetEnvironmentId:target,token:'test-migration'}},{id:target,name:'DE',origin:'https://de.test',apiOrigin:'https://de.test',token:'test-de'}]});const resource=f.automationStore.saveResource({name:'Materials',scenario:'migration',description:'',contentUrl:'https://content.test',referenceUrl:'',externalId:'',externalSource:'',files:[]});const site={id:randomUUID(),resourceId:resource.id,versionId:f.automationStore.versions(resource.id)[0].id,environmentId:env,siteId:randomUUID(),name:'Generated',url:'https://generated.test',createdAt:Date.now()};f.automationStore.saveSite(site);const create=(kind:'generation'|'evaluation'='evaluation')=>f.automationStore.create({resourceIds:[resource.id],kind,scope:'site',environmentId:env,generatedSiteId:site.id,requirements:''},defaultAutomationSettings)[0];const done=()=>{const t=create();t.status='completed';t.report={summary:'source report',assessments:[],issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},scores:[],quality:'passed',artifacts:[]};f.automationStore.put(t);return t;};return {...f,directory,headers,env,target,resource,site,create,done,async close(){await f.app.close();rmSync(directory,{recursive:true,force:true});}};}
+async function fixture(){const directory=mkdtempSync(join(tmpdir(),'todos-test-'));const f=await createApp({directory,serveWeb:false,startWorker:false});const login=await f.app.inject({method:'POST',url:'/api/login'}),headers={cookie:String(login.headers['set-cookie']).split(';')[0]};const env=randomUUID(),target=randomUUID();f.vault.update({threshold:80,paused:true,model:{endpoint:'https://api.deepseek.com',name:'deepseek-flash-1017',apiKey:'test-key'},environments:[{id:env,name:'HK',origin:'https://hk.test',apiOrigin:'https://hk.test',token:'test-hk',delivery:{...defaultDeliveryPolicy,enabled:true,targetEnvironmentId:target,token:'test-migration'}},{id:target,name:'DE',origin:'https://de.test',apiOrigin:'https://de.test',token:'test-de'}]});const resource=f.automationStore.saveResource({name:'Materials',scenario:'migration',description:'',contentUrl:'https://content.test',referenceUrl:'',externalId:'',externalSource:'',files:[]});const site={id:randomUUID(),resourceId:resource.id,versionId:f.automationStore.versions(resource.id)[0].id,environmentId:env,siteId:randomUUID(),name:'Generated',url:'https://generated.test',createdAt:Date.now()};f.automationStore.saveSite(site);const create=(kind:'generation'|'evaluation'='evaluation')=>{const task=f.automationStore.create({resourceIds:[resource.id],kind,scope:'site',environmentId:env,generatedSiteId:site.id,requirements:''},defaultAutomationSettings)[0];task.requirementsEnabled=false;task.learningPolicy={...task.learningPolicy!,use:false,collect:false};f.automationStore.put(task);return task;};const done=()=>{const t=create();t.status='completed';t.report={summary:'source report',assessments:[],issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},scores:[],quality:'passed',artifacts:[]};f.automationStore.put(t);return t;};return {...f,directory,headers,env,target,resource,site,create,done,async close(){await f.app.close();rmSync(directory,{recursive:true,force:true});}};}
 async function listen(server:ReturnType<typeof createServer>){await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));return `http://127.0.0.1:${(server.address() as {port:number}).port}`;}
 async function close(server:ReturnType<typeof createServer>){server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));}
 
@@ -114,14 +114,61 @@ test('material manifest maps normalized Kooboo filenames and evaluation copies r
   }finally{await f.close();}
 });
 
-test('real material preparation uses versioned folders and a durable manifest, imports SVG as an asset and finishes without invoking generation',async()=>{
+test('material preparation accepts Kooboo v2 null receipts only with matching persisted assets',async()=>{
   const {executeGeneration}=await import('../server/automation/generator.js');const {materialDestination}=await import('../server/automation/materials.js');const f=await fixture();let origin='';const uploads:string[]=[],scripts:string[]=[];
-  const server=createServer(async(req,res)=>{res.setHeader('Content-Type','application/json');if(req.method==='GET'){res.end(req.url?.startsWith('/_api/v2/Site/List')?JSON.stringify([{siteId:f.site.siteId,homePageLink:origin+'/'}]):'true');return;}let body='';for await(const c of req)body+=c;if(req.url?.startsWith('/_api/v2/Upload/File')){uploads.push(body);res.end('true');}else{scripts.push(JSON.parse(body).arguments.code);res.end(JSON.stringify({contents:[{result:true}]}));}});
+  const server=createServer(async(req,res)=>{res.setHeader('Content-Type','application/json');if(req.method==='GET'){const url=new URL(req.url!,origin);res.end(url.pathname==='/_api/v2/File/List'?JSON.stringify({files:{list:[{url:url.searchParams.get('path')+'/'+url.searchParams.get('keyword'),size:6}],totalPages:1}}):url.pathname==='/_api/v2/Site/List'?JSON.stringify([{siteId:f.site.siteId,homePageLink:origin+'/'}]):'true');return;}let body='';for await(const c of req)body+=c;if(req.url?.startsWith('/_api/v2/Upload/File')){uploads.push(body);res.end('null');}else{scripts.push(JSON.parse(body).arguments.code);res.end(JSON.stringify({contents:[{result:true}]}));}});
   origin=await listen(server);try{
     const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
     const files=[{name:'README.md',text:'![hero](images/hero banner.svg)',type:'text/markdown'},{name:'images/hero banner.svg',text:'<svg/>',type:'image/svg+xml'}].map(x=>{const bytes=Buffer.from(x.text),file={id:randomUUID(),name:x.name,type:x.type,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};mkdirSync(join(f.directory,'materials'),{recursive:true});writeFileSync(join(f.directory,'materials',file.id),bytes);return file;});
     f.automationStore.saveResource({...f.resource,files},f.resource.id,f.resource.revision);const t=f.create('generation');t.generation={deliveryState:'completed'};
     await executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000));assert.equal(uploads.length,1);assert.ok(uploads[0].includes('filename="'+files[1].id+'.svg"'));assert.ok(uploads[0].includes(`materials/${f.resource.id}/${t.versionId}/images`));assert.equal(scripts.length,2);assert.ok(scripts[1].includes('_automation-manifests/'));assert.ok(t.message.includes(materialDestination(f.resource.id,t.versionId,files[1]).path));assert.equal(t.generation.prepared,true);assert.equal(t.stage,'handoff');
+  }finally{await close(server);await f.close();}
+});
+
+test('material preparation resumes confirmed files and rejects HTTP success without persistence',async()=>{
+  const {executeGeneration}=await import('../server/automation/generator.js');const {materialDestination}=await import('../server/automation/materials.js');const f=await fixture();
+  const uploads:string[]=[],scripts:string[]=[];let origin='',receipt:unknown=null,confirmation:'missing'|'wrong-path'|'wrong-size'|'match'='missing';
+  const server=createServer(async(req,res)=>{
+    res.setHeader('Content-Type','application/json');const url=new URL(req.url!,origin);
+    if(req.method==='GET'){
+      if(url.pathname==='/_api/v2/File/List'){res.end(JSON.stringify({files:{list:confirmation==='missing'?[]:[{url:confirmation==='wrong-path'?'/elsewhere':url.searchParams.get('path')+'/'+url.searchParams.get('keyword'),size:confirmation==='wrong-size'?123:6}],totalPages:1}}));return;}
+      res.end(url.pathname==='/_api/v2/Site/List'?JSON.stringify([{siteId:f.site.siteId,homePageLink:origin+'/'}]):'true');return;
+    }
+    let body='';for await(const chunk of req)body+=chunk;
+    if(url.pathname==='/_api/v2/Upload/File'){uploads.push(body);res.end(JSON.stringify(receipt));}
+    else {scripts.push(JSON.parse(body).arguments.code);res.end(JSON.stringify({contents:[{result:true}]}));}
+  });
+  origin=await listen(server);try{
+    const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
+    const files=[{name:'README.md',text:'Source content',type:'text/markdown'},{name:'DH Trading/images/badge.svg',text:'<svg/>',type:'image/svg+xml'}].map(x=>{const bytes=Buffer.from(x.text),file={id:randomUUID(),name:x.name,type:x.type,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};mkdirSync(join(f.directory,'materials'),{recursive:true});writeFileSync(join(f.directory,'materials',file.id),bytes);return file;});
+    f.automationStore.saveResource({...f.resource,files},f.resource.id,f.resource.revision);let task=f.create('generation');task.generation={deliveryState:'completed'};
+    for(const mismatch of ['missing','wrong-path','wrong-size'] as const){
+      confirmation=mismatch;await assert.rejects(executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000)),/上传资料未确认/);
+      task=f.automationStore.task(task.id)!;assert.equal(task.generation?.importedMaterials?.[files[0].id],files[0].sha256);assert.equal(task.generation?.importedMaterials?.[files[1].id],undefined);assert.notEqual(task.generation?.prepared,true);
+    }
+    confirmation='match';for(const invalid of [false,{success:false},'true']){receipt=invalid;await assert.rejects(executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000)),/回执异常/);}
+    receipt=true;await executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000));
+    assert.equal(scripts.length,2,'confirmed README is not rewritten; only the final manifest is added');assert.equal(uploads.length,7);assert.equal(task.generation?.prepared,true);assert.ok(task.message.includes('README.md → kfile:'));assert.ok(task.message.includes(materialDestination(task.resourceId,task.versionId,files[1]).path));
+    assert.equal(task.generation?.importedMaterials?.[files[1].id],files[1].sha256);assert.equal(task.stage,'handoff');
+  }finally{await close(server);await f.close();}
+});
+
+test('a completed generation receipt still allows an explicit continuation in the original conversation',async()=>{
+  const {executeGeneration}=await import('../server/automation/generator.js');const f=await fixture();let origin='';
+  const server=createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(req.url?.startsWith('/_api/v2/Site/List')?JSON.stringify([{siteId:f.site.siteId,homePageLink:origin+'/'}]):'true');});
+  origin=await listen(server);try{
+    const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
+    const task=f.create('generation'),conversationId=randomUUID(),previousDelivery=randomUUID();
+    task.generation={prepared:true,deliveryState:'completed',deliveryId:previousDelivery,conversationId,next:{action:'continue',reason:'Chat stopped without a homepage',message:'Continue the original homepage task using the imported materials.',evidence:['verified-original-conversation']}};
+    let delivered:Parameters<Awaited<ReturnType<typeof import('../server/automation/generation-session.js').generationSession>>['deliver']>[0]|undefined,closed=0;
+    const openSession:typeof import('../server/automation/generation-session.js').generationSession=async()=>({
+      snapshot:async()=>({version:1,taskId:task.id,siteId:f.site.siteId,conversationId,runId:'verified-run',ready:true,running:false,state:'completed',observedAt:Date.now(),pending:null,context:[],outcome:{conversationId,runId:'verified-run',status:'completed',time:Date.now()},delivery:{id:delivered?.id||previousDelivery,state:'accepted',conversationId}}),
+      deliver:async input=>{delivered=input;return {id:input.id,state:'accepted',conversationId};},close:async()=>{closed++;},
+    });
+    await executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000),openSession);
+    assert.equal(delivered?.conversationId,conversationId);assert.match(delivered?.text||'',/Continue the original homepage/);assert.notEqual(delivered?.id,previousDelivery);assert.equal(task.generation.next,undefined);assert.equal(task.generation.deliveryState,'completed');assert.equal(task.stage,'handoff');assert.equal(closed,1);assert.equal(f.automationStore.sites().length,1);
+    await executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000),async()=>{throw new Error('A retry without an explicit continuation must not redeliver');});
+    assert.equal(closed,1);
   }finally{await close(server);await f.close();}
 });
 

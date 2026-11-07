@@ -8,6 +8,7 @@ import { Pending, UnconfirmedStop } from './errors.js';
 import { koobooClient } from './kooboo.js';
 
 export interface GenerationObservation {
+  imageInput?: boolean;
   usage?:{id:string;conversationId:string;runId:string;provider:string;model:string;startedAt:number;endedAt:number;status:'unknown'|'completed'|'failed';raw:Record<string,unknown>|null;note?:string}[];usageError?:string;
   version:number;taskId:string;siteId:string;conversationId:string;runId:string;ready:boolean;running:boolean;state:string;observedAt:number;
   pending:{callId:string;name:string;args:Record<string,unknown>}|null;
@@ -74,7 +75,7 @@ export async function generationSession(task:AutomationTask,store:AutomationStor
     const expected=expectedConversation;
     // snapshot may describe the last selected chat; restore the pinned identity before acting.
     if(expected&&state.conversationId!==expected){await page.evaluate(id=>(window as any).__koobooAutomation.selectConversation(id),expected);state=await snapshot();}
-    return {snapshot,deliver:async(input:{id:string;conversationId:string;text?:string;answer?:Record<string,unknown>;callId?:string})=>{
+    return {snapshot,deliver:async(input:{id:string;conversationId:string;text?:string;answer?:Record<string,unknown>;callId?:string;images?:{uri:string;mediaType:'image/png'}[]})=>{
       signal.throwIfAborted();return page.evaluate(value=>(window as any).__koobooAutomation.deliver(value),input) as Promise<GenerationObservation['delivery']>;
     },close:async()=>{signal.removeEventListener('abort',onAbort);await close();}};
   } catch(error) {signal.removeEventListener('abort',onAbort);await close();throw error;}

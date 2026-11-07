@@ -91,6 +91,30 @@ test('execution history is paginated newest first and compact notices retain his
   } finally { await f.close(); }
 });
 
+test('a new full-site run preserves the earlier homepage scores as history without making them current-site results', async () => {
+  const f = await fixture();
+  try {
+    f.child.status = 'completed'; f.child.siteRevision = randomUUID();
+    f.child.report = { summary: 'Homepage result', quality: 'passed', scores: [{ viewport: 'desktop', value: 91.8 }, { viewport: 'mobile', value: 91 }], assessments: [], issues: [], coverage: { verified: [], unverified: [], outOfScope: [] }, artifacts: [] };
+    f.automationStore.publishSiteReport(f.child); f.automationStore.put(f.child);
+    const overview = async () => (await f.app.inject({ url: '/api/automation/overview?view=compact', headers: f.headers })).json();
+    const before = (await overview()).tasks.find((item: any) => item.id === f.child.id);
+    assert.equal(before.reportCurrent, true);
+    const next = f.automationStore.create({ resourceIds: [f.parent.resourceId], kind: 'generation', scope: 'site', environmentId: f.parent.environmentId, generatedSiteId: f.parent.generatedSiteId!, requirements: '' }, defaultAutomationSettings)[0];
+    f.automationStore.beginSiteChange(next);
+    const evaluation = f.automationStore.ensureEvaluation(next, defaultAutomationSettings);
+    const after = await overview(), previous = after.tasks.find((item: any) => item.id === f.child.id);
+    assert.equal(previous.scope, 'homepage'); assert.equal(previous.reportCurrent, false);
+    assert.deepEqual(previous.report.scores, f.child.report.scores);
+    assert.equal(after.tasks.find((item: any) => item.id === evaluation.id).report, null);
+    assert.equal(f.automationStore.currentReport(f.parent), undefined);
+    const current = (await f.app.inject({ url: `/api/automation/tasks/${f.parent.id}/sections/report`, headers: f.headers })).json();
+    assert.equal(current.report, null);
+    const historical = (await f.app.inject({ url: `/api/automation/tasks/${f.child.id}/sections/report`, headers: f.headers })).json();
+    assert.deepEqual(historical.report.scores, f.child.report.scores);
+  } finally { await f.close(); }
+});
+
 test('report and notification deep links select the requested section, default task entry stays on overview', () => {
   assert.equal(initialTaskTab(''), 'overview'); assert.equal(initialTaskTab('tab=report'), 'report'); assert.equal(initialTaskTab('tab=usage'), 'usage'); assert.equal(initialTaskTab('tab=invalid'), 'overview');
 });

@@ -22,6 +22,7 @@ import { normalizeSiteDomain } from './lib/site-domain.js';
 import { AutomationStore } from './automation/store.js';
 import { AutomationWorker } from './automation/worker.js';
 import { registerAutomationApi } from './automation/api.js';
+import { registerDiagnosticApi } from './diagnostics/api.js';
 
 const domainSchema = z.string().max(253).transform((value, context) => {
   try { return normalizeSiteDomain(value); }
@@ -263,6 +264,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
 
   registerPublicApi(app, store, vault, artifacts);
   registerAutomationApi(app, automationStore, vault, directory, id => automationWorker.cancel(id), id => automationWorker.owns(id));
+  registerDiagnosticApi(app, automationStore, vault, directory);
 
   const dist = resolve(process.cwd(), 'dist');
   if (options.serveWeb !== false && existsSync(dist)) await app.register(staticFiles, { root: dist, prefix: '/' });

@@ -64,6 +64,8 @@ node docs/conversation-diagrams/render.mjs /绝对路径/node_modules/mermaid /�
 
 - [36 · 迁移清单驱动生成、对账与独立评测（仅源码）](#diagram-36)
 
+- [47 · 完整站点与平台执行档案的一键排障导出（仅源码）](#diagram-47)
+
 <a id="diagram-01"></a>
 
 ## 01 · 初始架构：Admin、插件、评分平台与评测执行器
@@ -707,4 +709,29 @@ flowchart TD
     D -->|数据与路由检查通过| F[独立评测复核来源与目标]
     F -->|发现遗漏或质量问题| E
     F -->|必交付项验证通过| G[结合质量与上线条件判定交付]
+```
+
+<a id="diagram-47"></a>
+
+## 47 · 完整站点与平台执行档案的一键排障导出
+
+2026-11-08 追加。方案已具备实施基础，尚未实现或真实验收。
+
+[Mermaid](mermaid/47.mmd) · [来源上下文](source-messages.md#diagnostic-export-2026-11-08) · [讨论记录](../diagnostic-export-discussion-2026-11-08.md)
+
+状态：仅源码，未导出 SVG/PNG。
+
+```mermaid
+flowchart TD
+    A[生成站或失败任务：导出排障包] --> B[固定关联范围与导出截止时间]
+    B --> C[收集平台记录与已有证据]
+    B --> D{Kooboo 站点可导出吗}
+    D -->|可以| E[原生全部导出：完整模式]
+    D -->|离线、未建站或失败| F[记录站点包缺失与原因]
+    C --> G[整理目录、脱敏平台凭证并核对文件]
+    E --> G
+    F --> G
+    G --> H[生成摘要、索引与校验信息]
+    H --> I[下载一个 ZIP]
+    I --> J[离线分析站点与执行过程]
 ```

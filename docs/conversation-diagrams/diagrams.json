@@ -5,7 +5,7 @@
   "timezone": "Asia/Shanghai",
   "scannedTurns": 69,
   "sourceMessages": 32,
-  "count": 36,
+  "count": 37,
   "scope": "最初 34 张为 2026-11-07 归档时的历史快照；自 2026-11-08 起持续追加主对话 Mermaid 原始源码。扫描轮次与原始回复数保留历史快照统计，新增图表单独记录来源上下文和导出状态。",
   "diagrams": [
     {
@@ -478,6 +478,21 @@
       "note": "来自「提炼会话经验」会话。用户确认迁移清单方向；本图为流程细化提案，尚未实施。仅源码，未导出 SVG/PNG；未采集消息 ID。",
       "renderStatus": "source-only",
       "sourceMessagePath": "source-messages.md#migration-manifest-2026-11-08"
+    },
+    {
+      "number": 47,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b017-8429-7b31-b8e9-12da959bbec2",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[生成站或失败任务：导出排障包] --> B[固定关联范围与导出截止时间]\n    B --> C[收集平台记录与已有证据]\n    B --> D{Kooboo 站点可导出吗}\n    D -->|可以| E[原生全部导出：完整模式]\n    D -->|离线、未建站或失败| F[记录站点包缺失与原因]\n    C --> G[整理目录、脱敏平台凭证并核对文件]\n    E --> G\n    F --> G\n    G --> H[生成摘要、索引与校验信息]\n    H --> I[下载一个 ZIP]\n    I --> J[离线分析站点与执行过程]\n",
+      "title": "完整站点与平台执行档案的一键排障导出",
+      "file": "47",
+      "note": "主对话用户确认 Kooboo 原生完整站点 ZIP 加平台资料，并要求绘图、准备实施。方案具备实施基础，尚未实施或真实导出验收；仅源码，未采集消息 ID。",
+      "renderStatus": "source-only",
+      "sourceMessagePath": "source-messages.md#diagnostic-export-2026-11-08"
     }
   ],
   "updatedDate": "2026-11-08",

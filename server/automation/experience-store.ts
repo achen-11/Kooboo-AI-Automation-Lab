@@ -1,7 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
 import type { AutomationStore } from './store.js';
-import type { AutomationTask } from '../../shared/automation.js';
+import type { AutomationTask, Scenario } from '../../shared/automation.js';
 import { scenarios } from '../../shared/automation.js';
 import { defaultLearningSettings, type Experience, type ExperienceInput, type ExperienceStage, type ExperienceRevision, type LearningRun } from '../../shared/experience.js';
 import { Conflict } from '../lib/store.js';
@@ -14,7 +14,15 @@ export class ExperienceStore {
     CREATE TABLE IF NOT EXISTS auto_learning_runs(id TEXT PRIMARY KEY,key TEXT UNIQUE NOT NULL,status TEXT NOT NULL,created_at INTEGER NOT NULL,json TEXT NOT NULL);
     CREATE INDEX IF NOT EXISTS auto_learning_queue ON auto_learning_runs(status,created_at);`);}
   get(id:string):Experience|undefined {const row=this.store.db.prepare('SELECT json FROM auto_experiences WHERE id=?').get(id);return row?JSON.parse(row.json):undefined;}
-  page(page=1,size=20,search='',enabled?:boolean){const where='WHERE (?=\'\' OR json_extract(json,\'$.title\') LIKE ?) AND (? IS NULL OR json_extract(json,\'$.enabled\')=?)';const args=[search,'%'+search+'%',enabled===undefined?null:Number(enabled),enabled===undefined?null:Number(enabled)];const total=Number(this.store.db.prepare('SELECT COUNT(*) n FROM auto_experiences '+where).get(...args).n),pages=Math.max(1,Math.ceil(total/size));page=Math.min(page,pages);return {page,pages,total,items:this.store.db.prepare('SELECT json FROM auto_experiences '+where+' ORDER BY json_extract(json,\'$.updatedAt\') DESC LIMIT ? OFFSET ?').all(...args,size,(page-1)*size).map(r=>JSON.parse(r.json) as Experience)};}
+  page(page=1,size=20,search='',enabled?:boolean,scenario?:Scenario,stage?:ExperienceStage){
+    const where=`WHERE (?='' OR json_extract(json,'$.title') LIKE ?)
+      AND (? IS NULL OR json_extract(json,'$.enabled')=?)
+      AND (? IS NULL OR EXISTS(SELECT 1 FROM json_each(auto_experiences.json,'$.scenarios') WHERE value=?))
+      AND (? IS NULL OR EXISTS(SELECT 1 FROM json_each(auto_experiences.json,'$.stages') WHERE value=?))`;
+    const state=enabled===undefined?null:Number(enabled),args=[search,'%'+search+'%',state,state,scenario??null,scenario??null,stage??null,stage??null];
+    const total=Number(this.store.db.prepare('SELECT COUNT(*) n FROM auto_experiences '+where).get(...args).n),pages=Math.max(1,Math.ceil(total/size));page=Math.min(page,pages);
+    return {page,pages,total,items:this.store.db.prepare('SELECT json FROM auto_experiences '+where+" ORDER BY json_extract(json,'$.updatedAt') DESC, id ASC LIMIT ? OFFSET ?").all(...args,size,(page-1)*size).map(r=>JSON.parse(r.json) as Experience)};
+  }
   history(id:string,page=1,size=10){const total=Number(this.store.db.prepare('SELECT COUNT(*) n FROM auto_experience_revisions WHERE id=?').get(id).n),pages=Math.max(1,Math.ceil(total/size));page=Math.min(page,pages);return {page,pages,total,items:this.store.db.prepare('SELECT json FROM auto_experience_revisions WHERE id=? ORDER BY revision DESC LIMIT ? OFFSET ?').all(id,size,(page-1)*size).map(r=>JSON.parse(r.json) as ExperienceRevision)};}
   save(input:ExperienceInput,options:{id?:string;revision?:number;actor:'human'|'ai';reason:string;enabled?:boolean;taskId?:string;evidence?:string[];verdict?:Experience['evidence']}):Experience {
     return this.store.db.transaction(()=>{

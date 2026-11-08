@@ -13,7 +13,7 @@ import { Conflict } from '../lib/store.js';
 const params=z.object({id:z.string().uuid()}),pagination=z.object({page:z.coerce.number().int().min(1).max(1000000).default(1),pageSize:z.coerce.number().int().min(1).max(100).default(20)});
 export function registerLearningApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,owns:(id:string)=>boolean){
   const experiences=new ExperienceStore(store),manifests=new ManifestStore(store);
-  app.get('/api/automation/experiences',async req=>{const q=pagination.extend({search:z.string().max(200).default(''),enabled:z.enum(['true','false']).optional()}).parse(req.query);return experiences.page(q.page,q.pageSize,q.search,q.enabled===undefined?undefined:q.enabled==='true');});
+  app.get('/api/automation/experiences',async req=>{const q=pagination.extend({search:z.string().max(200).default(''),enabled:z.enum(['true','false']).optional(),scenario:experienceInput.shape.scenarios.element.optional(),stage:experienceInput.shape.stages.element.optional()}).parse(req.query);return experiences.page(q.page,q.pageSize,q.search,q.enabled===undefined?undefined:q.enabled==='true',q.scenario,q.stage);});
   app.get('/api/automation/experiences/:id',async(req,reply)=>{const{id}=params.parse(req.params),item=experiences.get(id);return item?{item}:reply.code(404).send({error:'经验不存在'});});
   app.get('/api/automation/experiences/:id/history',async req=>{const{id}=params.parse(req.params),q=pagination.parse(req.query);return experiences.history(id,q.page,q.pageSize);});
   app.post('/api/automation/experiences',async req=>{const{input,reason}=z.object({input:experienceInput,reason:z.string().min(1).max(4000)}).parse(req.body);return experiences.save(input,{actor:'human',reason});});

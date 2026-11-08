@@ -1,6 +1,6 @@
 import MarkdownIt from 'markdown-it';
-import type { MaterialTreeFile } from './material-browser';
-import { materialFormat } from './material-browser';
+import type { MaterialTreeFile } from './material-browser.js';
+import { materialFormat } from './material-browser.js';
 
 export function isMaterialMarkdown(file: Pick<MaterialTreeFile, 'name' | 'type'>): boolean {
   return /\.(md|markdown)$/i.test(file.name) || /^text\/(?:x-)?markdown(?:;|$)/i.test(file.type || '');

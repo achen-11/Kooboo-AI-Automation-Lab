@@ -63,6 +63,36 @@ test('experience history is optimistic, AI cannot override manual disable, and p
     const restored=await f.app.inject({method:'POST',url:`/api/automation/experiences/${e.id}/restore`,headers:f.headers,payload:{from:1,revision:3,reason:'回看初版'}});assert.equal(restored.statusCode,200);assert.equal(restored.json().revision,4);assert.equal(restored.json().enabled,false);assert.equal(es.history(e.id,1,2).items.length,2);
   }finally{await f.close();}
 });
+test('experience library filters scenarios and stages before pagination, combined with title and status',async()=>{
+  const f=await fixture();try{
+    const es=new ExperienceStore(f.automationStore);
+    const add=(title:string,scenarios:ExperienceInput['scenarios'],stages:ExperienceInput['stages'],enabled=true)=>es.save({...experience,title,scenarios,stages,guidance:title+'的执行建议'},{actor:'human',reason:'筛选测试',enabled});
+    const both=add('导航共用经验',['site-template','materials'],['generation','evaluation']);
+    const generation=add('导航生成经验',['site-template'],['generation']);
+    add('导航停用经验',['site-template'],['evaluation'],false);
+    add('资料评测经验',['materials'],['evaluation']);
+    add('跟进经验',['site-template'],['followup']);
+    async function get(query=''){
+      const response=await f.app.inject({url:'/api/automation/experiences'+query,headers:f.headers});
+      assert.equal(response.statusCode,200);return response.json();
+    }
+    assert.equal((await get()).total,5);
+    assert.equal((await get('?scenario=site-template')).total,4);
+    assert.equal((await get('?stage=evaluation')).total,3);
+    const selected=await get('?scenario=site-template&stage=generation&enabled=true&search='+encodeURIComponent('导航'));
+    assert.equal(selected.total,2);assert.deepEqual(new Set(selected.items.map((e:{id:string})=>e.id)),new Set([both.id,generation.id]));
+    const first=await get('?scenario=site-template&stage=generation&pageSize=1');
+    const second=await get('?scenario=site-template&stage=generation&pageSize=1&page=2');
+    assert.equal(first.total,2);assert.equal(first.pages,2);assert.equal(first.items.length,1);assert.equal(second.page,2);assert.equal(second.total,2);assert.notEqual(first.items[0].id,second.items[0].id);
+    const disabled=await get('?scenario=site-template&stage=evaluation&enabled=false');
+    assert.equal(disabled.total,1);assert.equal(disabled.items[0].enabled,false);
+    const clamped=await get('?scenario=materials&stage=evaluation&pageSize=1&page=99');
+    assert.equal(clamped.total,2);assert.equal(clamped.page,2);
+    const empty=await get('?scenario=materials&stage=followup&page=99');
+    assert.deepEqual({total:empty.total,pages:empty.pages,page:empty.page,items:empty.items},{total:0,pages:1,page:1,items:[]});
+    for(const query of ['?scenario=unknown','?stage=unknown'])assert.equal((await f.app.inject({url:'/api/automation/experiences'+query,headers:f.headers})).statusCode,400);
+  }finally{await f.close();}
+});
 test('new evidence deduplicates reflection, workflow shares learning budget, failed reflection rolls back and keeps valid report',async()=>{
   const f=await fixture();try{
     const es=new ExperienceStore(f.automationStore),root=f.create(),child=f.create('homepage',root.id);child.report=report();child.report.summary='本轮独立评测';child.status='completed';f.automationStore.put(child);

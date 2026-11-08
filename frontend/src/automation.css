@@ -40,8 +40,8 @@
 .attachment small{color:var(--muted);white-space:nowrap;}
 .version-entry{border-bottom:1px solid var(--line);padding:18px 0;}
 .version-entry:last-child{border-bottom:0;}
-.version-entry summary{display:flex;align-items:center;gap:9px;cursor:pointer;}
-.version-entry summary>span{margin-left:auto;font-size:12px;color:var(--muted);}
+.version-entry>summary{display:flex;align-items:center;gap:9px;cursor:pointer;}
+.version-entry>summary>span{margin-left:auto;font-size:12px;color:var(--muted);}
 .version-entry>p{margin-top:10px;}
 .resource-task{padding:18px 24px;display:flex;align-items:center;gap:24px;border-bottom:1px solid var(--line);}
 .resource-task>a{margin-right:auto;}

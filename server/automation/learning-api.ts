@@ -9,6 +9,7 @@ import { ExperienceStore, experienceInput } from './experience-store.js';
 import { queueReflection } from './experience.js';
 import { ManifestStore, manifestInput } from './completeness.js';
 import { Conflict } from '../lib/store.js';
+import { retainRequestReservation } from './request-budget.js';
 
 const params=z.object({id:z.string().uuid()}),pagination=z.object({page:z.coerce.number().int().min(1).max(1000000).default(1),pageSize:z.coerce.number().int().min(1).max(100).default(20)});
 export function registerLearningApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,owns:(id:string)=>boolean){
@@ -62,6 +63,6 @@ export function registerLearningApi(app:FastifyInstance,store:AutomationStore,va
     const row=store.db.prepare("SELECT r.*,u.task_id AS taskId FROM auto_model_requests r JOIN auto_usage u ON u.event_id=r.id AND u.source='codex' WHERE r.id=?").get(body.requestId);
     if(!row||!store.workflowIds(task).includes(row.taskId))throw new Conflict('预算记录不属于当前工作流');
     if(store.tasks().some(t=>!t.stopped&&new ExperienceStore(store).workflow(t).id===experiences.workflow(task).id)||store.db.prepare("SELECT id FROM auto_learning_runs WHERE status='running' AND json_extract(json,'$.workflowId')=?").get(experiences.workflow(task).id))throw new Conflict('同工作流仍有活动执行，请等待全部停止');
-    store.db.prepare("UPDATE auto_model_requests SET state='complete' WHERE id=? AND state<>'complete'").run(body.requestId);store.event(task.id,`人工确认保留未知用量预占 ${row.charged} token（不清零、不当作已知实际费用）：${body.reason}`);return {ok:true,retainedTokens:row.charged};
+    retainRequestReservation(store.db,body.requestId);store.event(task.id,`人工确认保留未知用量预占 ${row.charged} token（不清零、不当作已知实际费用）：${body.reason}`);return {ok:true,retainedTokens:row.charged};
   });
 }

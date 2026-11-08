@@ -9,7 +9,11 @@ export interface RequestBudgetPolicy {
   key: string; runKey: string; maxTokens: number; maxRequests: number;
   initialTokens?: number; maxOutputTokens?: number;
 }
-/** Missing usage retains a durable reservation and blocks further requests. */
+/** Call only after the owner has stopped. Keep the estimate distinct from actual usage. */
+export function retainRequestReservation(db: Database, id: string) {
+  return db.prepare("UPDATE auto_model_requests SET state='retained' WHERE id=? AND state IN ('active','unknown')").run(id);
+}
+/** Missing usage blocks requests until stopped execution is explicitly recovered. */
 export class RequestBudget {
   constructor(private db: Database, readonly policy: RequestBudgetPolicy) {
     db.exec(`CREATE TABLE IF NOT EXISTS auto_model_accounts(id TEXT PRIMARY KEY, initial_tokens INTEGER NOT NULL);
@@ -21,7 +25,7 @@ export class RequestBudget {
   }
   state() {
     const seed = Number(this.db.prepare('SELECT initial_tokens FROM auto_model_accounts WHERE id=?').get(this.policy.key)!.initial_tokens);
-    const row = this.db.prepare("SELECT COALESCE(SUM(charged),0) AS charged,COUNT(CASE WHEN state<>'complete' THEN 1 END) AS unknown FROM auto_model_requests WHERE account_id=?").get(this.policy.key)!;
+    const row = this.db.prepare("SELECT COALESCE(SUM(charged),0) AS charged,COUNT(CASE WHEN state NOT IN ('complete','retained') THEN 1 END) AS unknown FROM auto_model_requests WHERE account_id=?").get(this.policy.key)!;
     const requests = Number(this.db.prepare('SELECT COUNT(*) AS n FROM auto_model_requests WHERE account_id=? AND run_key=?').get(this.policy.key, this.policy.runKey)!.n);
     return { spent: seed + Number(row.charged), unknown: Number(row.unknown), requests };
   }

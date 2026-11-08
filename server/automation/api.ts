@@ -18,6 +18,7 @@ import { registerLearningApi } from './learning-api.js';
 import { learningSettingsSchema } from './experience-store.js';
 import { executionTaskIds } from '../../shared/execution-log.js';
 import { registerSiteDeliveryApi } from './site-delivery.js';
+import { retainStoppedFollowupReservations } from './budget-recovery.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -68,7 +69,25 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   });
   app.post('/api/automation/notifications/:id/read',async(request,reply)=>{const{id}=params.parse(request.params);const notice=store.readNotice(id);return notice?{ok:true,readAt:notice.readAt}:reply.code(404).send({error:'通知不存在或已更新'});});
   app.post('/api/automation/notifications/read',async()=>({ok:true,readAt:store.readAllNotices()}));
-  app.post('/api/automation/tasks/:id/resume',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task||owns(id)||!task.stopped||!['pending','interrupted','failed'].includes(task.status))throw new Conflict('只能恢复已确认停止的任务');const root=store.root(task);if(root?.optimization){const run=root.optimization;if(run.state==='completed')throw new Conflict('优化目标已达成');run.state=task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';run.reason='';run.nextSteps=[];delete run.stoppedAt;store.put(root,true);if(task.id===root.id)task.optimization=run;}if(task.followup)task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);store.scheduleFollowup(task,root?.optimization?.recoveryPolicy||vault.automation().followup);return task;});
+  app.post('/api/automation/tasks/:id/resume',async(request)=>{
+    const{id}=params.parse(request.params);
+    return store.db.transaction(()=>{
+      const task=store.task(id);
+      if(!task||owns(id)||!task.stopped||!['pending','interrupted','failed'].includes(task.status))throw new Conflict('只能恢复已确认停止的任务');
+      const root=store.root(task);
+      if(root?.optimization?.state==='completed')throw new Conflict('优化目标已达成');
+      retainStoppedFollowupReservations(task,store,owns);
+      if(root?.optimization){
+        const run=root.optimization;
+        run.state=task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';
+        run.reason='';run.nextSteps=[];delete run.stoppedAt;store.put(root,true);
+        if(task.id===root.id)task.optimization=run;
+      }
+      if(task.followup)task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);
+      store.scheduleFollowup(task,root?.optimization?.recoveryPolicy||vault.automation().followup);
+      return task;
+    });
+  });
   app.get('/api/automation/resources',async()=>({items:store.resources()}));
   app.get('/api/automation/resources/:id',async(request,reply)=>{const {id}=params.parse(request.params);const item=store.resource(id);return item?{resource:item,versions:store.versions(id),sites:store.sites(id),tasks:store.tasks().filter(t=>t.resourceId===id)}:reply.code(404).send({error:'资源不存在'});});
   app.post('/api/automation/resources',{bodyLimit:4*1024*1024},async(request,reply)=>{const input=resource.parse(request.body);checkFiles(input.files);const key=request.headers['idempotency-key'];if(!key)return reply.code(201).send(store.saveResource(input));const id='resource:'+z.string().min(8).max(150).parse(key),hash=createHash('sha256').update(JSON.stringify(input)).digest('hex');const result=store.db.transaction(()=>{const old=store.db.prepare('SELECT hash,json FROM auto_requests WHERE id=?').get(id);if(old){if(old.hash!==hash)throw new Conflict('同一个导入请求不能变更资料内容');return JSON.parse(old.json);}const value=store.saveResource(input);store.db.prepare('INSERT INTO auto_requests VALUES(?,?,?)').run(id,hash,JSON.stringify(value));return value;});return reply.code(201).send(result);});

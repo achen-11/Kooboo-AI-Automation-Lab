@@ -33,6 +33,8 @@ npm start
 
 开发时运行 `npm run dev` 启动 Node API 与 Worker；另开终端运行 `npm run dev:web` 可使用 `http://127.0.0.1:4181` 的前端热更新，API 代理到 4180。
 
+`npm run dev` 会在后端或其依赖文件变动时重启 API 与 Worker，并中断在途任务。需要持续执行真实任务时，使用上面的 `npm run build`、`npm start` 运行已构建服务；源码编辑不会触发该进程重启。更新构建与切换服务应安排在活动任务停止后进行。若开发重启留下跟进用量未确认的请求，确认执行停止后点击“恢复任务”，系统保留预算预占与未知费用并继续原任务。
+
 ```sh
 npm test
 npm run check

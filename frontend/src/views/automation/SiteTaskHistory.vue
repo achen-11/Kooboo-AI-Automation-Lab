@@ -12,7 +12,7 @@ const { data, error, loading, load } = useTaskSection<{ items: TaskSummary[]; pa
   () => `/automation/site-deliveries/${props.siteId}/tasks?page=${page.value}&pageSize=10`, () => page.value === 1 ? props.revision : '');
 </script>
 <template>
-  <div class="site-history">
+  <div class="site-task-history">
     <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
     <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="16" />正在加载执行历史…</p>
     <div v-if="data" class="table-scroll"><table class="task-table"><thead><tr><th>阶段</th><th>状态</th><th>本条成本</th><th>创建时间</th><th /></tr></thead><tbody>
@@ -21,4 +21,4 @@ const { data, error, loading, load } = useTaskSection<{ items: TaskSummary[]; pa
     <TablePagination v-if="data" :page="data.page" :pages="data.pages" :total="data.total" :busy="loading" @change="page=$event" />
   </div>
 </template>
-<style scoped>.site-history{margin-top:16px}.site-history table{min-width:600px}</style>
+<style scoped>.site-task-history{display:block;width:100%;min-width:0;margin-top:16px}.site-task-history table{min-width:600px}</style>

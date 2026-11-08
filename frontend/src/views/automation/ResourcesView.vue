@@ -1,5 +1,7 @@
 <script setup lang="ts">
 import { notify } from '../../lib/notifications';
+import { siteReportLink } from '../../lib/site-reports';
+import type { SiteDeliverySummary } from '../../../../shared/site-delivery';
 import { computed, nextTick, onMounted, ref, useId, watch } from 'vue';
 import { Plus, Search, Upload, Play, FolderOpen, ArrowLeft, Pencil, ExternalLink, File, FileText, X, LoaderCircle, Link, History, ChevronLeft, ChevronRight, ChevronDown, Check } from '@lucide/vue';
 import BaseSelect from '../../components/BaseSelect.vue';
@@ -15,6 +17,17 @@ const query=ref(''),scenario=ref(''),page=ref(1),selected=ref<string[]>([]),erro
 const editDialog=ref<HTMLDialogElement>(),attachDialog=ref<HTMLDialogElement>(),taskDialog=ref<InstanceType<typeof CreateTaskDialog>>();
 const batchDialog=ref<InstanceType<typeof BatchMaterialImport>>(),materialUploader=ref<InstanceType<typeof MaterialUploader>>(),editSession=ref(0),pendingUploads=ref(false);
 const busy=ref(false),uploading=ref(false),editing=ref<Resource|null>(null);const versions=ref<InputVersion[]>([]);
+const reportsLoading = ref<string | null>(null);
+async function openReports(site: GeneratedSite) {
+  if (reportsLoading.value) return;
+  reportsLoading.value = site.id;
+  try {
+    const delivery = await api<SiteDeliverySummary>(`/automation/site-deliveries/${site.id}`);
+    if (delivery.detailTaskId) go(siteReportLink(delivery.detailTaskId).slice(1));
+    else notify.info('该生成站尚未发起任务或评测');
+  } catch (reason) { notify.error(message(reason)); }
+  finally { reportsLoading.value = null; }
+}
 const blank=():ResourceInput=>({name:'',scenario:'materials',description:'',contentUrl:'',referenceUrl:'',externalSource:'',externalId:'',files:[]});
 const form=ref(blank());const taskResources=ref<Resource[]>([]),taskSite=ref<GeneratedSite>(),taskKind=ref<'generation'|'evaluation'>('generation');
 const filtered=computed(()=>workspace.resources.filter(r=>(!scenario.value||r.scenario===scenario.value)&&(!query.value||[r.name,r.description,r.contentUrl,r.externalId,r.externalSource].join(' ').toLowerCase().includes(query.value.toLowerCase()))));
@@ -58,7 +71,7 @@ async function saveAttach(){busy.value=true;try{await api('/automation/sites',{m
   </header>
   <div class="resource-detail-navigation"><nav class="segmented resource-detail-tabs" aria-label="资源详情分区"><button v-for="item in [{id:'sites',label:'生成站'},{id:'materials',label:'资料与输入'},{id:'history',label:'版本历史'},{id:'tasks',label:'任务记录'}]" :key="item.id" :class="{selected:tab===item.id}" :aria-pressed="tab===item.id" @click="tab=item.id">{{item.label}}</button></nav><span class="resource-detail-meta">{{scenarios[resource.scenario]}} · 输入版本 {{resource.revision}}</span></div>
 </div>
-<section v-if="tab==='sites'" class="panel"><div class="section-heading panel-heading"><h2>{{sites.length}} 个生成站</h2><button class="button secondary small" @click="openAttach()"><Link :size="15" />关联已有站点</button></div><div v-if="!sites.length" class="empty-state"><FolderOpen :size="30" /><h2>还没有生成站</h2><p>同一资源可以多次生成，也可以关联已有站点</p></div><div v-else class="site-grid"><article v-for="site in sites" :key="site.id" class="site-card"><h3>{{site.name}}</h3><a v-if="site.url" class="site-link" :href="site.url" target="_blank" rel="noopener noreferrer">{{site.url}}<ExternalLink :size="14" /></a><p v-else class="text-muted">公开地址待确认</p><span class="table-subtitle">{{formatDate(site.createdAt)}}</span><div class="inline-actions"><button class="button secondary small" @click="create([resource],site)">继续生成</button><button class="button primary small" :disabled="!site.url" @click="create([resource],site,'evaluation')">发起评测</button></div><a class="text-action" :href="`#/reports?site=${site.id}`">查看报告</a></article></div></section>
+<section v-if="tab==='sites'" class="panel"><div class="section-heading panel-heading"><h2>{{sites.length}} 个生成站</h2><button class="button secondary small" @click="openAttach()"><Link :size="15" />关联已有站点</button></div><div v-if="!sites.length" class="empty-state"><FolderOpen :size="30" /><h2>还没有生成站</h2><p>同一资源可以多次生成，也可以关联已有站点</p></div><div v-else class="site-grid"><article v-for="site in sites" :key="site.id" class="site-card"><h3>{{site.name}}</h3><a v-if="site.url" class="site-link" :href="site.url" target="_blank" rel="noopener noreferrer">{{site.url}}<ExternalLink :size="14" /></a><p v-else class="text-muted">公开地址待确认</p><span class="table-subtitle">{{formatDate(site.createdAt)}}</span><div class="inline-actions"><button class="button secondary small" @click="create([resource],site)">继续生成</button><button class="button primary small" :disabled="!site.url" @click="create([resource],site,'evaluation')">发起评测</button></div><button class="text-action" :disabled="Boolean(reportsLoading)" @click="openReports(site)"><LoaderCircle v-if="reportsLoading === site.id" class="spin" :size="14" />查看评测记录</button></article></div></section>
 <section v-if="tab==='materials'" class="panel resource-materials">
   <MaterialBrowser :key="resource.id" :files="resource.files">
     <template #context>

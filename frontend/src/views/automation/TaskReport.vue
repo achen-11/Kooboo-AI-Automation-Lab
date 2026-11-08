@@ -8,9 +8,11 @@ import CompletenessReport from '../../components/CompletenessReport.vue';
 import EvidenceViewer from '../../components/EvidenceViewer.vue';
 import { evidenceLabel, type EvidenceContext } from '../../lib/evidence-preview';
 import { useTaskSection } from './use-task-section';
-const props = defineProps<{ taskId: string; revision: string }>();
+import { formatDate } from '../../api';
+import { scopeName } from './common';
+const props = defineProps<{ taskId: string; revision: string; siteId?: string }>();
 const selectedRound=ref<number|null>(null);
-const { data, loading, error, load } = useTaskSection<{ taskId: string | null; report: AutomationReport | null; rule: AutomationRule | null; historical?:boolean; selectedRound?:{brief?:string;progress?:OptimizationProgress}; optimization?:{rounds:{number:number;evaluationTaskId?:string;generationTaskId:string;status:keyof typeof taskStatusNames;scores:AutomationReport['scores']|null;summary:string}[]} }>(() => `/automation/tasks/${props.taskId}/sections/report${selectedRound.value===null?'':'?round='+selectedRound.value}`, () => props.revision);
+const { data, loading, error, load } = useTaskSection<{ taskId: string | null; report: AutomationReport | null; rule: AutomationRule | null; evaluation?: {scope: 'homepage' | 'site'; createdAt: number}; historical?:boolean; selectedRound?:{brief?:string;progress?:OptimizationProgress}; optimization?:{rounds:{number:number;evaluationTaskId?:string;generationTaskId:string;status:keyof typeof taskStatusNames;scores:AutomationReport['scores']|null;summary:string}[]} }>(() => props.siteId ? `/automation/site-deliveries/${props.siteId}/reports/${encodeURIComponent(props.taskId)}` : `/automation/tasks/${props.taskId}/sections/report${selectedRound.value===null?'':'?round='+selectedRound.value}`, () => props.revision);
 const names: Record<string, string> = { desktop: 'PC', mobile: '移动端', business: '业务' };
 const qualities = { passed: '达到标准', failed: '需要改进', unverified: '有待验证' };
 const severity = { critical: '严重', major: '主要', minor: '次要' };
@@ -34,8 +36,9 @@ function openGallery(name: string) {
 <template>
   <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
   <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="17" />正在加载评测结果…</p>
+  <div v-if="data?.evaluation" class="section-heading"><h2>{{ scopeName(data.evaluation.scope) }}评测</h2><span class="text-muted small-text">{{ formatDate(data.evaluation.createdAt) }}</span></div>
   <section v-if="data?.optimization" class="panel settings-panel"><div class="section-heading"><h2>优化轮次</h2><button class="text-action" :disabled="selectedRound===null" @click="selectedRound=null">当前版本</button></div><div class="table-scroll"><table class="task-table"><thead><tr><th>轮次</th><th>状态</th><th>PC / 移动端</th><th>主要变化</th><th /></tr></thead><tbody><tr v-for="round in data.optimization.rounds" :key="round.number"><td>{{round.number?'修复 '+round.number:'初评'}}</td><td>{{taskStatusNames[round.status]}}</td><td>{{round.scores?round.scores.map(s=>(names[s.viewport]||s.viewport)+' '+(s.value??'未验证')).join(' / '):'待复评'}}</td><td class="wrapping-cell">{{round.summary}}</td><td><button class="text-action" :disabled="loading" @click="selectedRound=round.number">查看本轮</button></td></tr></tbody></table></div></section>
-  <p v-if="data?.historical" class="alert info">正在查看所选轮次的历史结果，不代表当前站点状态。</p>
+  <p v-if="data?.historical" class="alert info">正在查看历史报告，不代表当前站点状态。</p>
   <section v-if="data?.selectedRound?.brief||data?.selectedRound?.progress" class="panel settings-panel"><Disclosure v-if="data.selectedRound.brief" label="本轮修复委托"><pre class="task-technical">{{data.selectedRound.brief}}</pre></Disclosure><template v-if="data.selectedRound.progress"><p class="task-prose">{{data.selectedRound.progress.reason}}</p><Disclosure v-for="group in ([['resolved','已解决'],['remaining','仍存在'],['unverified','未验证'],['introduced','新增问题']] as const)" :key="group[0]" :label="group[1]"><ul class="task-text-list"><li v-for="text in data.selectedRound.progress[group[0]]" :key="text">{{text}}</li></ul></Disclosure></template></section>
   <section v-if="data && !data.report" class="panel empty-state"><FileText :size="30" /><h2>尚未生成有效报告</h2><p>任务仍在执行或尚未发起评测时，不显示零分。</p></section>
   <template v-if="data?.report">

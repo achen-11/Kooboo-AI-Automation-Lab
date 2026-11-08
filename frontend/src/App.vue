@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ClipboardCheck, SlidersHorizontal, FolderOpen, FileChartColumn, Settings2, ChevronLeft, RotateCw, BookOpen } from '@lucide/vue';
+import { ClipboardCheck, SlidersHorizontal, FolderOpen, Settings2, ChevronLeft, RotateCw, BookOpen } from '@lucide/vue';
 import { initialize, platform } from './api';
 import MessageHost from './components/MessageHost.vue';
 import AutomationNotifications from './components/AutomationNotifications.vue';
@@ -21,7 +21,6 @@ const ruleEditor = ref<{ dirty: boolean }>();
 const nav = [
   { path: '/resources', label: '资源库', icon: FolderOpen },
   { path: '/tasks', label: '任务中心', icon: ClipboardCheck },
-  { path: '/reports', label: '评测报告', icon: FileChartColumn },
   {path:'/experiences',label:'经验库',icon:BookOpen},
   { path: '/rules', label: '评测规则', icon: SlidersHorizontal },
   { path: '/settings', label: '系统设置', icon: Settings2 },

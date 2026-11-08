@@ -67,9 +67,9 @@ export class UsageLedger {
     const items=this.db.prepare(`SELECT json FROM auto_usage WHERE ${where} ORDER BY json_extract(json,'$.startedAt') DESC,rowid DESC LIMIT ? OFFSET ?`).all(...args,pageSize,(current-1)*pageSize).map(r=>JSON.parse(r.json) as UsageEntry);
     return {items,total,page:current,pageSize,pages};
   }
-  summary(taskId:string,children:string[]=[]):UsageSummary{
+  summary(taskId:string,children:string[]=[],stage?:UsageStage):UsageSummary{
     const ids=[...new Set([taskId,...children])];
-    const row=this.db.prepare(`SELECT COUNT(*) AS requests,COUNT(json_extract(json,'$.cny')) AS priced,COALESCE(SUM(json_extract(json,'$.tokens.input')),0) AS input,COALESCE(SUM(json_extract(json,'$.tokens.output')),0) AS output,COALESCE(SUM(json_extract(json,'$.tokens.cached')),0) AS cached,COALESCE(SUM(json_extract(json,'$.cny')),0) AS knownCny FROM auto_usage WHERE task_id IN (${ids.map(()=>'?').join(',')})`).get(...ids);
+    const row=this.db.prepare(`SELECT COUNT(*) AS requests,COUNT(json_extract(json,'$.cny')) AS priced,COALESCE(SUM(json_extract(json,'$.tokens.input')),0) AS input,COALESCE(SUM(json_extract(json,'$.tokens.output')),0) AS output,COALESCE(SUM(json_extract(json,'$.tokens.cached')),0) AS cached,COALESCE(SUM(json_extract(json,'$.cny')),0) AS knownCny FROM auto_usage WHERE task_id IN (${ids.map(()=>'?').join(',')})${stage?" AND json_extract(json,'$.stage')=?":''}`).get(...ids,...(stage?[stage]:[]));
     return {requests:Number(row.requests),priced:Number(row.priced),input:Number(row.input),output:Number(row.output),cached:Number(row.cached),knownCny:Number(row.knownCny),missing:Number(row.requests)-Number(row.priced),estimated:true,children};
   }
 }

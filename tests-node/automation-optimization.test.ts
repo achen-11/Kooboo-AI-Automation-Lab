@@ -5,20 +5,20 @@ import { mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'nod
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createApp } from '../server/app.js';
-import { defaultAutomationSettings, defaultOptimizationPolicy, type AutomationTask, type FollowupAction, type AutomationReport } from '../shared/automation.js';
+import { defaultAutomationSettings, defaultOptimizationPolicy, type AutomationTask, type FollowupAction, type AutomationReport, type Scenario, type Scope } from '../shared/automation.js';
 import { advanceOptimization, applyOptimizationAction, optimizationBudgetReason, targetReached } from '../server/automation/optimization.js';
 import { optimizationEvidence } from '../server/automation/optimization-evidence.js';
 import { executeFollowup, validateFollowupAction } from '../server/automation/followup.js';
 import { AutomationWorker, type Execute } from '../server/automation/worker.js';
 
-async function fixture(maxRounds=3) {
+async function fixture(maxRounds=3, scenario:Scenario='site-template', scope:Scope='homepage') {
   const directory=mkdtempSync(join(tmpdir(),'optimization-'));
   const f=await createApp({directory,startWorker:false,serveWeb:false});const store=f.automationStore;
   const login=await f.app.inject({method:'POST',url:'/api/login'}),headers={cookie:String(login.headers['set-cookie']).split(';')[0]};
   const settings={...structuredClone(defaultAutomationSettings),enabled:true,evaluationEndpoint:'https://model.test/v1'};f.vault.updateAutomation(settings);
-  const resource=store.saveResource({name:'Template',scenario:'site-template',contentUrl:'https://reference.test',referenceUrl:'',description:'事实内容',files:[],externalSource:'admin',externalId:'sample'});
+  const resource=store.saveResource({name:'Template',scenario,contentUrl:'https://reference.test',referenceUrl:'',description:'事实内容',files:[],externalSource:'admin',externalId:'sample'});
   const site={id:randomUUID(),resourceId:resource.id,versionId:store.versions(resource.id)[0].id,environmentId:randomUUID(),siteId:randomUUID(),name:'Original',url:'https://generated.test',createdAt:Date.now()};store.saveSite(site);
-  const root=store.create({resourceIds:[resource.id],kind:'generation',scope:'homepage',environmentId:site.environmentId,generatedSiteId:site.id,requirements:'',optimization:{...defaultOptimizationPolicy,maxRounds}},settings)[0];
+  const root=store.create({resourceIds:[resource.id],kind:'generation',scope,environmentId:site.environmentId,generatedSiteId:site.id,requirements:'',optimization:{...defaultOptimizationPolicy,maxRounds}},settings)[0];
   root.generation={prepared:true,conversationId:randomUUID(),deliveryState:'completed'};store.put(root);
   function report(task:AutomationTask,desktop=76,mobile=78):AutomationReport {return {summary:'独立报告',quality:desktop>=80&&mobile>=80?'passed':'failed',scores:[{viewport:'desktop',value:desktop},{viewport:'mobile',value:mobile}],assessments:task.rule!.criteria.flatMap(c=>c.viewports.map(viewport=>({criterionId:c.id,viewport,score:viewport==='desktop'?desktop:mobile,passed:true,reason:'截图证据',evidence:[]}))),issues:[],coverage:{verified:['本范围'],unverified:[],outOfScope:['内页']},artifacts:[]};}
   function finish(generation:AutomationTask,desktop=76,mobile=78){
@@ -55,6 +55,34 @@ test('each viewport and required evidence matter; scope-excluded uncertainty doe
     report.assessments[0].score=null;assert.equal(targetReached(f.root,report),false);
   }finally{await f.close();}
 });
+
+for (const scenario of ['migration', 'upgrade'] as const) {
+  test(`${scenario} optimization preserves original content/session and requires full-site completeness and business checks`, async () => {
+    const f = await fixture(3, scenario, 'site'); try {
+      f.finish(f.root); let root = f.advance(); assert.equal(root.optimization!.state, 'planning');
+      const child = f.repair(); assert.equal(child.generatedSiteId, root.generatedSiteId); assert.equal(child.generation!.conversationId, root.generation!.conversationId);
+      assert.match(child.message, /保留内容站及资料包的真实内容和合法资源/);
+      assert.doesNotMatch(child.message.split('\n\n')[0], /图片使用 imagePlaceholder/);
+      const evaluation = f.finish(child, 92, 93); root = f.store.task(f.root.id)!;
+      assert.equal(targetReached(root, evaluation.report!), false, 'high visual scores cannot bypass missing completeness');
+      evaluation.report!.completeness = { manifestId: randomUUID(), manifestRevision: 2, sourceComplete: true, state: 'complete', checks: [] };
+      const seo = evaluation.report!.assessments.find(item => item.criterionId === 'seo-migration')!;
+      seo.passed = false; assert.equal(targetReached(root, evaluation.report!), false);
+      seo.passed = true; f.store.put(evaluation); root = f.advance(); assert.equal(root.optimization!.state, 'completed');
+      assert.equal(root.optimization!.rounds.length, 2); assert.equal(f.store.currentReport(root)!.id, evaluation.id);
+    } finally { await f.close(); }
+  });
+
+  test(`completed ${scenario} tasks can explicitly enable bounded optimization without replacing the baseline`, async () => {
+    const f = await fixture(3, scenario); try {
+      const evaluation = f.finish(f.root), old = f.store.task(f.root.id)!; delete old.optimization; f.store.put(old);
+      const response = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${old.id}/optimize`, headers: f.headers, payload: { targetScore: 87, maxRounds: 2, maxCostCny: null } });
+      assert.equal(response.statusCode, 200); const root = f.store.task(old.id)!;
+      assert.equal(root.optimization!.reportId, evaluation.id); assert.equal(root.optimization!.policy.maxRounds, 2);
+      assert.equal(root.optimization!.policy.targetScore, 87); assert.equal(root.rule!.hash, evaluation.rule!.hash);
+    } finally { await f.close(); }
+  });
+}
 
 test('quality planning initializes its own recovery budget once and queue counts include hidden repair children',async()=>{
   const f=await fixture();try{

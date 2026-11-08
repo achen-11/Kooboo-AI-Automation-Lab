@@ -1,15 +1,19 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
 import { ArrowLeft, ArrowUpRight, ExternalLink, Ban, Play, FileText, Send, X, LoaderCircle, MoreHorizontal, CircleAlert, Check, Clock3 } from '@lucide/vue';
-import { scenarios, taskStatusNames, optimizationStateNames, type AutomationTask, type AutomationSettings, type Resource, type GeneratedSite } from '../../../../shared/automation';
+import { scenarios, taskStatusNames, optimizationStateNames, supportsAutomaticOptimization, type AutomationTask, type AutomationSettings, type Resource, type GeneratedSite } from '../../../../shared/automation';
 import { initialTaskTab, stageNames, type TaskSnapshot, type TaskTab } from '../../../../shared/task-presentation';
 import { api, formatDate, go, message } from '../../api';
 import { notify } from '../../lib/notifications';
+import { siteReportLink } from '../../lib/site-reports';
 import TaskUsage from '../../components/TaskUsage.vue';
+import SiteTaskUsage from './SiteTaskUsage.vue';
 import TaskExecution from './TaskExecution.vue';
 import TaskInput from './TaskInput.vue';
 import TaskReport from './TaskReport.vue';
+import SiteReports from './SiteReports.vue';
 import TaskDeliverySection from './TaskDeliverySection.vue';
+import SiteDeliveryPanel from './SiteDeliveryPanel.vue';
 import CreateTaskDialog from './CreateTaskDialog.vue';
 import { useTaskSection } from './use-task-section';
 import { scopeName, workspace } from './common';
@@ -21,9 +25,10 @@ const evaluation = computed(() => data.value?.evaluation);
 const optimizationActive=computed(()=>task.value?.optimization&&!['completed','stopped'].includes(task.value.optimization.state));
 const current = computed(() => task.value?.optimization?.state==='planning'?task.value:data.value?.active|| (task.value?.kind === 'generation' && task.value.status === 'completed' && evaluation.value ? evaluation.value : task.value));
 const report = computed(() => task.value?.optimization&&!data.value?.currentReportId?null:task.value?.report || evaluation.value?.report);
+const siteRefresh = ref(0);
 const busy = ref(false), actionError = ref(''), followKind = ref<'generation' | 'evaluation'>('generation'), requirements = ref('');
 const optimizeDialog=ref<HTMLDialogElement>(),optimizeScore=ref(85),optimizeRounds=ref(3),optimizeCost=ref<number|string>('');
-const canEnableOptimization=computed(()=>task.value?.kind==='generation'&&task.value.scenario==='site-template'&&!task.value.optimization&&task.value.status==='completed'&&evaluation.value?.status==='completed'&&canCreateRound.value);
+const canEnableOptimization=computed(()=>task.value?.kind==='generation'&&supportsAutomaticOptimization(task.value.scenario)&&!task.value.optimization&&task.value.status==='completed'&&evaluation.value?.status==='completed'&&canCreateRound.value);
 async function openOptimization(){more.value?.removeAttribute('open');if(busy.value)return;busy.value=true;actionError.value='';try{const settings=await api<AutomationSettings>('/automation/settings');optimizeScore.value=settings.optimization?.targetScore??85;optimizeRounds.value=settings.optimization?.maxRounds??3;optimizeCost.value=settings.optimization?.maxCostCny??'';optimizeDialog.value?.showModal();}catch(reason){actionError.value=message(reason);}finally{busy.value=false;}}
 async function enableOptimization(){if(!task.value||busy.value)return;busy.value=true;actionError.value='';try{await api(`/automation/tasks/${task.value.id}/optimize`,{method:'POST',body:JSON.stringify({targetScore:optimizeScore.value,maxRounds:optimizeRounds.value,maxCostCny:optimizeCost.value===''?null:Number(optimizeCost.value)})});optimizeDialog.value?.close();notify.success('已开启自动优化');await load();}catch(reason){actionError.value=message(reason);}finally{busy.value=false;}}
 const followDialog = ref<HTMLDialogElement>(), more = ref<HTMLDetailsElement>();
@@ -59,7 +64,11 @@ const qualities = { passed: '达到标准', failed: '需要改进', unverified: 
 const viewportNames: Record<string, string> = { desktop: 'PC', mobile: '移动端', business: '业务' };
 function selectTab(value: TaskTab) {
   tab.value = value; more.value?.removeAttribute('open');
-  window.history.replaceState(null, '', `#/tasks/${props.id}${value === 'overview' ? '' : `?tab=${value}`}`);
+  window.history.replaceState(null, '', value === 'report' ? siteReportLink(props.id) : `#/tasks/${props.id}${value === 'overview' ? '' : `?tab=${value}`}`);
+}
+function openTaskReport() {
+  const id = task.value?.kind === 'evaluation' ? task.value.id : evaluation.value?.id;
+  if (id) go(siteReportLink(props.id, id).slice(1));
 }
 function hashChanged() { tab.value = initialTaskTab(window.location.hash.split('?')[1] || ''); }
 async function tabKey(event: KeyboardEvent, index: number) {
@@ -88,11 +97,11 @@ async function submit() {
 let timer: ReturnType<typeof setInterval>;
 function dismissMore(event: MouseEvent) { if (more.value && !more.value.contains(event.target as Node)) more.value.removeAttribute('open'); }
 function escape(event: KeyboardEvent) { if (event.key === 'Escape') more.value?.removeAttribute('open'); }
-onMounted(() => { timer = setInterval(() => { if (!loading.value && !busy.value) void load(); }, 4000); window.addEventListener('hashchange', hashChanged); document.addEventListener('click', dismissMore); document.addEventListener('keydown', escape); });
+onMounted(() => { timer = setInterval(() => { if (!loading.value && !busy.value) void load().then(() => siteRefresh.value++); }, 4000); window.addEventListener('hashchange', hashChanged); document.addEventListener('click', dismissMore); document.addEventListener('keydown', escape); });
 onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange', hashChanged); document.removeEventListener('click', dismissMore); document.removeEventListener('keydown', escape); });
 </script>
 <template>
-  <a class="back-link" :href="task?.kind === 'evaluation' ? '#/reports' : '#/tasks'"><ArrowLeft :size="16" />{{ task?.kind === 'evaluation' ? '评测报告' : '任务中心' }}</a>
+  <a class="back-link" href="#/tasks"><ArrowLeft :size="16" />任务中心</a>
   <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
   <p v-if="loading && !task" class="section-loading"><LoaderCircle class="spin" :size="18" />正在加载任务…</p>
   <template v-if="task">
@@ -111,15 +120,18 @@ onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange
     <nav class="task-tabs" role="tablist" aria-label="任务详情分区"><button v-for="(item, index) in tabs" :id="`task-tab-${item.id}`" :key="item.id" role="tab" :aria-selected="tab === item.id" :aria-controls="`task-panel-${item.id}`" :tabindex="tab === item.id ? 0 : -1" :class="{ selected: tab === item.id }" @click="selectTab(item.id)" @keydown="tabKey($event, index)">{{ item.label }}</button></nav>
     <div :id="`task-panel-${tab}`" role="tabpanel" :aria-labelledby="`task-tab-${tab}`" class="task-tab-content">
       <template v-if="tab === 'overview'">
+        <SiteDeliveryPanel v-if="task.generatedSiteId" :site-id="task.generatedSiteId" :revision="revision + ':' + siteRefresh" />
         <section v-if="task.optimization" class="panel settings-panel"><div class="section-heading"><h2>{{optimizationStateNames[task.optimization.state]}}</h2><span>修复 {{task.optimization.round}} / {{task.optimization.policy.maxRounds}}</span></div><p class="task-prose">双端目标 {{task.optimization.policy.targetScore}} 分<span v-if="task.optimization.policy.maxCostCny!==null"> · 费用上限 ¥ {{task.optimization.policy.maxCostCny}}</span></p><p v-if="!report" class="task-prose">当前版本待完成独立评测，历史分数请在评测结果中查看。</p><p v-if="task.optimization.reason" class="task-prose">{{task.optimization.reason}}</p><p v-if="task.optimization.nextStep" class="task-prose">下一步：{{task.optimization.nextStep}}</p></section>
         <section class="panel settings-panel"><div class="section-heading"><h2>流程进展</h2><span class="text-muted small-text">{{ formatDate(task.createdAt) }} 创建</span></div><div class="task-workflow"><div class="workflow-stage"><span class="workflow-stage-icon" :class="task.status"><Check v-if="task.status === 'completed'" :size="18" /><LoaderCircle v-else-if="['running', 'following-up'].includes(task.status)" class="spin" :size="18" /><CircleAlert v-else-if="task.attention" :size="18" /><Clock3 v-else :size="18" /></span><div><strong>{{ task.kind === 'generation' ? '站点生成' : '独立评测' }}</strong><p>{{ taskStatusNames[task.status] }}</p></div></div><template v-if="task.kind === 'generation'"><div class="workflow-connector" /><div class="workflow-stage"><span class="workflow-stage-icon" :class="evaluation?.status"><Check v-if="evaluation?.status === 'completed'" :size="18" /><LoaderCircle v-else-if="evaluation && ['running', 'following-up'].includes(evaluation.status)" class="spin" :size="18" /><CircleAlert v-else-if="evaluation?.attention" :size="18" /><Clock3 v-else :size="18" /></span><div><strong>独立评测</strong><p>{{ evaluation ? taskStatusNames[evaluation.status] : task.status === 'completed' ? '尚未发起' : '等待生成完成' }}</p></div></div></template></div><p v-if="current?.status === 'following-up'" class="task-overview-note">AI 正在跟进{{ stageNames[current.stage || ''] || '当前阶段' }}，系统会继续执行并保留结果。</p></section>
         <section v-if="current?.attention" class="panel settings-panel task-section-stack"><div class="section-heading"><h2>需要处理</h2><span class="status-badge" :class="current.status">{{ taskStatusNames[current.status] }}</span></div><p class="task-prose">{{ current.attention }}</p><p v-if="current.nextStep" class="task-prose"><strong>下一步：</strong>{{ current.nextStep }}</p><div class="task-actions"><button v-if="current.stopped" class="button primary" :disabled="busy" @click="action('resume')"><Play :size="16" />交给 AI 恢复</button><button v-else class="button secondary" :disabled="busy" @click="action('confirm-stopped')">已检查并确认原执行停止</button><a v-if="current.id !== task.id" class="text-action" :href="`#/tasks/${current.id}?tab=execution`">查看评测中断详情<ArrowUpRight :size="14" /></a><button v-else class="text-action" @click="selectTab('execution')">查看完整原因与处理记录<ArrowUpRight :size="14" /></button></div><p v-if="!current.stopped" class="text-muted small-text">请先检查原会话或执行进程，确认停止后再恢复。</p></section>
-        <section v-if="report" class="panel settings-panel"><div class="section-heading"><h2>评测结果</h2><button class="text-action" @click="selectTab('report')">查看完整报告<ArrowUpRight :size="14" /></button></div><div class="overview-results"><strong :class="report.quality === 'passed' ? 'success-text' : 'warning-text'">{{ qualities[report.quality] }}</strong><div v-for="score in report.scores" :key="score.viewport"><span>{{ viewportNames[score.viewport] || score.viewport }}</span><strong>{{ score.value ?? '未验证' }}</strong></div></div><p class="task-overview-note">{{ report.issueCount }} 个问题 · {{ report.unverifiedCount }} 项未验证</p></section>
+        <section v-if="report" class="panel settings-panel"><div class="section-heading"><h2>本次任务评测</h2><button class="text-action" @click="openTaskReport">查看完整报告<ArrowUpRight :size="14" /></button></div><div class="overview-results"><strong :class="report.quality === 'passed' ? 'success-text' : 'warning-text'">{{ qualities[report.quality] }}</strong><div v-for="score in report.scores" :key="score.viewport"><span>{{ viewportNames[score.viewport] || score.viewport }}</span><strong>{{ score.value ?? '未验证' }}</strong></div></div><p class="task-overview-note">{{ report.issueCount }} 个问题 · {{ report.unverifiedCount }} 项未验证</p></section>
         <section class="panel settings-panel"><div class="section-heading"><h2>最新进展</h2><a v-if="data?.latest && data.latest.taskId !== task.id" class="text-action" :href="'#/tasks/' + data.latest.taskId + '?tab=execution'">查看执行记录<ArrowUpRight :size="14" /></a><button v-else class="text-action" @click="selectTab('execution')">查看执行记录<ArrowUpRight :size="14" /></button></div><p class="task-prose">{{ task.optimization ? (task.optimization.reason||optimizationStateNames[task.optimization.state]) : evaluation?.status === 'completed' && report ? '生成与独立评测均已结束，报告和证据已保存。' : task.kind === 'evaluation' && report ? '本轮评测已结束，报告和证据已保存。' : data?.latest?.message || '任务已创建，等待执行。' }}</p><div class="task-related-links"><a :href="`#/resources/${task.resourceId}`">查看资源<ArrowUpRight :size="14" /></a><a v-if="evaluation" :href="`#/tasks/${evaluation.id}?tab=report`">关联评测任务<ArrowUpRight :size="14" /></a><a v-if="task.parentId" :href="`#/tasks/${task.parentId}`">上一轮任务<ArrowUpRight :size="14" /></a></div></section>
-        <section class="panel settings-panel"><div class="section-heading"><h2>费用摘要</h2><button class="text-action" @click="selectTab('usage')">查看用量费用<ArrowUpRight :size="14" /></button></div><p class="overview-cost">{{ task.usage?.priced ? '¥ ' + task.usage.knownCny.toFixed(4) : '待核算' }}<span>已知用量估算{{ task.usage?.missing ? '小计' : '' }}</span></p><p v-if="task.usage?.missing" class="warning-text task-overview-note">{{ task.usage.missing }} 条记录待核算</p></section>
+        <section v-if="!task.generatedSiteId" class="panel settings-panel"><div class="section-heading"><h2>费用摘要</h2><button class="text-action" @click="selectTab('usage')">查看用量费用<ArrowUpRight :size="14" /></button></div><p class="overview-cost">{{ task.usage?.priced ? '¥ ' + task.usage.knownCny.toFixed(4) : '待核算' }}<span>已知用量估算{{ task.usage?.missing ? '小计' : '' }}</span></p><p v-if="task.usage?.missing" class="warning-text task-overview-note">{{ task.usage.missing }} 条记录待核算</p></section>
       </template>
+      <SiteReports v-else-if="tab === 'report' && task.generatedSiteId" :key="task.generatedSiteId" :task-id="task.id" :site-id="task.generatedSiteId" :task-kind="task.kind" :revision="revision + ':' + siteRefresh" :detail-revision="reportRevision" />
       <TaskReport v-else-if="tab === 'report'" :task-id="task.id" :revision="reportRevision" />
       <TaskExecution v-else-if="tab === 'execution'" :task-id="task.id" :updated-at="data?.active?.updatedAt||task.updatedAt" />
+      <SiteTaskUsage v-else-if="tab === 'usage' && task.generatedSiteId" :task-id="task.id" :site-id="task.generatedSiteId" :revision="revision + ':' + siteRefresh" />
       <TaskUsage v-else-if="tab === 'usage'" :task-id="task.id" :summary="task.usage" />
       <TaskInput v-else-if="tab === 'input'" :task-id="task.id" :resource-id="task.resourceId" :scope="task.scope" />
       <TaskDeliverySection v-else-if="tab === 'delivery' && data?.deliveryEnabled" :task-id="task.id" :revision="revision" @changed="load" />

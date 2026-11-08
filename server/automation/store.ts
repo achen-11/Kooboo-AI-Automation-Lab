@@ -3,7 +3,7 @@ import type { Database } from '../runtime.js';
 import { UsageLedger } from './billing.js';
 import { Conflict } from '../lib/store.js';
 import type { AutomationRule, AutomationSettings, AutomationTask, AutomationNotice, FollowupSettings, TaskInterruption, GeneratedSite, InputVersion, Resource, ResourceInput, OptimizationPolicy } from '../../shared/automation.js';
-import { defaultOptimizationPolicy } from '../../shared/automation.js';
+import { defaultOptimizationPolicy, supportsAutomaticOptimization } from '../../shared/automation.js';
 import type { NoticePage } from '../../shared/task-presentation.js';
 import { defaultCompletenessSettings } from '../../shared/completeness.js';
 import { defaultLearningSettings } from '../../shared/experience.js';
@@ -27,6 +27,7 @@ export class AutomationStore {
       CREATE TABLE IF NOT EXISTS auto_rules(id TEXT PRIMARY KEY, json TEXT NOT NULL);
       CREATE TABLE IF NOT EXISTS auto_tasks(id TEXT PRIMARY KEY, status TEXT NOT NULL, kind TEXT NOT NULL, site_key TEXT, created_at INTEGER NOT NULL, json TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS auto_queue ON auto_tasks(status,kind,created_at);
+      CREATE INDEX IF NOT EXISTS auto_site_reports ON auto_tasks(site_key,kind,created_at DESC);
       CREATE TABLE IF NOT EXISTS auto_notifications(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,title TEXT NOT NULL,json TEXT NOT NULL,UNIQUE(task_id,title));
       CREATE INDEX IF NOT EXISTS auto_notifications_created ON auto_notifications(json_extract(json,'$.createdAt') DESC,id DESC);
       CREATE TABLE IF NOT EXISTS auto_events(task_id TEXT NOT NULL, seq INTEGER PRIMARY KEY AUTOINCREMENT, time INTEGER NOT NULL, message TEXT NOT NULL);
@@ -140,7 +141,7 @@ export class AutomationStore {
       const site = input.generatedSiteId ? this.site(input.generatedSiteId) : undefined;
       if (input.generatedSiteId && (!site || site.resourceId !== id)) throw new Conflict('所选生成站不属于当前资源');
       if (input.kind==='evaluation' && !site) throw new Conflict('评测必须选择一个已有生成站');
-      if(input.optimization&&(input.kind!=='generation'||version.scenario!=='site-template'))throw new Conflict('自动优化首版仅支持 AI Site 模板生成');
+      if(input.optimization&&(input.kind!=='generation'||!supportsAutomaticOptimization(version.scenario)))throw new Conflict('自动优化仅支持 AI Site 模板、迁移与升级生成');
       const kind = version.scenario==='app-template'?'app':'site';
       const eligible=this.rules().filter(r=>r.kind===kind&&(!r.scenarios||r.scenarios.includes(version.scenario))&&r.criteria.some(c=>c.scopes.includes(input.scope)));
       const rule = input.ruleSnapshot || eligible.find(r=>r.id===input.ruleId) || (!input.ruleId?eligible.at(-1):undefined);

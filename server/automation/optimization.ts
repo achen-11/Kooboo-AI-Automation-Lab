@@ -2,6 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AutomationReport, AutomationSettings, AutomationTask, FollowupAction } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import { Conflict } from '../lib/store.js';
+import { optimizationScenarioGuidance } from '../../shared/automation.js';
 
 export function targetReached(task: AutomationTask, report: AutomationReport) {
   if(task.requirementsEnabled&&task.scope==='site'&&report.completeness?.state!=='complete')return false;
@@ -63,7 +64,7 @@ export function applyOptimizationAction(task: AutomationTask, action: FollowupAc
   const original=store.task(round.generationTaskId);if(!original?.generation?.prepared||!original.generation.conversationId||!original.stopped&&!(original.id===task.id&&task.followup?.executionStopped))throw new Conflict('缺少已停止且可继续的原 Kooboo 会话');
   store.db.transaction(()=>{
     const child=store.create({resourceIds:[task.resourceId],kind:'generation',scope:task.scope,environmentId:task.environmentId,generatedSiteId:task.generatedSiteId!,requirements:action.message!,parentId:task.id,versionId:task.versionId,ruleSnapshot:task.rule!,optimizationRootId:task.id,optimizationRound:round.number+1},settings)[0];
-    child.message=`在原站原会话完成以下修复，不新建站点。范围：${task.scope}。图片仅作为比对证据，最终模板继续使用 imagePlaceholder，不得复用参考站图片。保持原内容事实、已完成区域和另一视口。\n\n${action.message}`;
+    child.message=`在原站原会话完成以下修复，不新建站点。范围：${task.scope}。${optimizationScenarioGuidance(task.scenario)}保持原内容事实、已完成区域和另一视口。\n\n${action.message}`;
     child.model=task.model;child.siteRevision=randomUUID();
     child.generation={...original.generation,next:{action:'continue',reason:action.reason,evidence:action.evidence,message:child.message}};
     child.repairEvidence={reportId:run.reportId!,files:action.imageEvidence!};store.put(child);

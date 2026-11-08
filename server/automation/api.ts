@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { materialPath, uniqueMaterialPaths } from '../../shared/materials.js';
-import { scenarios, defaultFollowupSettings, defaultOptimizationPolicy } from '../../shared/automation.js';
+import { scenarios, defaultFollowupSettings, defaultOptimizationPolicy, supportsAutomaticOptimization } from '../../shared/automation.js';
 import { stopOptimization } from './optimization.js';
 import { Conflict } from '../lib/store.js';
 import { queueDelivery, deliveryReceipt } from './delivery.js';
@@ -17,6 +17,7 @@ import { completenessSettingsSchema } from './completeness.js';
 import { registerLearningApi } from './learning-api.js';
 import { learningSettingsSchema } from './experience-store.js';
 import { executionTaskIds } from '../../shared/execution-log.js';
+import { registerSiteDeliveryApi } from './site-delivery.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -44,6 +45,7 @@ const pagination=z.object({page:pageNumber.default(1),pageSize:pageSizeNumber.de
 export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,cancel:(id:string)=>void,owns:(id:string)=>boolean){
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns);
+  registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
   let probing=false;
   const executionSettings=()=>({...vault.automation(),evaluationEndpoint:vault.automation().evaluationEndpoint||vault.get().model.endpoint});
   const files=resolve(directory,'materials');mkdirSync(files,{recursive:true,mode:0o700});
@@ -155,7 +157,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   });
   app.post('/api/automation/tasks/:id/optimize',async(request)=>{
     const {id}=params.parse(request.params),task=store.task(id),policy=optimizationInput.parse(request.body);
-    if(!task||task.kind!=='generation'||task.scenario!=='site-template'||task.optimization||!task.stopped||task.status!=='completed'||!task.generation?.conversationId)throw new Conflict('只能为已完成且可继续原会话的 AI Site 模板任务开启优化');
+    if(!task||task.kind!=='generation'||!supportsAutomaticOptimization(task.scenario)||task.optimization||!task.stopped||task.status!=='completed'||!task.generation?.conversationId)throw new Conflict('只能为已完成且可继续原会话的 AI Site 模板、迁移与升级任务开启优化');
     const evaluation=store.currentReport(task);if(!evaluation?.report||!evaluation.rule||!evaluation.stopped||evaluation.status!=='completed')throw new Conflict('需要当前版本已完成且保留规则快照的独立评测报告');
     if(store.tasks().some(t=>t.id!==task.id&&t.generatedSiteId===task.generatedSiteId&&(!t.stopped||['queued','following-up'].includes(t.status))))throw new Conflict('请先等待该站点其他任务结束');
     store.db.transaction(()=>{

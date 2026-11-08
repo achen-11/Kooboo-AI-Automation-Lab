@@ -5,6 +5,7 @@ import { resolve } from 'node:path';
 import { z } from 'zod';
 import type { Thread, ThreadOptions } from '@openai/codex-sdk';
 import type { AutomationTask, FollowupAction } from '../../shared/automation.js';
+import { optimizationScenarioGuidance } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { usageCapture } from './usage-proxy.js';
@@ -110,7 +111,7 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
   usage=await usageCapture(task.id,'followup',store,vault,signal,{key:'followup:'+task.followup.budgetId,runKey:task.followup.budgetId,maxTokens:task.followup.policy.maxTokens,maxRequests:task.followup.policy.maxRequests||80,initialTokens:task.followup.tokens});
   const address=server.address();if(!address||typeof address==='string')throw new Error('跟进工具服务启动失败');
   writeFileSync(resolve(work,'tools.mjs'),`try{const r=await fetch(process.env.FOLLOWUP_TOOLS_URL,{method:'POST',headers:{Authorization:'Bearer '+process.env.FOLLOWUP_TOOLS_TOKEN,'Content-Type':'application/json'},body:process.argv[2]||'{}'});console.log(await r.text());if(!r.ok)process.exitCode=1;}catch(error){console.log(JSON.stringify({kind:'followup_tool_transport_error',code:error.cause?.code||'FETCH_FAILED',hostname:new URL(process.env.FOLLOWUP_TOOLS_URL).hostname}));process.exitCode=1;}`,{mode:0o600});
-  writeFileSync(resolve(work,'SKILL.md'),(quality?task.optimization!.policy.sop:task.followup.policy.sop)+adoptedGuidance(task,store,'followup'),{mode:0o600});
+  writeFileSync(resolve(work,'SKILL.md'),(quality?task.optimization!.policy.sop+'\n\n本次场景约束：'+optimizationScenarioGuidance(task.scenario):task.followup.policy.sop)+adoptedGuidance(task,store,'followup'),{mode:0o600});
   writeFileSync(resolve(work,'task.json'),JSON.stringify(store.sanitize({task,input:store.version(task.versionId)}),null,2),{mode:0o600});
   writeFileSync(resolve(work,'tools-schema.json'),JSON.stringify(z.toJSONSchema(toolInput),null,2),{mode:0o600});
   const codex=createClient(vault,directory,{FOLLOWUP_TOOLS_URL:`http://127.0.0.1:${address.port}/tools`,FOLLOWUP_TOOLS_TOKEN:token,...usage.env},task.model||undefined);

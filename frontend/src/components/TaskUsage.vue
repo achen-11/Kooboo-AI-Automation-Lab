@@ -8,20 +8,22 @@ import BaseSelect from './BaseSelect.vue';
 import TaskBudget from './TaskBudget.vue';
 import Disclosure from './Disclosure.vue';
 import TablePagination from './TablePagination.vue';
-const props = defineProps<{ taskId: string; summary?: UsageSummary }>();
+import type { SiteDeliverySummary } from '../../../shared/site-delivery';
+const props = defineProps<{ taskId: string; summary?: UsageSummary; siteId?: string; stageCosts?: SiteDeliverySummary['stages'] }>();
+const costs = computed(() => props.stageCosts?.filter(item => item.usage.requests) || []);
 const page = ref(1), stage = ref(''), round=ref('');
 function filterRound(value:string|number|undefined){round.value=String(value??'');page.value=1;}
 const stages: Record<string, string> = { generation: '生成', followup: 'AI 跟进', evaluation: '独立评测', delivery: '交付核验', experience:'经验学习',planning:'交付清单规划' };
 const bands = { peak: '高峰', offpeak: '闲时', mixed: '跨时段', unknown: '未知' };
 const revision = computed(() => page.value === 1 ? JSON.stringify(props.summary) : '');
 const { data, loading, error, load } = useTaskSection<{ rounds?:number[]; items: UsageEntry[]; total: number; page: number; pages: number }>(
-  () => '/automation/tasks/' + props.taskId + '/usage?page=' + page.value + '&pageSize=20' + (stage.value ? '&stage=' + stage.value : '')+(round.value!==''?'&round='+round.value:''), () => revision.value);
+  () => (props.siteId ? '/automation/site-deliveries/' + props.siteId : '/automation/tasks/' + props.taskId) + '/usage?page=' + page.value + '&pageSize=20' + (stage.value ? '&stage=' + stage.value : '')+(!props.siteId&&round.value!==''?'&round='+round.value:''), () => revision.value);
 function filter(value: string | number | undefined) { stage.value = String(value || ''); page.value = 1; }
 </script>
 <template>
   <TaskBudget :task-id="taskId" />
   <section class="panel settings-panel">
-    <div class="section-heading"><h2>模型用量与费用</h2><span class="text-muted small-text">已知用量估算</span></div>
+    <div class="section-heading"><h2>{{ siteId ? '生成站累计用量与费用' : '本次流程用量与费用' }}</h2><span class="text-muted small-text">已知用量估算</span></div>
     <div v-if="summary?.requests" class="usage-totals">
       <div><span>{{ summary.missing ? '已知金额小计' : '估算金额' }}</span><strong>{{ summary.priced ? '¥ ' + summary.knownCny.toFixed(4) : '待核算' }}</strong></div>
       <div><span>输入 tokens</span><strong>{{ summary.input.toLocaleString() }}</strong></div>
@@ -30,7 +32,8 @@ function filter(value: string | number | undefined) { stage.value = String(value
     </div>
     <p v-else class="text-muted">尚未收到实际 usage，费用待核算。</p>
     <p v-if="summary?.missing" class="warning-text usage-note">{{ summary.missing }} 条记录待核算，当前金额不代表全部费用。</p>
-    <Disclosure label="计费口径"><p class="text-muted small-text">按每次请求的模型、北京时间时段和价格快照估算，最终以官方账单为准。缓存命中已包含在输入中；缺失用量、后台压缩及独立 Search / Fetch 等费用可能未包含。生成任务的汇总包含其全部自动修复与评测子任务，请勿重复相加。</p></Disclosure>
+    <dl v-if="costs.length" class="stage-costs"><div v-for="item in costs" :key="item.stage"><dt>{{ stages[item.stage] }}</dt><dd>{{ item.usage.priced ? '¥ '+item.usage.knownCny.toFixed(4) : '待核算' }}<span v-if="item.usage.missing" class="text-muted"> · {{ item.usage.missing }} 条待核算</span></dd></div></dl>
+    <Disclosure label="计费口径"><p class="text-muted small-text">{{ siteId ? '汇总这个生成站的全部生成、跟进、独立评测、续建与修复记录，每条请求只计一次。' : '本次流程的汇总包含其全部自动修复与评测子任务，请勿重复相加。' }}按每次请求的模型、北京时间时段和价格快照估算，最终以官方账单为准。缓存命中已包含在输入中；缺失用量、后台压缩及独立 Search / Fetch 等费用可能未包含。</p></Disclosure>
   </section>
   <section class="panel task-data-panel">
     <div class="table-toolbar"><h2>请求明细</h2><div class="toolbar-actions"><BaseSelect v-if="data?.rounds" :model-value="round" aria-label="按优化轮次筛选用量" :options="[{value:'',label:'全部轮次'},...data.rounds.map(n=>({value:String(n),label:n?'修复 '+n:'初始生成与评测'}))]" @update:model-value="filterRound" /><BaseSelect :model-value="stage" aria-label="按执行阶段筛选用量" @update:model-value="filter" :options="[{ value: '', label: '全部阶段' }, ...Object.entries(stages).map(([key, name]) => ({ value: key, label: (name) }))]" /><button class="icon-button" :disabled="loading" aria-label="刷新用量" @click="load"><RefreshCw :size="17" /></button></div></div>
@@ -44,6 +47,7 @@ function filter(value: string | number | undefined) { stage.value = String(value
   </section>
 </template>
 <style scoped>
+.stage-costs{display:grid;grid-template-columns:repeat(3,minmax(0,1fr));gap:18px 24px;margin:20px 0}.stage-costs dt{font-size:12px;color:var(--muted);margin-bottom:7px}.stage-costs dd{margin:0;font-variant-numeric:tabular-nums}@media(max-width:700px){.stage-costs{grid-template-columns:repeat(2,minmax(0,1fr))}}
 .usage-totals{display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:24px;margin-bottom:20px}.usage-totals>div{display:flex;flex-direction:column;gap:10px;min-width:0}.usage-totals span{font-size:12px;color:var(--muted)}.usage-totals strong{font-size:23px;font-weight:650;overflow-wrap:anywhere;font-variant-numeric:tabular-nums}.usage-note{margin:0 0 12px}.usage-table td:last-child{min-width:210px;max-width:300px;white-space:normal}.usage-table th:first-child{width:auto}
 @media(max-width:1000px){.usage-totals{grid-template-columns:repeat(2,minmax(0,1fr))}}@media(max-width:500px){.usage-totals strong{font-size:19px}}
 </style>

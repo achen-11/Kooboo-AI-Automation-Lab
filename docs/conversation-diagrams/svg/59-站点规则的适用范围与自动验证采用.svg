@@ -1,0 +1,105 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1031.3636666666666 1793.1799999999998" width="1032" height="1794" style="background:#181818"><rect width="1032" height="1794" fill="#181818"/>
+<style>text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 318.09333333333336 96.8 L 318.09333333333336 160.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 318.09333333333336 225.60000000000002 L 318.0933333333333 289.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="规则不支持所需能力" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 264.46666666666664 354.40000000000003 L 264.46666666666664 1116.1799999999998 Q 264.46666666666664 1124.1799999999998 256.46666666666664 1124.1799999999998 L 176.13333333333333 1124.1799999999998 Q 168.13333333333333 1124.1799999999998 168.13333333333333 1132.1799999999998 L 168.13333333333333 1223.08" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="允许试跑" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 371.71999999999997 354.40000000000003 L 371.71999999999997 398.40000000000003 Q 371.71999999999997 406.40000000000003 379.71999999999997 406.40000000000003 L 460.05333333333334 406.40000000000003 Q 468.05333333333334 406.40000000000003 468.05333333333334 414.40000000000003 L 468.0533333333333 505.3" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 468.0533333333333 570.1 L 468.05333333333334 634.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 468.05333333333334 698.9 L 468.05333333333334 762.9" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="否" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 416.50666666666666 1020.6333333333332 L 416.50666666666666 1331.8799999999999 Q 416.50666666666666 1339.8799999999999 408.50666666666666 1339.8799999999999 L 119.5 1339.8799999999999 Q 111.5 1339.8799999999999 111.5 1347.8799999999999 L 111.5 1676.3799999999999 Q 111.5 1684.3799999999999 119.5 1684.3799999999999 L 133.25333333333333 1684.3799999999999 Q 139.25333333333333 1684.3799999999999 139.25333333333333 1690.3799999999999 L 139.25333333333333 1696.3799999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="I" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="是" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 519.5999999999999 1020.6333333333333 L 519.5999999999999 1116.1799999999998 Q 519.5999999999999 1124.1799999999998 527.5999999999999 1124.1799999999998 L 593.54 1124.1799999999998 Q 601.54 1124.1799999999998 601.54 1132.1799999999998 L 601.54 1223.08" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="I" data-to="J" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 547.9133333333333 1287.8799999999999 L 547.9133333333333 1331.8799999999999 Q 547.9133333333333 1339.8799999999999 539.9133333333333 1339.8799999999999 L 434.78 1339.8799999999999 Q 428.78 1339.8799999999999 428.78 1345.8799999999999 L 428.78 1351.8799999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="J" data-to="K" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="发现退步" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 378.1933333333333 1416.6799999999998 L 378.1933333333333 1460.6799999999998 Q 378.1933333333333 1468.6799999999998 370.1933333333333 1468.6799999999998 L 282.26 1468.6799999999998 Q 274.26 1468.6799999999998 274.26 1476.6799999999998 L 274.26 1567.58" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="K" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 274.26 1632.3799999999999 L 274.26 1676.3799999999999 Q 274.26 1684.3799999999999 266.26 1684.3799999999999 L 252.50666666666666 1684.3799999999999 Q 246.50666666666666 1684.3799999999999 246.50666666666666 1690.3799999999999 L 246.50666666666666 1696.3799999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="J" data-to="L" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="满足A段交接条件" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 479.3666666666667 1416.6799999999998 L 479.3666666666667 1460.6799999999998 Q 479.3666666666667 1468.6799999999998 487.3666666666667 1468.6799999999998 L 575.3 1468.6799999999998 Q 583.3 1468.6799999999998 583.3 1476.6799999999998 L 583.3 1567.58" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="I" data-to="M" data-style="dotted" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#arrowhead)" d="M 655.1666666666666 1287.8799999999999 L 655.1666666666666 1331.8799999999999 Q 655.1666666666666 1339.8799999999999 663.1666666666666 1339.8799999999999 L 841.6036666666666 1339.8799999999999 Q 847.6036666666666 1339.8799999999999 847.6036666666666 1345.8799999999999 L 847.6036666666666 1351.8799999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="M" data-to="N" data-style="dotted" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#arrowhead)" d="M 847.6036666666666 1416.6799999999998 L 847.6036666666666 1480.6799999999998" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="C" data-to="D" data-label="规则不支持所需能力">
+  <rect x="95.63333333333333" y="1131.1799999999998" width="144.31" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="167.78833333333333" y="1147.6299999999999" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">规则不支持所需能力</text>
+</g>
+<g class="edge-label" data-from="C" data-to="E" data-label="允许试跑">
+  <rect x="430.55333333333334" y="413.40000000000003" width="74.11000000000001" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="467.60833333333335" y="429.85" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">允许试跑</text>
+</g>
+<g class="edge-label" data-from="G" data-to="H" data-label="否">
+  <rect x="95.5" y="1475.6799999999998" width="31.990000000000002" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="111.495" y="1492.1299999999999" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">否</text>
+</g>
+<g class="edge-label" data-from="G" data-to="I" data-label="是">
+  <rect x="585.54" y="1131.1799999999998" width="31.990000000000002" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="601.535" y="1147.6299999999999" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">是</text>
+</g>
+<g class="edge-label" data-from="J" data-to="K" data-label="发现退步">
+  <rect x="236.76" y="1475.6799999999998" width="74.11000000000001" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="273.815" y="1492.1299999999999" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">发现退步</text>
+</g>
+<g class="edge-label" data-from="J" data-to="L" data-label="满足A段交接条件">
+  <rect x="520.8" y="1475.6799999999998" width="124.65400000000001" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="583.127" y="1492.1299999999999" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">满足A段交接条件</text>
+</g>
+<g class="node" data-id="A" data-label="采集AI定位异常并读取原件" data-shape="rectangle">
+  <rect x="177.27733333333333" y="32" width="281.632" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="318.09333333333336" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">采集AI定位异常并读取原件</text>
+</g>
+<g class="node" data-id="B" data-label="提出站点规则、适用范围与验证预期" data-shape="rectangle">
+  <rect x="138.97333333333336" y="160.8" width="358.23999999999995" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="318.09333333333336" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">提出站点规则、适用范围与验证预期</text>
+</g>
+<g class="node" data-id="C" data-label="平台校验规则类型、范围和冲突" data-shape="rectangle">
+  <rect x="157.2133333333333" y="289.6" width="321.76" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="318.0933333333333" y="322" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">平台校验规则类型、范围和冲突</text>
+</g>
+<g class="node" data-id="D" data-label="记录工具扩展需求与缺口" data-shape="rectangle">
+  <rect x="34.613333333333344" y="1223.08" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="168.13333333333333" y="1255.48" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">记录工具扩展需求与缺口</text>
+</g>
+<g class="node" data-id="E" data-label="用原件在独立目录试跑" data-shape="rectangle">
+  <rect x="343.6533333333333" y="505.3" width="248.79999999999998" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="468.0533333333333" y="537.7" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">用原件在独立目录试跑</text>
+</g>
+<g class="node" data-id="F" data-label="核对失败样本及正常回归样本" data-shape="rectangle">
+  <rect x="316.29333333333335" y="634.1" width="303.52" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="468.05333333333334" y="666.5" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">核对失败样本及正常回归样本</text>
+</g>
+<g class="node" data-id="G" data-label="原问题解决且验证依据充分" data-shape="diamond">
+  <polygon points="468.05333333333334,762.9 622.6933333333334,917.54 468.05333333333334,1072.1799999999998 313.41333333333336,917.54" fill="#10283f" stroke="#2d4557" stroke-width="0.75"/>
+  <text x="468.05333333333334" y="917.54" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">原问题解决且验证依据充分</text>
+</g>
+<g class="node" data-id="H" data-label="保留差异，有限调整或升级缺陷" data-shape="rectangle">
+  <rect x="32" y="1696.3799999999999" width="321.76" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="192.88" y="1728.78" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">保留差异，有限调整或升级缺陷</text>
+</g>
+<g class="node" data-id="I" data-label="自动采用到当前任务的声明范围" data-shape="rectangle">
+  <rect x="440.65999999999997" y="1223.08" width="321.76" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="601.54" y="1255.48" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">自动采用到当前任务的声明范围</text>
+</g>
+<g class="node" data-id="J" data-label="重处理受影响资料并逐项核验" data-shape="rectangle">
+  <rect x="277.02" y="1351.8799999999999" width="303.52" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="428.78" y="1384.28" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">重处理受影响资料并逐项核验</text>
+</g>
+<g class="node" data-id="K" data-label="撤回规则采用，保留未解决项" data-shape="rectangle">
+  <rect x="122.5" y="1567.58" width="303.52" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="274.26" y="1599.98" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">撤回规则采用，保留未解决项</text>
+</g>
+<g class="node" data-id="L" data-label="冻结共同版本并交接" data-shape="rectangle">
+  <rect x="468.02" y="1567.58" width="230.56" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="583.3" y="1599.98" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">冻结共同版本并交接</text>
+</g>
+<g class="node" data-id="M" data-label="沉淀为带适用条件的候选经验" data-shape="rectangle">
+  <rect x="695.8436666666666" y="1351.8799999999999" width="303.52" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="847.6036666666666" y="1384.28" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">沉淀为带适用条件的候选经验</text>
+</g>
+<g class="node" data-id="N" data-label="其他站点重新匹配并验证" data-shape="rectangle">
+  <rect x="714.0836666666667" y="1480.6799999999998" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="847.6036666666666" y="1513.08" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">其他站点重新匹配并验证</text>
+</g>
+</svg>

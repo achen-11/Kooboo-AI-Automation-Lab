@@ -98,7 +98,7 @@ flowchart TD
     I --> J[离线分析站点与执行过程]
 ```
 
-图已归档到 [第 47 张图](conversation-diagrams/mermaid/47.mmd)，仅源码。
+图已归档到 [第 47 张图](conversation-diagrams/mermaid/47-完整站点与平台执行档案的一键排障导出.mmd)，仅源码。
 
 首版默认行为：
 

@@ -5,7 +5,7 @@
   "timezone": "Asia/Shanghai",
   "scannedTurns": 69,
   "sourceMessages": 32,
-  "count": 37,
+  "count": 63,
   "scope": "最初 34 张为 2026-11-07 归档时的历史快照；自 2026-11-08 起持续追加主对话 Mermaid 原始源码。扫描轮次与原始回复数保留历史快照统计，新增图表单独记录来源上下文和导出状态。",
   "diagrams": [
     {
@@ -19,7 +19,14 @@
       "title": "初始架构：Admin、插件、评分平台与评测执行器",
       "file": "01",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aed97ddf2d487d0be572cf882f21877"
+      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aed97ddf2d487d0be572cf882f21877",
+      "filename": "01-初始架构-Admin、插件、评分平台与评测执行器",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 2,
@@ -32,7 +39,14 @@
       "title": "资源包驱动的统一自动化流程",
       "file": "02",
       "note": "此处为早期总体提案，克隆与站点起点的澄清见第 04 图。",
-      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aeda4534fac87d0ac78d0893d6596f3"
+      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aeda4534fac87d0ac78d0893d6596f3",
+      "filename": "02-资源包驱动的统一自动化流程",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 3,
@@ -45,7 +59,14 @@
       "title": "内容、视觉与业务评测依据",
       "file": "03",
       "note": "此处保留当时使用的“原站”称呼，后续统一称为“内容站”，并明确了内容站与参考站的角色。",
-      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aeda4534fac87d0ac78d0893d6596f3"
+      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aeda4534fac87d0ac78d0893d6596f3",
+      "filename": "03-内容、视觉与业务评测依据",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 4,
@@ -58,7 +79,14 @@
       "title": "空白站点起步与三类克隆路径",
       "file": "04",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aeda862054c87d088a01d101029947b"
+      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aeda862054c87d088a01d101029947b",
+      "filename": "04-空白站点起步与三类克隆路径",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 5,
@@ -71,7 +99,14 @@
       "title": "内部录入、外部导入与资源基线",
       "file": "05",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aedac05a8e487d08370e2bc2540fcfe"
+      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aedac05a8e487d08370e2bc2540fcfe",
+      "filename": "05-内部录入、外部导入与资源基线",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 6,
@@ -84,7 +119,14 @@
       "title": "资源基线、输入版本与多个生成站",
       "file": "06",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aedac05a8e487d08370e2bc2540fcfe"
+      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aedac05a8e487d08370e2bc2540fcfe",
+      "filename": "06-资源基线、输入版本与多个生成站",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 7,
@@ -97,7 +139,14 @@
       "title": "生成执行模块的职责与人工接管",
       "file": "07",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aedaf37cecc87d099dad6f776c3d340"
+      "sourceMessagePath": "source-messages.md#message-0fd86e5805944d32016aedaf37cecc87d099dad6f776c3d340",
+      "filename": "07-生成执行模块的职责与人工接管",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 8,
@@ -110,7 +159,14 @@
       "title": "早期生成方案分层提案",
       "file": "08",
       "note": "历史提案；后续已收敛为场景提示词与一次完整 message 委托，不单独引入复杂生成方案层。",
-      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aedb15d9fa887d083d1b54f3a0805c7"
+      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aedb15d9fa887d083d1b54f3a0805c7",
+      "filename": "08-早期生成方案分层提案",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 9,
@@ -123,7 +179,14 @@
       "title": "首页样稿、成单与内页续建",
       "file": "09",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aede73784e087d097d3fd890288d3b8"
+      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aede73784e087d097d3fd890288d3b8",
+      "filename": "09-首页样稿、成单与内页续建",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 10,
@@ -136,7 +199,14 @@
       "title": "并发队列与早期外部 AI 跟进方案",
       "file": "10",
       "note": "历史方案；后续已将跟进决策纳入平台内置本地 AI，见第 21—23 图。",
-      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aede91aa28887d0bfc4bd60394cd900"
+      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aede91aa28887d0bfc4bd60394cd900",
+      "filename": "10-并发队列与早期外部_AI_跟进方案",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 11,
@@ -149,7 +219,14 @@
       "title": "评分平台、评测 Skill 与本地 AI",
       "file": "11",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aeded62aef887d0ae9a93c4f23b7ebf"
+      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aeded62aef887d0ae9a93c4f23b7ebf",
+      "filename": "11-评分平台、评测_Skill_与本地_AI",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 12,
@@ -162,7 +239,14 @@
       "title": "Site UI 还原度评测 SOP",
       "file": "12",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aedeeefe31887d0a48ee3434cc35dff"
+      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aedeeefe31887d0a48ee3434cc35dff",
+      "filename": "12-Site_UI_还原度评测_SOP",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 13,
@@ -175,7 +259,14 @@
       "title": "按 Banner 设计意图进行双端评测",
       "file": "13",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aedf1f852c487d0a75066897ed9ed1d"
+      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aedf1f852c487d0a75066897ed9ed1d",
+      "filename": "13-按_Banner_设计意图进行双端评测",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 14,
@@ -188,7 +279,14 @@
       "title": "全站完整度清单与逐项核验",
       "file": "14",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aedf78a3df887d08eb54497eef5792a"
+      "sourceMessagePath": "source-messages.md#message-0e6a4eb398885f36016aedf78a3df887d08eb54497eef5792a",
+      "filename": "14-全站完整度清单与逐项核验",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 15,
@@ -201,7 +299,14 @@
       "title": "SEO 迁移与旧 URL 承接",
       "file": "15",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-06763e789848107c016aedfbf933bc87d0ac316ca60f1d1f88"
+      "sourceMessagePath": "source-messages.md#message-06763e789848107c016aedfbf933bc87d0ac316ca60f1d1f88",
+      "filename": "15-SEO_迁移与旧_URL_承接",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 16,
@@ -214,7 +319,14 @@
       "title": "AI App 用户目标、体验与业务评测",
       "file": "16",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-06763e789848107c016aedff3c38a487d0bd4818872ac46300"
+      "sourceMessagePath": "source-messages.md#message-06763e789848107c016aedff3c38a487d0bd4818872ac46300",
+      "filename": "16-AI_App_用户目标、体验与业务评测",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 17,
@@ -227,7 +339,14 @@
       "title": "评测 Skill 发布与版本快照",
       "file": "17",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-06763e789848107c016aee0097353487d08bd253edfd0ffef9"
+      "sourceMessagePath": "source-messages.md#message-06763e789848107c016aee0097353487d08bd253edfd0ffef9",
+      "filename": "17-评测_Skill_发布与版本快照",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 18,
@@ -240,7 +359,14 @@
       "title": "报告、问题跟进、修复与复评",
       "file": "18",
       "note": "保留当时外部 AI / 人工跟进方案；后续增加了内置跟进与自动质量优化。",
-      "sourceMessagePath": "source-messages.md#message-06763e789848107c016aee02370e8087d0bc7a966ba638bc60"
+      "sourceMessagePath": "source-messages.md#message-06763e789848107c016aee02370e8087d0bc7a966ba638bc60",
+      "filename": "18-报告、问题跟进、修复与复评",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 19,
@@ -253,7 +379,14 @@
       "title": "Site 模板生成到独立评测",
       "file": "19",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-02a05bd5a435cb87016aee7cf3a9bc87d08105400348559a58"
+      "sourceMessagePath": "source-messages.md#message-02a05bd5a435cb87016aee7cf3a9bc87d08105400348559a58",
+      "filename": "19-Site_模板生成到独立评测",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 20,
@@ -266,7 +399,14 @@
       "title": "生成状态识别与自动交接评测",
       "file": "20",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0ea4717fbae34248016aee8210aff487d0984eba1a724107ba"
+      "sourceMessagePath": "source-messages.md#message-0ea4717fbae34248016aee8210aff487d0984eba1a724107ba",
+      "filename": "20-生成状态识别与自动交接评测",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 21,
@@ -279,7 +419,14 @@
       "title": "平台内置流程跟进 Agent",
       "file": "21",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0ea4717fbae34248016aee83a01e7c87d08d78a19f6a464089"
+      "sourceMessagePath": "source-messages.md#message-0ea4717fbae34248016aee83a01e7c87d08d78a19f6a464089",
+      "filename": "21-平台内置流程跟进_Agent",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 22,
@@ -292,7 +439,14 @@
       "title": "一次发起后的自主推进与明确中断",
       "file": "22",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-0ea4717fbae34248016aee8415eedc87d0abe1f3d2e735b2a3"
+      "sourceMessagePath": "source-messages.md#message-0ea4717fbae34248016aee8415eedc87d0abe1f3d2e735b2a3",
+      "filename": "22-一次发起后的自主推进与明确中断",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 23,
@@ -305,7 +459,14 @@
       "title": "异常恢复、预算停止与报告交付",
       "file": "23",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-096d87c3fae9720a016aee8d2e5f1887d09dc5873057d85215"
+      "sourceMessagePath": "source-messages.md#message-096d87c3fae9720a016aee8d2e5f1887d09dc5873057d85215",
+      "filename": "23-异常恢复、预算停止与报告交付",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 24,
@@ -318,7 +479,14 @@
       "title": "按连接选择跨环境迁移与交付核验",
       "file": "24",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-084a5bc7650ffc0e016aee900437f887d0940022f5ee8ea7a6"
+      "sourceMessagePath": "source-messages.md#message-084a5bc7650ffc0e016aee900437f887d0940022f5ee8ea7a6",
+      "filename": "24-按连接选择跨环境迁移与交付核验",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 25,
@@ -331,7 +499,14 @@
       "title": "按独立报告自动修复与提分",
       "file": "25",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-025d59537abc1714016aeed61b661887d0b1e2c9d96f51bbb3"
+      "sourceMessagePath": "source-messages.md#message-025d59537abc1714016aeed61b661887d0b1e2c9d96f51bbb3",
+      "filename": "25-按独立报告自动修复与提分",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 26,
@@ -344,7 +519,14 @@
       "title": "具体修复委托、重新取证与回归检查",
       "file": "26",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-025d59537abc1714016aeed700937087d097443e9fc264c983"
+      "sourceMessagePath": "source-messages.md#message-025d59537abc1714016aeed700937087d097443e9fc264c983",
+      "filename": "26-具体修复委托、重新取证与回归检查",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 27,
@@ -357,7 +539,14 @@
       "title": "自动优化轮数与停止条件",
       "file": "27",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-02e58a7082d6478b016aeeda40b5a887d0baab220b00f0a3e4"
+      "sourceMessagePath": "source-messages.md#message-02e58a7082d6478b016aeeda40b5a887d0baab220b00f0a3e4",
+      "filename": "27-自动优化轮数与停止条件",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 28,
@@ -370,7 +559,14 @@
       "title": "早期外部 Admin 轮次 API 提案",
       "file": "28",
       "note": "历史 API 提案；后续用户将对外范围收敛为当前版本最终结果，不再要求对外分页读取完整轮次。",
-      "sourceMessagePath": "source-messages.md#message-02e58a7082d6478b016aeedae4f96c87d0b8be9f95ca27443d"
+      "sourceMessagePath": "source-messages.md#message-02e58a7082d6478b016aeedae4f96c87d0b8be9f95ca27443d",
+      "filename": "28-早期外部_Admin_轮次_API_提案",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 29,
@@ -383,7 +579,14 @@
       "title": "修复与复评串行及报告适用性",
       "file": "29",
       "note": "",
-      "sourceMessagePath": "source-messages.md#message-02e58a7082d6478b016aeee2d2913887d0b358273b0bf5b4a4"
+      "sourceMessagePath": "source-messages.md#message-02e58a7082d6478b016aeee2d2913887d0b358273b0bf5b4a4",
+      "filename": "29-修复与复评串行及报告适用性",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 30,
@@ -396,7 +599,14 @@
       "title": "首页完成后补齐全站",
       "file": "30",
       "note": "表示目标续建流程；当时全站完整度验收仍待真实验证。",
-      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef00b6a3b887d091f701db0c7e4760"
+      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef00b6a3b887d091f701db0c7e4760",
+      "filename": "30-首页完成后补齐全站",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 31,
@@ -409,7 +619,14 @@
       "title": "其余四类场景的建议验收顺序",
       "file": "31",
       "note": "当时建议顺序；后续新增经验沉淀与预算保护作为优先议题。",
-      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef05e10ae087d09f102c71764463dd"
+      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef05e10ae087d09f102c71764463dd",
+      "filename": "31-其余四类场景的建议验收顺序",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 32,
@@ -422,7 +639,14 @@
       "title": "跨任务经验沉淀与反馈闭环",
       "file": "32",
       "note": "经验闭环为讨论方案；后续确认默认由本地 AI 决策与执行。",
-      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef072252f487d0bc7719991f924a4c"
+      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef072252f487d0bc7719991f924a4c",
+      "filename": "32-跨任务经验沉淀与反馈闭环",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 33,
@@ -435,7 +659,14 @@
       "title": "本地 AI 自动选择、复盘与维护经验",
       "file": "33",
       "note": "已确认的产品方向，图本身不证明对应运行机制已实施。",
-      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef0833195887d0bf28046c9821865e"
+      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef0833195887d0bf28046c9821865e",
+      "filename": "33-本地_AI_自动选择、复盘与维护经验",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 34,
@@ -448,7 +679,14 @@
       "title": "经验试用、效果验证与修订停用",
       "file": "34",
       "note": "经验条目与效果判定的首版讨论提案。",
-      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef08b102ec87d08f448e3ee829931c"
+      "sourceMessagePath": "source-messages.md#message-0ae283427fb0864b016aef08b102ec87d08f448e3ee829931c",
+      "filename": "34-经验试用、效果验证与修订停用",
+      "renderStatus": "rendered",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 35,
@@ -460,9 +698,15 @@
       "source": "flowchart LR\n    A[资源] --> B[生成站 A]\n    A --> C[生成站 B]\n    B --> D[详情 · 评测结果]\n    D --> E[评测记录列表]\n    E --> F[某次报告与证据]\n",
       "title": "生成站详情与评测报告历史",
       "file": "35",
-      "note": "用户确认将评测报告归入生成站详情，按时间倒序分页查看全部评测历史；当前有效结果与历史报告分开。仅保存原图源码，尚未导出 SVG/PNG。未采集原消息 ID。",
-      "renderStatus": "source-only",
-      "sourceMessagePath": "source-messages.md#report-history-2026-11-08"
+      "note": "用户确认将评测报告归入生成站详情，按时间倒序分页查看全部评测历史；当前有效结果与历史报告分开。已补导 SVG/PNG（2026-11-08）。未采集原消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#report-history-2026-11-08",
+      "filename": "35-生成站详情与评测报告历史",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 36,
@@ -475,9 +719,225 @@
       "source": "flowchart TD\n    A[冻结的来源资料与迁移要求] --> B[建立迁移清单 v1]\n    B --> C[Kooboo 按清单生成]\n    B --> D[程序逐项对账]\n    C --> D\n    D -->|缺失或不一致| E[按具体 ID 和 URL 修复]\n    E --> C\n    D -->|数据与路由检查通过| F[独立评测复核来源与目标]\n    F -->|发现遗漏或质量问题| E\n    F -->|必交付项验证通过| G[结合质量与上线条件判定交付]\n",
       "title": "迁移清单驱动生成、对账与独立评测",
       "file": "36",
-      "note": "来自「提炼会话经验」会话。用户确认迁移清单方向；本图为流程细化提案，尚未实施。仅源码，未导出 SVG/PNG；未采集消息 ID。",
-      "renderStatus": "source-only",
-      "sourceMessagePath": "source-messages.md#migration-manifest-2026-11-08"
+      "note": "来自「提炼会话经验」会话。用户确认迁移清单方向；本图为流程细化提案，尚未实施。已补导 SVG/PNG（2026-11-08）；未采集消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-manifest-2026-11-08",
+      "filename": "36-迁移清单驱动生成、对账与独立评测",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 37,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[自动采集并建立清单草稿] --> B{生成前核对}\n    B -->|范围与必需证据齐备| C[冻结清单版本]\n    C --> D[正式迁移生成]\n    B -->|缺口仍可自动补齐| E[针对缺口补采]\n    E --> B\n    B -->|范围冲突或无法补齐| F[保存进度并等待处理]\n    E -->|预算耗尽或持续无进展| F\n    F --> G[用户补充来源或明确范围]\n    G --> A\n    F --> H[用户停止任务]\n",
+      "title": "迁移清单的生成前核对与缺口处理",
+      "file": "37",
+      "note": "用户已确认自动建清单、补采和核对，无法补齐或范围冲突时等待处理。本图细化生成前放行与停止分支，属于讨论提案，尚未实施。已补导 SVG/PNG（2026-11-08）；未采集消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-readiness-2026-11-08",
+      "filename": "37-迁移清单的生成前核对与缺口处理",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 38,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[固定版本的迁移 checklist] --> B[首次生成或本轮修复结束]\n    B --> C[程序检查与必要的 AI 检查]\n    C --> D[保存本轮检查结果与证据]\n    D --> E{检查结论}\n    E -->|存在缺失或错误| F[按具体差异定点修复]\n    F --> B\n    E -->|缺少验证证据| G[补充证据]\n    G --> C\n    E -->|来源缺口或范围冲突| H[保存进度并等待处理]\n    E -->|必交付项验证通过| I[独立评测与交付判断]\n",
+      "title": "迁移 checklist 的逐轮检查与修复",
+      "file": "38",
+      "note": "用户确认旧 URL 及原分页语义的默认保留规则，并要求完整度作为 checklist，在首次和每轮生成完成后由程序或 AI 检查。本图为逐轮执行细化提案，尚未实施。已补导 SVG/PNG（2026-11-08）；未采集消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-checklist-rounds-2026-11-08",
+      "filename": "38-迁移_checklist_的逐轮检查与修复",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 39,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[冻结的来源证据] --> B[规则提取与 AI 辅助识别]\n    B --> C[版本化迁移清单]\n    D[目标后台数据与页面实际响应] --> E[本轮目标快照]\n    C --> F[程序对账]\n    E --> F\n    F --> G[逐项状态与具体差异]\n    G --> H[AI 制定定点修复方案]\n",
+      "title": "迁移清单与目标快照的程序对账",
+      "file": "39",
+      "note": "用户同意逐轮 checklist 的结论与建议，进入下一步讨论。本图细化实体、关系、URL/分页三类检查的证据和对账流程，属于提案，尚未实施。已补导 SVG/PNG（2026-11-08）；未采集消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-check-contracts-2026-11-08",
+      "filename": "39-迁移清单与目标快照的程序对账",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 40,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[平台固定清单版本与本轮目标] --> B[摘要消息与任务资料入口]\n    B --> C[Kooboo 读取相关明细并执行]\n    C --> D[保存目标映射与本轮产物记录]\n    D --> E[平台独立读取目标并核对 checklist]\n    E -->|存在差异| F[按问题原因组织修复任务包]\n    F --> B\n    E -->|必交付项通过| G[进入独立评测与交付判断]\n",
+      "title": "平台与 Kooboo 的清单及修复交接",
+      "file": "40",
+      "note": "用户要求继续讨论清单如何交给 Kooboo。本图为摘要与任务资料、映射产物、独立核对及差异修复交接提案，尚未实施。已补导 SVG/PNG（2026-11-08）；未采集消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-kooboo-handoff-2026-11-08",
+      "filename": "40-平台与_Kooboo_的清单及修复交接",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 41,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[平台保存版本化任务包] --> B[message 携带目标与必守规则]\n    B --> C{明细适合直接发送和处理吗}\n    C -->|是| D[明细随 message 发送]\n    C -->|否| E[message 引用临时 kfile]\n    D --> F[执行并核验结果]\n    E --> F\n    F --> G[平台归档结果与必要证据]\n    G --> H[无执行依赖时清理本任务临时文件]\n",
+      "title": "message 优先与临时 kfile 的交付选择",
+      "file": "41",
+      "note": "用户提出 message 与 kfile 的站点残留差异，要求讨论选型。助手提出 message 优先、大批结构化明细按需使用临时 kfile，并由平台管理清理的替代提案，尚未确认或实施。已补导 SVG/PNG（2026-11-08）；未采集消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-message-kfile-2026-11-08",
+      "filename": "41-message_优先与临时_kfile_的交付选择",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 42,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[出现异常或本轮未达标] --> B{按操作与证据分类}\n    B -->|只读临时失败| C[预算内退避重试]\n    B -->|写入或投递结果未知| D[核对原回执与实际目标]\n    B -->|已验证的具体缺陷| E[按差异定点修复]\n    B -->|来源或权限等阻塞| F[保存进度并等待处理]\n    B -->|预算耗尽或连续无改善| G[停止自动推进并保存结果]\n    C --> H[依据新证据重新检查]\n    D --> H\n    E --> H\n",
+      "title": "迁移 checklist 的异常重试与停止",
+      "file": "42",
+      "note": "用户确认 message 优先、按需临时 kfile 的交付选择；本图继续细化只读重试、未知投递查证、缺陷修复和停止规则，属于本轮提案，尚未确认或实施。已补导 SVG/PNG（2026-11-08）；未采集消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-retry-stop-2026-11-08",
+      "filename": "42-迁移_checklist_的异常重试与停止",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 43,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[已完成：迁移契约与证据校验] --> B[已完成：实体、关系、分页对账]\n    B --> C[已完成：manwei 保存证据离线复核]\n    C --> D[下一批：只读取证与生成前放行]\n    D --> E[后续：同一优化链修复与交接]\n    E --> F[后续：真实迁移验收与界面展示]\n",
+      "title": "迁移 checklist 首批实施与后续接入",
+      "file": "43",
+      "note": "用户授权读取主会话 review 后实施。首批契约、纯程序对账与 manwei 保存证据离线复核已完成；自动取证、生成前放行、同一优化链修复和真实迁移验收尚未接入。 已补导 SVG/PNG（2026-11-08）；未采集消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-phase1-2026-11-08",
+      "filename": "43-迁移_checklist_首批实施与后续接入",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 44,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "commentary",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[原任务：桌面64.9 / 移动55] --> B[第1轮：原站原会话修复]\n    B --> C[独立复评：桌面72.3 / 移动71.1]\n    C --> D[第2轮修复中：仍未达标]\n    C --> E[旁路程序对账：后台缺4条关系]\n    E --> F[旧分页184_4.aspx返回404]\n    F --> G[正式AI报告漏报：需接入宿主差异证据]\n    C --> H[来源覆盖与真实业务仍未验证]\n",
+      "title": "manwei 原任务第1轮验证与后续修复",
+      "file": "44",
+      "note": "本案例已完成第1轮原站原会话修复与独立复评；程序对账确认分类184仍缺4条归属、旧分页404，正式AI报告未单独列出该缺陷。第2轮正在执行，整体尚未通过。新检查器仍为旁路。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#manwei-round1-validation-2026-11-08",
+      "filename": "44-manwei_原任务第1轮验证与后续修复",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 45,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[原初评：桌面64.9 / 移动55] --> B[第1轮：72.3 / 71.1]\n    B --> C[第2轮：71.9 / 65，完整性未通过]\n    C --> D[累计跟进5/5次，优化停止]\n    C --> E[正式报告确认：4条归属及末页缺失]\n    E --> F[另有正文缺失、错误内链和移动缺陷]\n    D --> G[下一批：程序差异接入正式清单与原优化链]\n    F --> G\n    G --> H[保留来源未知、冻结范围与累计预算]\n",
+      "title": "manwei 第2轮正式复评与停止边界",
+      "file": "45",
+      "note": "本案例已完成两轮修复与独立复评，第2轮桌面71.9、移动65、业务85，完整性incomplete。正式报告确认4条归属及末页缺失，另有正文、内链和移动缺陷；累计跟进5/5次停止，未重置预算或启动第3轮。程序对账仍为旁路。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#manwei-round2-final-2026-11-08",
+      "filename": "45-manwei_第2轮正式复评与停止边界",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 46,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[两轮修复后仍未整体达标] --> B[完整性占端评分约57%]\n    B --> C[正文、归属、分页及内链缺口仍在]\n    A --> D[程序差异尚未自动进入修复委托]\n    D --> E[第一轮已发现的4条归属未明确派修]\n    A --> F[通用布局修改与回归不足]\n    F --> G[案例模板不匹配、移动长侧栏先于内容]\n    A --> H[第二轮扩大核验范围]\n    H --> I[发现更多旧缺陷，轮间分数需结合证据解释]\n    C --> J[先接入具体差异，再分模板修复与固定样本回归]\n    E --> J\n    G --> J\n    I --> J\n",
+      "title": "manwei 两轮后评分未达标的原因",
+      "file": "46",
+      "note": "完整性占PC及移动归一化评分约57%；程序差异未自动进入修复委托、模板与移动回归不足，以及扩大核验发现旧缺陷，共同解释两轮后的分数。业务已达85，不代表完整迁移通过。本次仅诊断，未启动第3轮。 已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#manwei-low-scores-causes-2026-11-08",
+      "filename": "46-manwei_两轮后评分未达标的原因",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     },
     {
       "number": 47,
@@ -490,11 +950,354 @@
       "source": "flowchart TD\n    A[生成站或失败任务：导出排障包] --> B[固定关联范围与导出截止时间]\n    B --> C[收集平台记录与已有证据]\n    B --> D{Kooboo 站点可导出吗}\n    D -->|可以| E[原生全部导出：完整模式]\n    D -->|离线、未建站或失败| F[记录站点包缺失与原因]\n    C --> G[整理目录、脱敏平台凭证并核对文件]\n    E --> G\n    F --> G\n    G --> H[生成摘要、索引与校验信息]\n    H --> I[下载一个 ZIP]\n    I --> J[离线分析站点与执行过程]\n",
       "title": "完整站点与平台执行档案的一键排障导出",
       "file": "47",
-      "note": "主对话用户确认 Kooboo 原生完整站点 ZIP 加平台资料，并要求绘图、准备实施。方案具备实施基础，尚未实施或真实导出验收；仅源码，未采集消息 ID。",
-      "renderStatus": "source-only",
-      "sourceMessagePath": "source-messages.md#diagnostic-export-2026-11-08"
+      "note": "主对话用户确认 Kooboo 原生完整站点 ZIP 加平台资料，并要求绘图、准备实施。方案具备实施基础，尚未实施或真实导出验收；源码与图片齐全，未采集消息 ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#diagnostic-export-2026-11-08",
+      "filename": "47-完整站点与平台执行档案的一键排障导出",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 48,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[冻结清单及153条原路径] --> B[宿主程序对账并保存证据]\n    B --> C[原案例确认5项差异，保留报告6个问题]\n    C --> D{沿用原累计预算}\n    D -->|额度允许| E[完整附入原站原会话修复消息]\n    E --> F[独立复评与同清单程序回归]\n    F --> G{证据及必交付项通过吗}\n    G -->|否| D\n    G -->|是| H[结合双端评分判断交付]\n    D -->|本案例5次已用尽| I[保持停止，未启动第三轮]\n",
+      "title": "迁移程序差异接入修复与逐轮回归",
+      "file": "48",
+      "note": "用户授权继续实施。已接入宿主登记、程序取证、报告合并、修复消息完整附入与逐轮回归；原案例真实读取153条路径和13页后台目录，识别4条归属及末页404，保留正式报告6个问题。累计跟进5/5，未启动第3轮。真实新修复及复评未运行。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-runtime-integration-2026-11-08",
+      "filename": "48-迁移程序差异接入修复与逐轮回归",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 49,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[短消息加临时kfile] --> B[原会话第3轮修复完成]\n    B --> C[独立复评：82.2 / 79.3 / 84.5]\n    C --> D[程序对账：483实体、756关系、153路径]\n    D --> E[已知键对齐，完整性仍未通过]\n    B --> F[临时文件清理，平台原件保留]\n",
+      "title": "第41图落实与manwei第3轮验证",
+      "file": "49",
+      "note": "第41图的资料载体分支已实际接入。manwei第3轮生成、独立复评及同冻结范围程序回归完成；migration-v3已知键与顺序差异为0，整体完整性仍未通过。按3轮上限停止，未重置预算。v2随包reader另经真实SHA-256还原和清理验证后更新服务，本轮AI修复使用v1。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#manwei-context-transport-round3-2026-11-08",
+      "filename": "49-第41图落实与manwei第3轮验证",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 50,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[原站与明确迁移范围] --> B[发现入口、分类、分页及内容全集]\n    B --> C[保存原始响应并提取正文、资源与关系]\n    C --> D{检查A：原站到资料}\n    D -->|缺采或提取有误| B\n    D -->|证据充分| E[冻结资料版本与迁移清单]\n    D -->|来源全集仍未知| U[保留来源未知，不宣称全站完整]\n    U -.->|可继续试迁移，继承未知状态| E\n    E --> F[批量导入数据与资源，生成动态模板]\n    F --> G{检查B：资料到Kooboo}\n    G -->|实体、关系、正文或路由有差异| F\n    G -->|对账通过| H[独立核验模板、双端与业务]\n    H --> I[结合A、B及验收结果判断交付]\n    U -.-> I\n",
+      "title": "迁移两段完整性与manwei经验复盘",
+      "file": "50",
+      "note": "讨论方案，尚未实施新流程。现有manwei适配器只验证保存证据可识别的基线到目标站，不证明全源站采齐；来源完整性与落地完整性必须分别保留状态。建议先补来源发现、原始采集及提取核验，再贯通版本化资料与目标对账。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#migration-two-stage-completeness-2026-11-08",
+      "filename": "50-迁移两段完整性与manwei经验复盘",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 51,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[明确语言、域名与迁移范围] --> B[从导航、站点地图、分类和分页发现内容]\n    B --> C[建立来源清单，记录各栏目预期量与依据]\n    C --> D[采集原件，提取正文、资源与关系]\n    D --> E[程序全量检查清单、引用、计数与异常]\n    E --> F[AI按页面类型及异常复核原件与提取结果]\n    F --> G{A段结论}\n    G -->|有可补齐缺口| H[定向补采或修正提取，复用已有原件]\n    H --> C\n    G -->|范围内证据充分| I[冻结资料版本、清单及复核结论]\n    I --> J[交给B段逐项落地与对账]\n    G -->|仍有未知或无法补齐| K[保存草稿与缺口，不宣称来源完整]\n",
+      "title": "参考site-harvest建立A段来源完整性检查",
+      "file": "51",
+      "note": "A段方案讨论，尚未实施。已只读核对本机site-harvest的SKILL、参考契约及完整性和文件校验代码；没有启动采集或浏览器。复用其采集、证据、续采和缺口机制，建议补结构化栏目全集对账、提取复核及平台接入。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#source-completeness-site-harvest-2026-11-08",
+      "filename": "51-参考site-harvest建立A段来源完整性检查",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 52,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[平台提供来源、范围、已有资料与预算] --> B[采集AI判断发现策略与下一步]\n    B --> C[程序执行发现、采集、提取和核对]\n    C --> D[平台保存原件、清单及检查结果]\n    D --> E[采集AI按类型和异常复核，提交结论与依据]\n    E --> F{平台检查交接条件}\n    F -->|证据充分且必需项通过| G[冻结资料与清单版本]\n    G --> H[B段按固定版本迁移与验收]\n    F -->|缺口可补且预算允许| B\n    F -->|无法补齐、范围冲突或预算耗尽| I[保存进度、未知项和停止原因]\n    H -->|发现来源遗漏| J[建立新资料版本，定向续采]\n    J --> B\n",
+      "title": "采集AI的输入产出与A段交接条件",
+      "file": "52",
+      "note": "方案讨论，尚未实施采集AI或自动放行。沿用现有来源覆盖和约定范围覆盖契约，区分执行结束与可正式交接；采集AI提交证据化结论，平台检查并冻结资料版本，缺口定向续采，无法补齐或预算耗尽保存进度。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#collection-ai-handoff-contract-2026-11-08",
+      "filename": "52-采集AI的输入产出与A段交接条件",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 53,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[当前版本的缺口、证据和上一轮结果] --> B[跟进AI判断归属、共同原因与依赖]\n    B --> C[形成具体任务：目标、范围、验收和边界]\n    C --> D{平台检查任务与执行条件}\n    D -->|条件具备| E[交给采集AI、Kooboo或核验程序]\n    D -->|任务依据不足| K[限次补齐依据，无法补齐则保存结果]\n    E --> F[按任务目标重新取证并检查受影响范围]\n    F --> G[分别记录实际修复、证据进展和新增问题]\n    G --> H{平台结合证据和累计预算决定}\n    H -->|阶段必需项通过| I[进入下一阶段]\n    H -->|有可执行目标且允许继续| B\n    H -->|无新依据、阻塞或达到限制| J[保存进度与原因，等待处理或停止]\n    D -->|预算或执行状态不允许| J\n",
+      "title": "跟进AI按缺口形成任务并判断继续或停止",
+      "file": "53",
+      "note": "本轮方案讨论，尚未实施。按来源、目标、核验和外部阻塞归类缺口，按共同原因和依赖形成明确任务；区分实际修复、核验进展和新增问题。沿用预算及修站两轮无改善停止规则，采集侧进展不清零修站计数。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#gap-driven-task-decisions-2026-11-08",
+      "filename": "53-跟进AI按缺口形成任务并判断继续或停止",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 54,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[按明确目标执行一个有界批次] --> B[保存检查点，核验结果并累计记账]\n    B --> C{整体任务已完成吗}\n    C -->|是| D[交付结果与证据]\n    C -->|否| E{当前推进情况}\n    E -->|有实质进展| A\n    E -->|暂时故障| F[退避后自动恢复，先核对原执行]\n    F --> A\n    E -->|停滞或重复| G[限次诊断并调整策略]\n    G --> H{有依据的新方案吗}\n    H -->|有| A\n    H -->|无，或已形成循环| I[熔断受阻环节，保留成果与原因]\n    B -->|用户硬限制或异常消耗兜底触发| I\n",
+      "title": "完成优先的自动接续与防循环兜底",
+      "file": "54",
+      "note": "用户纠正预算优先停止的方向：无人托管任务应优先完成，有效推进时自动接续，临时故障自动恢复，以循环和异常消耗兜底。累计记账不清空，单次执行可分段续接，用户明确硬限制仍遵守。替代图52/53中一般预算到限直接停止的建议；具体阈值与实现待定，当前代码未修改。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#completion-first-loop-guards-2026-11-08",
+      "filename": "54-完成优先的自动接续与防循环兜底",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 55,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[接续任务或服务恢复] --> B[读取目标、检查点与失败历史]\n    B --> C[核对原执行、实际文件与操作回执]\n    C -->|原执行仍在运行或结果不明| D[按计划继续核对，避免重复执行]\n    D --> C\n    C -->|可安全接续| E[从首个未完成目标执行下一批]\n    E --> F[保存实际产物与验证结果]\n    F --> G{目标是否完成}\n    G -->|已完成| H[交接下一目标或阶段]\n    G -->|有进展，仍有余项| E\n    G -->|临时故障| I[保存下次执行时间，退避后恢复]\n    I --> B\n    G -->|同一目标持续无进展| J[对照尝试历史，有限诊断或换策略]\n    J -->|有依据的新路径| E\n    J -->|形成循环或无法解除阻塞| K[保存阻塞与所需条件，继续无依赖工作]\n    D -->|达到核对边界仍无法确认| K\n",
+      "title": "采集任务的检查点自动接续与目标级防循环",
+      "file": "55",
+      "note": "用户认可完成优先方向后继续讨论。建议平台保存目标、待处理集合、产物、操作回执及失败历史，恢复先核对原执行，再接续未完成步骤。批次结束不等于任务结束，临时故障退避自动恢复，同一目标的重复失败及策略回转有限兜底。现有缓存和回执为基础，完整采集接续尚未实施。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#collection-checkpoint-recovery-2026-11-08",
+      "filename": "55-采集任务的检查点自动接续与目标级防循环",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 56,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[site-harvest已有成果] -.->|迁入并版本化| B[平台采集SOP与资料契约]\n    A -.->|收编采集代码| C[随平台分发的采集引擎]\n    D[Windows或macOS统一初始化] --> E[平台管理的采集运行环境]\n    E --> C\n    B --> F[平台本地采集AI]\n    F --> G[Node任务调度与受控工具]\n    G --> C\n    C --> H[原始证据、资料与检查点]\n    H --> I[A段核验并冻结资料版本]\n    I --> J[B段迁移]\n",
+      "title": "site-harvest能力内置与Windows和macOS交付",
+      "file": "56",
+      "note": "用户要求同事电脑不依赖个人site-harvest skill，并已确认Windows和macOS都需要支持。建议将脚本核心、AI规则及资料契约收编为平台内置引擎、版本化SOP和结构化工具；采集运行环境由统一初始化和分平台组件交付。首版建议保留Python核心，具体运行时打包方式待验证，未实施或宣称跨平台验收。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#portable-harvest-integration-2026-11-08",
+      "filename": "56-site-harvest能力内置与Windows和macOS交付",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 57,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[采集AI读取进度与缺口短索引] --> B[提出具体目标、对象与操作]\n    B --> C[平台校验范围并保存操作记录]\n    C --> D[Python引擎执行一个采集批次]\n    D --> E[平台保存完整资料、原件与检查点]\n    E --> F[程序核对产物、清单与证据引用]\n    F --> G[返回摘要、缺口和证据索引]\n    G --> H[采集AI按类型和异常读取证据并复核]\n    H --> I{平台检查A段交接条件}\n    I -->|仍有可补缺口| B\n    I -->|满足条件| J[冻结共同版本并交接B段]\n    I -->|阻塞或仍有未知| K[保存原因并按恢复规则处理]\n",
+      "title": "采集AI与Python引擎的受控调用及证据交接",
+      "file": "57",
+      "note": "用户已确认首版保留Python，不重写JS/TS。本图为下一步调用边界讨论建议，尚未实施或逐项确认：AI提出具体目标，平台校验并记录操作，Python执行批次，原件与资料落盘，工具返回短索引，AI按类型和异常读取证据，平台检查交接条件。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#collection-engine-tool-boundary-2026-11-08",
+      "filename": "57-采集AI与Python引擎的受控调用及证据交接",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 58,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[发现采集异常或核验不一致] --> B[保留原件、版本与失败样本]\n    B --> C{定位问题}\n    C -->|临时请求故障| D[退避重试并复用已有结果]\n    C -->|站点结构差异| E[采集AI提出站点规则候选]\n    E --> F[按独立预期验证样本及影响范围]\n    F -->|通过| G[记录规则版本并定向重处理]\n    F -->|失败| H[保留缺口并有限诊断]\n    C -->|共享引擎或核验器缺陷| I[形成可复现缺陷与候选补丁]\n    I --> J[隔离修复、回归并按发布策略升级]\n    J --> G\n    D --> K[重新核验受影响资料]\n    G --> K\n    K --> L{平台检查交接条件}\n    L -->|通过| M[冻结新资料版本]\n    L -->|仍有问题| H\n    H -->|有依据的新路径| C\n    H -->|无可行路径或形成循环| N[暂停受阻环节，保存成果和原因]\n",
+      "title": "采集工具异常处理与规则及核心修改边界",
+      "file": "58",
+      "note": "用户追问工具正确性、故障处理和采集AI修改权限。已检查site-harvest源码与测试，未发现manwei域名专用分支；平台另有manwei保存证据专用适配器。新建议以独立样本预期、运行核验、版本追溯和隔离回归保障，区分站点规则与共享代码权限，尚未确认或实施。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#harvest-correctness-and-repair-permissions-2026-11-08",
+      "filename": "58-采集工具异常处理与规则及核心修改边界",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 59,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[采集AI定位异常并读取原件] --> B[提出站点规则、适用范围与验证预期]\n    B --> C[平台校验规则类型、范围和冲突]\n    C -->|规则不支持所需能力| D[记录工具扩展需求与缺口]\n    C -->|允许试跑| E[用原件在独立目录试跑]\n    E --> F[核对失败样本及正常回归样本]\n    F --> G{原问题解决且验证依据充分}\n    G -->|否| H[保留差异，有限调整或升级缺陷]\n    G -->|是| I[自动采用到当前任务的声明范围]\n    I --> J[重处理受影响资料并逐项核验]\n    J -->|发现退步| K[撤回规则采用，保留未解决项]\n    K --> H\n    J -->|满足A段交接条件| L[冻结共同版本并交接]\n    I -.-> M[沉淀为带适用条件的候选经验]\n    M -.-> N[其他站点重新匹配并验证]\n",
+      "title": "站点规则的适用范围与自动验证采用",
+      "file": "59",
+      "note": "用户已认可工具正确性、故障处置与权限边界。本图继续提出站点规则的结构化配置、适用模板、独立预期、原件试跑、正常样本回归、当前任务自动采用及退步撤回；经验跨站复用仍需重新匹配验证。新细则尚未确认或实施。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#site-rule-validation-and-adoption-2026-11-08",
+      "filename": "59-站点规则的适用范围与自动验证采用",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 60,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[执行明确目标并保存检查点] --> B{结果核验}\n    B -->|满足阶段交接条件| C[冻结版本并推进下一阶段]\n    B -->|异常或质量不足| D[自动诊断并形成恢复目标]\n    D --> E[恢复执行、调整规则或更换已授权方法]\n    E --> F[隔离试跑并检查原问题和回归样本]\n    F -->|验证通过| G[采用任务内版本并接续原任务]\n    G --> A\n    F -->|未通过| H{有依据的新路径或临时阻塞}\n    H -->|有新路径| D\n    H -->|临时阻塞| I[安排复查并推进无依赖工作]\n    I --> D\n    H -->|缺外部条件或无可行路径| J[保存成果与证据，提出最小必要请求]\n    J -->|条件补足| D\n    D -->|用户取消、硬限制或循环兜底触发| K[停止相应自动执行并保存原因]\n",
+      "title": "无人值守优先的自动诊断修复与接续",
+      "file": "60",
+      "note": "用户基本认可站点规则方案，并明确本地AI应在无人值守时应对意外、减少人工介入，同时保障交付质量、容错与自动跟进。图中自动诊断、隔离验证、任务内采用、恢复与最小人工请求为落实原则的进一步建议，尚未实现；隔离代码修复能力和发布策略仍待确定。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#unattended-recovery-and-quality-2026-11-08",
+      "filename": "60-无人值守优先的自动诊断修复与接续",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 61,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 1,
+      "source": "flowchart TD\n    A[用户目标、来源与已授权范围] --> B[固定任务输入与执行策略]\n    B --> C[A段：发现、采集、提取与核验]\n    C --> D{A段交接条件}\n    D -->|可定向修正| E[采集AI组织补采、规则或工具修复]\n    E --> C\n    D -->|满足| F[冻结资料、清单与证据共同版本]\n    F --> G[B段：Kooboo按固定版本迁移]\n    G --> H[实体、关系、内容、URL与分页对账]\n    H -->|目标缺陷| I[跟进AI形成具体修复任务]\n    I --> G\n    H -->|来源缺口| E\n    H -->|结构与内容项通过| J[独立质量评测与必要的交互检查]\n    J -->|目标问题| I\n    J -->|发现来源遗漏| E\n    J --> K{当前范围的必交付项通过}\n    K -->|通过| L[生成可追溯交付结果]\n    K -->|需外部条件| M[最小必要请求并保留恢复点]\n",
+      "title": "站点迁移完整设计：A段采集与B段落地闭环",
+      "file": "61",
+      "note": "整合已确认的两段完整性、版本冻结、缺口路由及最终交付条件。全站覆盖与约定范围覆盖分开，源缺口回采集、目标缺陷定向修复。 实施前完整设计评审稿，不代表能力已实施或验收。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#complete-design-two-stage-2026-11-08",
+      "filename": "61-站点迁移完整设计-A段采集与B段落地闭环",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 62,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 2,
+      "source": "flowchart TD\n    A[平台API与持久任务队列] --> B[采集AI：判断、诊断与证据复核]\n    A --> C[跟进AI：缺口归属、目标与恢复计划]\n    B --> D[受控工具与操作记录]\n    C --> A\n    D --> E[Node适配器与进程管理]\n    E --> F[内置Python采集引擎]\n    E --> G[已授权的浏览器采集能力]\n    D --> H[规则试跑与隔离代码修复执行器]\n    F --> I[原件、资料、检查点与版本索引]\n    G --> I\n    H --> I\n    I --> J[程序核验与独立证据预期]\n    J --> B\n    J --> K[平台交接判定]\n    K --> L[Kooboo生成与目标取证]\n    L --> M[独立评测与经验学习]\n    M --> C\n",
+      "title": "站点迁移完整设计：平台组件与AI职责",
+      "file": "62",
+      "note": "整合Node平台、Python引擎、采集AI、跟进AI、受控工具、证据存储、核验、Kooboo及独立评测的职责；不新增常驻AI角色或个人skill运行依赖。 实施前完整设计评审稿，不代表能力已实施或验收。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#complete-design-components-2026-11-08",
+      "filename": "62-站点迁移完整设计-平台组件与AI职责",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
+    },
+    {
+      "number": 63,
+      "turnId": null,
+      "messageId": null,
+      "sourceThreadId": "01a1b88d-c1d2-7461-90bd-c6ad908852d5",
+      "date": "2026-11-08",
+      "phase": "final_answer",
+      "diagramInMessage": 3,
+      "source": "flowchart TD\n    A[执行异常或质量核验未通过] --> B[保存原件、操作回执与失败证据]\n    B --> C[自动诊断并形成明确恢复目标]\n    C --> D{下一种有依据的方法}\n    D -->|临时故障或执行中断| E[退避、核对原执行并从检查点接续]\n    D -->|站点规则差异| F[在原件上试跑候选规则]\n    D -->|采集代码能力缺口| G[在受限副本生成并运行候选补丁]\n    F --> H[核对固定预期与正常回归样本]\n    G --> H\n    H -->|通过| I[记录并采用当前任务专用版本]\n    H -->|未通过| J[保留差异并拒绝或撤回候选]\n    I --> K[重处理受影响对象并重新核验]\n    E --> K\n    K -->|达到原目标| L[接续原任务与阶段交接]\n    K -->|仍有问题| J\n    J -->|存在新证据与新方法| C\n    J -->|临时外部条件| M[安排复查并执行无依赖工作]\n    M --> C\n    J -->|无可行路径、需授权或用户决策| N[保留成果并提出最小必要请求]\n    C -->|取消、硬限制或循环兜底触发| O[停止相关自动执行并保存原因]\n",
+      "title": "站点迁移完整设计：隔离修复与无人值守恢复",
+      "file": "63",
+      "note": "用户已接受首版采集模块/适配扩展的隔离修复、验证后当前任务自动采用；共享发布仍走独立流程。整合固定预期回归、任务内版本、回退、接续、最小外部请求及防循环。 实施前完整设计评审稿，不代表能力已实施或验收。已补导 SVG/PNG（2026-11-08）；未采集消息ID。",
+      "renderStatus": "rendered",
+      "sourceMessagePath": "source-messages.md#complete-design-isolated-repair-2026-11-08",
+      "filename": "63-站点迁移完整设计-隔离修复与无人值守恢复",
+      "formats": [
+        "mmd",
+        "png",
+        "svg"
+      ]
     }
   ],
   "updatedDate": "2026-11-08",
-  "renderedCount": 34
+  "renderedCount": 63,
+  "filenameConvention": "编号-中文标题；空白转下划线，文件系统不兼容符号转连字符。file 保留原编号，filename 为实际文件名（不含扩展名）。"
 }

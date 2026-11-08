@@ -35,7 +35,8 @@
       "nodes": 9,
       "edges": 11,
       "svgBytes": 14625,
-      "pngBytes": 102330
+      "pngBytes": 102330,
+      "filename": "01-初始架构-Admin、插件、评分平台与评测执行器"
     },
     {
       "number": 2,
@@ -46,7 +47,8 @@
       "nodes": 7,
       "edges": 7,
       "svgBytes": 9607,
-      "pngBytes": 84883
+      "pngBytes": 84883,
+      "filename": "02-资源包驱动的统一自动化流程"
     },
     {
       "number": 3,
@@ -57,7 +59,8 @@
       "nodes": 8,
       "edges": 6,
       "svgBytes": 10233,
-      "pngBytes": 72305
+      "pngBytes": 72305,
+      "filename": "03-内容、视觉与业务评测依据"
     },
     {
       "number": 4,
@@ -68,7 +71,8 @@
       "nodes": 14,
       "edges": 15,
       "svgBytes": 14167,
-      "pngBytes": 132996
+      "pngBytes": 132996,
+      "filename": "04-空白站点起步与三类克隆路径"
     },
     {
       "number": 5,
@@ -79,7 +83,8 @@
       "nodes": 7,
       "edges": 7,
       "svgBytes": 9557,
-      "pngBytes": 53669
+      "pngBytes": 53669,
+      "filename": "05-内部录入、外部导入与资源基线"
     },
     {
       "number": 6,
@@ -90,7 +95,8 @@
       "nodes": 9,
       "edges": 8,
       "svgBytes": 8939,
-      "pngBytes": 60151
+      "pngBytes": 60151,
+      "filename": "06-资源基线、输入版本与多个生成站"
     },
     {
       "number": 7,
@@ -101,7 +107,8 @@
       "nodes": 7,
       "edges": 6,
       "svgBytes": 7375,
-      "pngBytes": 52543
+      "pngBytes": 52543,
+      "filename": "07-生成执行模块的职责与人工接管"
     },
     {
       "number": 8,
@@ -112,7 +119,8 @@
       "nodes": 8,
       "edges": 7,
       "svgBytes": 7766,
-      "pngBytes": 55953
+      "pngBytes": 55953,
+      "filename": "08-早期生成方案分层提案"
     },
     {
       "number": 9,
@@ -123,7 +131,8 @@
       "nodes": 8,
       "edges": 7,
       "svgBytes": 8608,
-      "pngBytes": 79418
+      "pngBytes": 79418,
+      "filename": "09-首页样稿、成单与内页续建"
     },
     {
       "number": 10,
@@ -134,7 +143,8 @@
       "nodes": 6,
       "edges": 8,
       "svgBytes": 11727,
-      "pngBytes": 82211
+      "pngBytes": 82211,
+      "filename": "10-并发队列与早期外部_AI_跟进方案"
     },
     {
       "number": 11,
@@ -145,7 +155,8 @@
       "nodes": 7,
       "edges": 6,
       "svgBytes": 7773,
-      "pngBytes": 69740
+      "pngBytes": 69740,
+      "filename": "11-评分平台、评测_Skill_与本地_AI"
     },
     {
       "number": 12,
@@ -156,7 +167,8 @@
       "nodes": 6,
       "edges": 5,
       "svgBytes": 5901,
-      "pngBytes": 41604
+      "pngBytes": 41604,
+      "filename": "12-Site_UI_还原度评测_SOP"
     },
     {
       "number": 13,
@@ -167,7 +179,8 @@
       "nodes": 6,
       "edges": 6,
       "svgBytes": 7618,
-      "pngBytes": 64831
+      "pngBytes": 64831,
+      "filename": "13-按_Banner_设计意图进行双端评测"
     },
     {
       "number": 14,
@@ -178,7 +191,8 @@
       "nodes": 6,
       "edges": 5,
       "svgBytes": 5983,
-      "pngBytes": 49086
+      "pngBytes": 49086,
+      "filename": "14-全站完整度清单与逐项核验"
     },
     {
       "number": 15,
@@ -189,7 +203,8 @@
       "nodes": 7,
       "edges": 7,
       "svgBytes": 8875,
-      "pngBytes": 71515
+      "pngBytes": 71515,
+      "filename": "15-SEO_迁移与旧_URL_承接"
     },
     {
       "number": 16,
@@ -200,7 +215,8 @@
       "nodes": 7,
       "edges": 7,
       "svgBytes": 7760,
-      "pngBytes": 62197
+      "pngBytes": 62197,
+      "filename": "16-AI_App_用户目标、体验与业务评测"
     },
     {
       "number": 17,
@@ -211,7 +227,8 @@
       "nodes": 6,
       "edges": 5,
       "svgBytes": 6470,
-      "pngBytes": 54063
+      "pngBytes": 54063,
+      "filename": "17-评测_Skill_发布与版本快照"
     },
     {
       "number": 18,
@@ -222,7 +239,8 @@
       "nodes": 9,
       "edges": 9,
       "svgBytes": 10289,
-      "pngBytes": 82570
+      "pngBytes": 82570,
+      "filename": "18-报告、问题跟进、修复与复评"
     },
     {
       "number": 19,
@@ -233,7 +251,8 @@
       "nodes": 4,
       "edges": 3,
       "svgBytes": 4516,
-      "pngBytes": 30147
+      "pngBytes": 30147,
+      "filename": "19-Site_模板生成到独立评测"
     },
     {
       "number": 20,
@@ -244,7 +263,8 @@
       "nodes": 8,
       "edges": 10,
       "svgBytes": 12498,
-      "pngBytes": 94152
+      "pngBytes": 94152,
+      "filename": "20-生成状态识别与自动交接评测"
     },
     {
       "number": 21,
@@ -255,7 +275,8 @@
       "nodes": 8,
       "edges": 10,
       "svgBytes": 13813,
-      "pngBytes": 98257
+      "pngBytes": 98257,
+      "filename": "21-平台内置流程跟进_Agent"
     },
     {
       "number": 22,
@@ -266,7 +287,8 @@
       "nodes": 7,
       "edges": 7,
       "svgBytes": 10745,
-      "pngBytes": 79572
+      "pngBytes": 79572,
+      "filename": "22-一次发起后的自主推进与明确中断"
     },
     {
       "number": 23,
@@ -277,7 +299,8 @@
       "nodes": 4,
       "edges": 4,
       "svgBytes": 7050,
-      "pngBytes": 43727
+      "pngBytes": 43727,
+      "filename": "23-异常恢复、预算停止与报告交付"
     },
     {
       "number": 24,
@@ -288,7 +311,8 @@
       "nodes": 5,
       "edges": 5,
       "svgBytes": 7400,
-      "pngBytes": 48938
+      "pngBytes": 48938,
+      "filename": "24-按连接选择跨环境迁移与交付核验"
     },
     {
       "number": 25,
@@ -299,7 +323,8 @@
       "nodes": 8,
       "edges": 9,
       "svgBytes": 12502,
-      "pngBytes": 81949
+      "pngBytes": 81949,
+      "filename": "25-按独立报告自动修复与提分"
     },
     {
       "number": 26,
@@ -310,7 +335,8 @@
       "nodes": 6,
       "edges": 5,
       "svgBytes": 5892,
-      "pngBytes": 39498
+      "pngBytes": 39498,
+      "filename": "26-具体修复委托、重新取证与回归检查"
     },
     {
       "number": 27,
@@ -321,7 +347,8 @@
       "nodes": 6,
       "edges": 6,
       "svgBytes": 9122,
-      "pngBytes": 72131
+      "pngBytes": 72131,
+      "filename": "27-自动优化轮数与停止条件"
     },
     {
       "number": 28,
@@ -332,7 +359,8 @@
       "nodes": 4,
       "edges": 3,
       "svgBytes": 4592,
-      "pngBytes": 32365
+      "pngBytes": 32365,
+      "filename": "28-早期外部_Admin_轮次_API_提案"
     },
     {
       "number": 29,
@@ -343,7 +371,8 @@
       "nodes": 6,
       "edges": 5,
       "svgBytes": 7517,
-      "pngBytes": 40250
+      "pngBytes": 40250,
+      "filename": "29-修复与复评串行及报告适用性"
     },
     {
       "number": 30,
@@ -354,7 +383,8 @@
       "nodes": 5,
       "edges": 4,
       "svgBytes": 5137,
-      "pngBytes": 28373
+      "pngBytes": 28373,
+      "filename": "30-首页完成后补齐全站"
     },
     {
       "number": 31,
@@ -365,7 +395,8 @@
       "nodes": 4,
       "edges": 3,
       "svgBytes": 4367,
-      "pngBytes": 20235
+      "pngBytes": 20235,
+      "filename": "31-其余四类场景的建议验收顺序"
     },
     {
       "number": 32,
@@ -376,7 +407,8 @@
       "nodes": 7,
       "edges": 7,
       "svgBytes": 8256,
-      "pngBytes": 51538
+      "pngBytes": 51538,
+      "filename": "32-跨任务经验沉淀与反馈闭环"
     },
     {
       "number": 33,
@@ -387,7 +419,8 @@
       "nodes": 7,
       "edges": 7,
       "svgBytes": 7748,
-      "pngBytes": 59621
+      "pngBytes": 59621,
+      "filename": "33-本地_AI_自动选择、复盘与维护经验"
     },
     {
       "number": 34,
@@ -398,7 +431,463 @@
       "nodes": 5,
       "edges": 6,
       "svgBytes": 7376,
-      "pngBytes": 42070
+      "pngBytes": 42070,
+      "filename": "34-经验试用、效果验证与修订停用"
+    },
+    {
+      "number": 35,
+      "file": "35",
+      "title": "生成站详情与评测报告历史",
+      "width": 1119,
+      "height": 236,
+      "nodes": 6,
+      "edges": 5,
+      "svgBytes": 4558,
+      "pngBytes": 63346,
+      "pngWidth": 2310,
+      "pngHeight": 544,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "35-生成站详情与评测报告历史"
+    },
+    {
+      "number": 36,
+      "file": "36",
+      "title": "迁移清单驱动生成、对账与独立评测",
+      "width": 781,
+      "height": 907,
+      "nodes": 7,
+      "edges": 9,
+      "svgBytes": 9588,
+      "pngBytes": 168694,
+      "pngWidth": 1634,
+      "pngHeight": 1886,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "36-迁移清单驱动生成、对账与独立评测"
+    },
+    {
+      "number": 37,
+      "file": "37",
+      "title": "迁移清单的生成前核对与缺口处理",
+      "width": 783,
+      "height": 806,
+      "nodes": 8,
+      "edges": 10,
+      "svgBytes": 10209,
+      "pngBytes": 159204,
+      "pngWidth": 1638,
+      "pngHeight": 1684,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "37-迁移清单的生成前核对与缺口处理"
+    },
+    {
+      "number": 38,
+      "file": "38",
+      "title": "迁移 checklist 的逐轮检查与修复",
+      "width": 1173,
+      "height": 830,
+      "nodes": 9,
+      "edges": 10,
+      "svgBytes": 10987,
+      "pngBytes": 199806,
+      "pngWidth": 2418,
+      "pngHeight": 1732,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "38-迁移_checklist_的逐轮检查与修复"
+    },
+    {
+      "number": 39,
+      "file": "39",
+      "title": "迁移清单与目标快照的程序对账",
+      "width": 661,
+      "height": 773,
+      "nodes": 8,
+      "edges": 7,
+      "svgBytes": 6191,
+      "pngBytes": 119864,
+      "pngWidth": 1394,
+      "pngHeight": 1618,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "39-迁移清单与目标快照的程序对账"
+    },
+    {
+      "number": 40,
+      "file": "40",
+      "title": "平台与 Kooboo 的清单及修复交接",
+      "width": 659,
+      "height": 860,
+      "nodes": 7,
+      "edges": 7,
+      "svgBytes": 7556,
+      "pngBytes": 145602,
+      "pngWidth": 1390,
+      "pngHeight": 1792,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "40-平台与_Kooboo_的清单及修复交接"
+    },
+    {
+      "number": 41,
+      "file": "41",
+      "title": "message 优先与临时 kfile 的交付选择",
+      "width": 575,
+      "height": 1233,
+      "nodes": 8,
+      "edges": 8,
+      "svgBytes": 7871,
+      "pngBytes": 157914,
+      "pngWidth": 1222,
+      "pngHeight": 2538,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "41-message_优先与临时_kfile_的交付选择"
+    },
+    {
+      "number": 42,
+      "file": "42",
+      "title": "迁移 checklist 的异常重试与停止",
+      "width": 1367,
+      "height": 746,
+      "nodes": 8,
+      "edges": 9,
+      "svgBytes": 9553,
+      "pngBytes": 201498,
+      "pngWidth": 2806,
+      "pngHeight": 1564,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "42-迁移_checklist_的异常重试与停止"
+    },
+    {
+      "number": 43,
+      "file": "43",
+      "title": "迁移 checklist 首批实施与后续接入",
+      "width": 405,
+      "height": 773,
+      "nodes": 6,
+      "edges": 5,
+      "svgBytes": 4603,
+      "pngBytes": 97566,
+      "pngWidth": 882,
+      "pngHeight": 1618,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "43-迁移_checklist_首批实施与后续接入"
+    },
+    {
+      "number": 44,
+      "file": "44",
+      "title": "manwei 原任务第1轮验证与后续修复",
+      "width": 1023,
+      "height": 773,
+      "nodes": 8,
+      "edges": 7,
+      "svgBytes": 6676,
+      "pngBytes": 164654,
+      "pngWidth": 2118,
+      "pngHeight": 1618,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "44-manwei_原任务第1轮验证与后续修复"
+    },
+    {
+      "number": 45,
+      "file": "45",
+      "title": "manwei 第2轮正式复评与停止边界",
+      "width": 736,
+      "height": 902,
+      "nodes": 8,
+      "edges": 8,
+      "svgBytes": 6855,
+      "pngBytes": 158422,
+      "pngWidth": 1544,
+      "pngHeight": 1876,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "45-manwei_第2轮正式复评与停止边界"
+    },
+    {
+      "number": 46,
+      "file": "46",
+      "title": "manwei 两轮后评分未达标的原因",
+      "width": 1669,
+      "height": 516,
+      "nodes": 10,
+      "edges": 12,
+      "svgBytes": 9940,
+      "pngBytes": 205278,
+      "pngWidth": 3410,
+      "pngHeight": 1104,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "46-manwei_两轮后评分未达标的原因"
+    },
+    {
+      "number": 47,
+      "file": "47",
+      "title": "完整站点与平台执行档案的一键排障导出",
+      "width": 826,
+      "height": 1312,
+      "nodes": 10,
+      "edges": 11,
+      "svgBytes": 10166,
+      "pngBytes": 218180,
+      "pngWidth": 1724,
+      "pngHeight": 2696,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "47-完整站点与平台执行档案的一键排障导出"
+    },
+    {
+      "number": 48,
+      "file": "48",
+      "title": "迁移程序差异接入修复与逐轮回归",
+      "width": 860,
+      "height": 1011,
+      "nodes": 9,
+      "edges": 9,
+      "svgBytes": 11209,
+      "pngBytes": 202340,
+      "pngWidth": 1792,
+      "pngHeight": 2094,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "48-迁移程序差异接入修复与逐轮回归"
+    },
+    {
+      "number": 49,
+      "file": "49",
+      "title": "第41图落实与manwei第3轮验证",
+      "width": 735,
+      "height": 644,
+      "nodes": 6,
+      "edges": 5,
+      "svgBytes": 5063,
+      "pngBytes": 111435,
+      "pngWidth": 1542,
+      "pngHeight": 1360,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "49-第41图落实与manwei第3轮验证"
+    },
+    {
+      "number": 50,
+      "file": "50",
+      "title": "迁移两段完整性与manwei经验复盘",
+      "width": 1002,
+      "height": 1595,
+      "nodes": 10,
+      "edges": 13,
+      "svgBytes": 14503,
+      "pngBytes": 326202,
+      "pngWidth": 2076,
+      "pngHeight": 3262,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "50-迁移两段完整性与manwei经验复盘"
+    },
+    {
+      "number": 51,
+      "file": "51",
+      "title": "参考site-harvest建立A段来源完整性检查",
+      "width": 1616,
+      "height": 911,
+      "nodes": 11,
+      "edges": 11,
+      "svgBytes": 11754,
+      "pngBytes": 294479,
+      "pngWidth": 3304,
+      "pngHeight": 1894,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "51-参考site-harvest建立A段来源完整性检查"
+    },
+    {
+      "number": 52,
+      "file": "52",
+      "title": "采集AI的输入产出与A段交接条件",
+      "width": 1201,
+      "height": 1376,
+      "nodes": 10,
+      "edges": 11,
+      "svgBytes": 12090,
+      "pngBytes": 311671,
+      "pngWidth": 2474,
+      "pngHeight": 2824,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "52-采集AI的输入产出与A段交接条件"
+    },
+    {
+      "number": 53,
+      "file": "53",
+      "title": "跟进AI按缺口形成任务并判断继续或停止",
+      "width": 1231,
+      "height": 1525,
+      "nodes": 11,
+      "edges": 12,
+      "svgBytes": 14305,
+      "pngBytes": 367283,
+      "pngWidth": 2534,
+      "pngHeight": 3122,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "53-跟进AI按缺口形成任务并判断继续或停止"
+    },
+    {
+      "number": 54,
+      "file": "54",
+      "title": "完成优先的自动接续与防循环兜底",
+      "width": 817,
+      "height": 1561,
+      "nodes": 9,
+      "edges": 12,
+      "svgBytes": 13280,
+      "pngBytes": 261221,
+      "pngWidth": 1706,
+      "pngHeight": 3194,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "54-完成优先的自动接续与防循环兜底"
+    },
+    {
+      "number": 55,
+      "file": "55",
+      "title": "采集任务的检查点自动接续与目标级防循环",
+      "width": 1474,
+      "height": 1131,
+      "nodes": 11,
+      "edges": 15,
+      "svgBytes": 16608,
+      "pngBytes": 349154,
+      "pngWidth": 3020,
+      "pngHeight": 2334,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "55-采集任务的检查点自动接续与目标级防循环"
+    },
+    {
+      "number": 56,
+      "file": "56",
+      "title": "site-harvest能力内置与Windows和macOS交付",
+      "width": 809,
+      "height": 1118,
+      "nodes": 10,
+      "edges": 10,
+      "svgBytes": 8977,
+      "pngBytes": 203827,
+      "pngWidth": 1690,
+      "pngHeight": 2308,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "56-site-harvest能力内置与Windows和macOS交付"
+    },
+    {
+      "number": 57,
+      "file": "57",
+      "title": "采集AI与Python引擎的受控调用及证据交接",
+      "width": 1055,
+      "height": 1360,
+      "nodes": 11,
+      "edges": 11,
+      "svgBytes": 11697,
+      "pngBytes": 286901,
+      "pngWidth": 2182,
+      "pngHeight": 2792,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "57-采集AI与Python引擎的受控调用及证据交接"
+    },
+    {
+      "number": 58,
+      "file": "58",
+      "title": "采集工具异常处理与规则及核心修改边界",
+      "width": 1060,
+      "height": 1838,
+      "nodes": 14,
+      "edges": 17,
+      "svgBytes": 18827,
+      "pngBytes": 393957,
+      "pngWidth": 2192,
+      "pngHeight": 3748,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "58-采集工具异常处理与规则及核心修改边界"
+    },
+    {
+      "number": 59,
+      "file": "59",
+      "title": "站点规则的适用范围与自动验证采用",
+      "width": 1032,
+      "height": 1794,
+      "nodes": 14,
+      "edges": 14,
+      "svgBytes": 15484,
+      "pngBytes": 366973,
+      "pngWidth": 2136,
+      "pngHeight": 3660,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "59-站点规则的适用范围与自动验证采用"
+    },
+    {
+      "number": 60,
+      "file": "60",
+      "title": "无人值守优先的自动诊断修复与接续",
+      "width": 1226,
+      "height": 1513,
+      "nodes": 11,
+      "edges": 14,
+      "svgBytes": 15263,
+      "pngBytes": 363876,
+      "pngWidth": 2524,
+      "pngHeight": 3098,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "60-无人值守优先的自动诊断修复与接续"
+    },
+    {
+      "number": 61,
+      "file": "61",
+      "title": "站点迁移完整设计：A段采集与B段落地闭环",
+      "width": 1992,
+      "height": 836,
+      "nodes": 13,
+      "edges": 17,
+      "svgBytes": 18040,
+      "pngBytes": 351792,
+      "pngWidth": 4056,
+      "pngHeight": 1744,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "61-站点迁移完整设计-A段采集与B段落地闭环"
+    },
+    {
+      "number": 62,
+      "file": "62",
+      "title": "站点迁移完整设计：平台组件与AI职责",
+      "width": 1122,
+      "height": 1031,
+      "nodes": 13,
+      "edges": 17,
+      "svgBytes": 13077,
+      "pngBytes": 262357,
+      "pngWidth": 2316,
+      "pngHeight": 2134,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "62-站点迁移完整设计-平台组件与AI职责"
+    },
+    {
+      "number": 63,
+      "file": "63",
+      "title": "站点迁移完整设计：隔离修复与无人值守恢复",
+      "width": 1332,
+      "height": 1756,
+      "nodes": 15,
+      "edges": 19,
+      "svgBytes": 21782,
+      "pngBytes": 464230,
+      "pngWidth": 2736,
+      "pngHeight": 3584,
+      "validation": "Mermaid parser and SVG node/edge counts checked; PNG decoded with sharp; no browser used.",
+      "filename": "63-站点迁移完整设计-隔离修复与无人值守恢复"
     }
-  ]
+  ],
+  "additionalExport": {
+    "date": "2026-11-08",
+    "count": 29,
+    "renderer": "beautiful-mermaid 1.1.3 + sharp",
+    "profile": {
+      "bg": "#181818",
+      "fg": "#83c5ff",
+      "surface": "#10283f",
+      "border": "#2d4557",
+      "line": "#93989d",
+      "accent": "#93989d",
+      "muted": "#b4bec8",
+      "font": "sans-serif",
+      "padding": 32,
+      "nodeSpacing": 42,
+      "layerSpacing": 64,
+      "mergeEdges": false
+    },
+    "validation": "New PNGs rendered without browser; original 34 PNG bytes preserved."
+  }
 }

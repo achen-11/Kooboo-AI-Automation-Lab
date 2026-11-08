@@ -1,0 +1,63 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1668.5599999999997 515.2" width="1669" height="516" style="background:#181818"><rect width="1669" height="516" fill="#181818"/>
+<style>text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 710.848 96.8 L 710.848 128.8 Q 710.848 136.8 702.848 136.8 L 209.9999999999999 136.8 Q 201.9999999999999 136.8 201.9999999999999 144.8 L 201.9999999999999 200.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 201.9999999999999 265.6 L 202 329.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="A" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 764.2559999999999 96.8 L 764.2559999999999 140.8 Q 764.2559999999999 148.8 756.2559999999999 148.8 L 594.5599999999998 148.8 Q 588.5599999999998 148.8 588.5599999999998 154.8 L 588.5599999999998 160.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 588.5599999999998 225.60000000000002 L 588.56 289.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="A" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 817.6639999999999 96.8 L 817.6639999999999 140.8 Q 817.6639999999999 148.8 825.6639999999999 148.8 L 987.3599999999999 148.8 Q 993.3599999999999 148.8 993.3599999999999 154.8 L 993.3599999999999 160.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 993.3599999999999 225.60000000000002 L 993.3599999999999 289.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="A" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 871.0719999999999 96.8 L 871.0719999999999 128.8 Q 871.0719999999999 136.8 879.0719999999999 136.8 L 1422.08 136.8 Q 1430.08 136.8 1430.08 144.8 L 1430.08 200.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="H" data-to="I" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 1430.08 265.6 L 1430.08 329.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="J" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 202 394.40000000000003 L 202 400.40000000000003 Q 202 406.40000000000003 208 406.40000000000003 L 650.1279999999998 406.40000000000003 Q 656.1279999999998 406.40000000000003 656.1279999999998 412.40000000000003 L 656.1279999999998 418.40000000000003" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="J" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 588.56 354.40000000000003 L 588.56 386.40000000000003 Q 588.56 394.40000000000003 596.56 394.40000000000003 L 738.0159999999998 394.40000000000003 Q 746.0159999999998 394.40000000000003 746.0159999999998 402.40000000000003 L 746.0159999999998 418.40000000000003" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="J" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 993.3599999999999 354.40000000000003 L 993.3599999999999 386.40000000000003 Q 993.3599999999999 394.40000000000003 985.3599999999999 394.40000000000003 L 843.9039999999998 394.40000000000003 Q 835.9039999999998 394.40000000000003 835.9039999999998 402.40000000000003 L 835.9039999999998 418.40000000000003" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="I" data-to="J" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 1430.08 394.40000000000003 L 1430.08 400.40000000000003 Q 1430.08 406.40000000000003 1424.08 406.40000000000003 L 931.7919999999998 406.40000000000003 Q 925.7919999999998 406.40000000000003 925.7919999999998 412.40000000000003 L 925.7919999999998 418.40000000000003" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="node" data-id="A" data-label="两轮修复后仍未整体达标" data-shape="rectangle">
+  <rect x="657.4399999999998" y="32" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="790.9599999999998" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">两轮修复后仍未整体达标</text>
+</g>
+<g class="node" data-id="B" data-label="完整性占端评分约57%" data-shape="rectangle">
+  <rect x="81.24799999999993" y="200.8" width="241.504" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="201.99999999999994" y="233.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">完整性占端评分约57%</text>
+</g>
+<g class="node" data-id="C" data-label="正文、归属、分页及内链缺口仍在" data-shape="rectangle">
+  <rect x="32" y="329.6" width="339.99999999999994" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="201.99999999999997" y="362" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">正文、归属、分页及内链缺口仍在</text>
+</g>
+<g class="node" data-id="D" data-label="程序差异尚未自动进入修复委托" data-shape="rectangle">
+  <rect x="427.67999999999984" y="160.8" width="321.76" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="588.5599999999998" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">程序差异尚未自动进入修复委托</text>
+</g>
+<g class="node" data-id="E" data-label="第一轮已发现的4条归属未明确派修" data-shape="rectangle">
+  <rect x="414" y="289.6" width="349.11999999999995" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="588.56" y="322" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">第一轮已发现的4条归属未明确派修</text>
+</g>
+<g class="node" data-id="F" data-label="通用布局修改与回归不足" data-shape="rectangle">
+  <rect x="859.8399999999999" y="160.8" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="993.3599999999999" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">通用布局修改与回归不足</text>
+</g>
+<g class="node" data-id="G" data-label="案例模板不匹配、移动长侧栏先于内容" data-shape="rectangle">
+  <rect x="805.1199999999999" y="289.6" width="376.47999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="993.3599999999999" y="322" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">案例模板不匹配、移动长侧栏先于内容</text>
+</g>
+<g class="node" data-id="H" data-label="第二轮扩大核验范围" data-shape="rectangle">
+  <rect x="1314.7999999999997" y="200.8" width="230.56" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="1430.0799999999997" y="233.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">第二轮扩大核验范围</text>
+</g>
+<g class="node" data-id="I" data-label="发现更多旧缺陷，轮间分数需结合证据解释" data-shape="rectangle">
+  <rect x="1223.6" y="329.6" width="412.9599999999999" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="1430.08" y="362" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">发现更多旧缺陷，轮间分数需结合证据解释</text>
+</g>
+<g class="node" data-id="J" data-label="先接入具体差异，再分模板修复与固定样本回归" data-shape="rectangle">
+  <rect x="566.2399999999998" y="418.40000000000003" width="449.43999999999994" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="790.9599999999998" y="450.8" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">先接入具体差异，再分模板修复与固定样本回归</text>
+</g>
+</svg>

@@ -1,0 +1,54 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 658.3199999999999 859.6999999999999" width="659" height="860" style="background:#181818"><rect width="659" height="860" fill="#181818"/>
+<style>text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 376.3266666666666 96.8 L 376.3266666666666 160.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 331.81999999999994 225.60000000000002 L 331.81999999999994 269.6 Q 331.81999999999994 277.6 323.81999999999994 277.6 L 293.4666666666666 277.6 Q 287.4666666666666 277.6 287.4666666666666 283.6 L 287.4666666666666 289.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 287.4666666666666 354.40000000000003 L 287.4666666666666 418.40000000000003" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 287.4666666666666 483.20000000000005 L 287.4666666666666 547.2" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="存在差异" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 343.3733333333333 612 L 343.3733333333333 656 Q 343.3733333333333 664 351.3733333333333 664 L 414.77333333333326 664 Q 422.77333333333326 664 422.77333333333326 672 L 422.77333333333326 744.22 Q 422.77333333333326 750.9 429.45333333333326 750.9 L 430.13333333333327 750.9 Q 436.13333333333327 750.9 436.13333333333327 756.9 L 436.13333333333327 762.9" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 531.2266666666667 762.9 L 531.2266666666667 753.94 Q 531.2266666666667 750.9 528.1866666666666 750.9 L 528.1866666666666 750.9 Q 525.1466666666665 750.9 525.1466666666665 747.8599999999999 L 525.1466666666665 285.6 Q 525.1466666666665 277.6 517.1466666666665 277.6 L 428.83333333333326 277.6 Q 420.83333333333326 277.6 420.83333333333326 269.6 L 420.83333333333326 225.60000000000002" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="必交付项通过" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 231.55999999999995 612 L 231.55999999999995 656 Q 231.55999999999995 664 223.55999999999995 664 L 173.51999999999998 664 Q 165.51999999999998 664 165.51999999999998 672 L 165.51999999999998 762.9" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="E" data-to="F" data-label="存在差异">
+  <rect x="385.27333333333326" y="671" width="74.11000000000001" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="422.32833333333326" y="687.45" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">存在差异</text>
+</g>
+<g class="edge-label" data-from="E" data-to="G" data-label="必交付项通过">
+  <rect x="114.01999999999998" y="671" width="102.19000000000001" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="165.11499999999998" y="687.45" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">必交付项通过</text>
+</g>
+<g class="node" data-id="A" data-label="平台固定清单版本与本轮目标" data-shape="rectangle">
+  <rect x="224.5666666666666" y="32" width="303.52" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="376.3266666666666" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">平台固定清单版本与本轮目标</text>
+</g>
+<g class="node" data-id="B" data-label="摘要消息与任务资料入口" data-shape="rectangle">
+  <rect x="242.80666666666662" y="160.8" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="376.3266666666666" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">摘要消息与任务资料入口</text>
+</g>
+<g class="node" data-id="C" data-label="Kooboo 读取相关明细并执行" data-shape="rectangle">
+  <rect x="142.54666666666662" y="289.6" width="289.84" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="287.4666666666666" y="322" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">Kooboo 读取相关明细并执行</text>
+</g>
+<g class="node" data-id="D" data-label="保存目标映射与本轮产物记录" data-shape="rectangle">
+  <rect x="135.70666666666662" y="418.40000000000003" width="303.52" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="287.4666666666666" y="450.8" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">保存目标映射与本轮产物记录</text>
+</g>
+<g class="node" data-id="E" data-label="平台独立读取目标并核对 checklist" data-shape="rectangle">
+  <rect x="119.74666666666664" y="547.2" width="335.43999999999994" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="287.4666666666666" y="579.6" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">平台独立读取目标并核对 checklist</text>
+</g>
+<g class="node" data-id="F" data-label="按问题原因组织修复任务包" data-shape="rectangle">
+  <rect x="341.03999999999996" y="762.9" width="285.28" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="483.67999999999995" y="795.3" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">按问题原因组织修复任务包</text>
+</g>
+<g class="node" data-id="G" data-label="进入独立评测与交付判断" data-shape="rectangle">
+  <rect x="32" y="762.9" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="165.51999999999998" y="795.3" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">进入独立评测与交付判断</text>
+</g>
+</svg>

@@ -1,0 +1,70 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 825.0466666666666 1311.6199999999997" width="826" height="1312" style="background:#181818"><rect width="826" height="1312" fill="#181818"/>
+<style>text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 366.14666666666665 96.8 L 366.14666666666665 160.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 315.55999999999995 225.60000000000002 L 315.55999999999995 550.82 Q 315.55999999999995 558.82 307.55999999999995 558.82 L 171.51999999999998 558.82 Q 165.51999999999998 558.82 165.51999999999998 564.82 L 165.51999999999998 570.82" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 416.7333333333333 225.60000000000002 L 416.7333333333333 269.6 Q 416.7333333333333 277.6 424.7333333333333 277.6 L 512.6866666666666 277.6 Q 518.6866666666666 277.6 518.6866666666666 283.6 L 518.6866666666666 289.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="可以" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 475.49999999999994 505.53333333333336 L 475.49999999999994 592.72 Q 475.49999999999994 600.72 467.49999999999994 600.72 L 376.72666666666663 600.72 Q 368.72666666666663 600.72 368.72666666666663 608.72 L 368.72666666666663 699.62" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="离线、未建站或失败" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 561.8733333333332 505.5333333333334 L 561.8733333333332 592.72 Q 561.8733333333332 600.72 569.8733333333332 600.72 L 660.6466666666665 600.72 Q 668.6466666666665 600.72 668.6466666666665 608.72 L 668.6466666666665 699.62" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 165.51999999999998 635.62 L 165.51999999999998 808.42 Q 165.51999999999998 816.42 173.51999999999998 816.42 L 273.16666666666663 816.42 Q 279.16666666666663 816.42 279.16666666666663 822.42 L 279.16666666666663 828.42" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 368.72666666666663 764.42 L 368.72666666666663 828.42" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 668.6466666666665 764.42 L 668.6466666666665 808.42 Q 668.6466666666665 816.42 660.6466666666665 816.42 L 464.28666666666663 816.42 Q 458.28666666666663 816.42 458.28666666666663 822.42 L 458.28666666666663 828.42" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 368.72666666666663 893.2199999999999 L 368.72666666666663 957.2199999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="H" data-to="I" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 368.72666666666663 1022.0199999999999 L 368.72666666666663 1086.0199999999998" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="I" data-to="J" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 368.72666666666663 1150.8199999999997 L 368.72666666666663 1214.8199999999997" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="D" data-to="E" data-label="可以">
+  <rect x="345.22666666666663" y="607.72" width="46.03" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="368.2416666666666" y="624.1700000000001" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">可以</text>
+</g>
+<g class="edge-label" data-from="D" data-to="F" data-label="离线、未建站或失败">
+  <rect x="596.1466666666665" y="607.72" width="144.31" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="668.3016666666665" y="624.1700000000001" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">离线、未建站或失败</text>
+</g>
+<g class="node" data-id="A" data-label="生成站或失败任务：导出排障包" data-shape="rectangle">
+  <rect x="205.26666666666662" y="32" width="321.76" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="366.14666666666665" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">生成站或失败任务：导出排障包</text>
+</g>
+<g class="node" data-id="B" data-label="固定关联范围与导出截止时间" data-shape="rectangle">
+  <rect x="214.38666666666663" y="160.8" width="303.52" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="366.14666666666665" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">固定关联范围与导出截止时间</text>
+</g>
+<g class="node" data-id="C" data-label="收集平台记录与已有证据" data-shape="rectangle">
+  <rect x="32" y="570.82" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="165.51999999999998" y="603.22" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">收集平台记录与已有证据</text>
+</g>
+<g class="node" data-id="D" data-label="Kooboo 站点可导出吗" data-shape="diamond">
+  <polygon points="518.6866666666666,289.6 648.2466666666667,419.16 518.6866666666666,548.72 389.1266666666666,419.16" fill="#10283f" stroke="#2d4557" stroke-width="0.75"/>
+  <text x="518.6866666666666" y="419.16" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">Kooboo 站点可导出吗</text>
+</g>
+<g class="node" data-id="E" data-label="原生全部导出：完整模式" data-shape="rectangle">
+  <rect x="235.20666666666665" y="699.62" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="368.72666666666663" y="732.02" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">原生全部导出：完整模式</text>
+</g>
+<g class="node" data-id="F" data-label="记录站点包缺失与原因" data-shape="rectangle">
+  <rect x="544.2466666666667" y="699.62" width="248.79999999999998" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="668.6466666666666" y="732.02" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">记录站点包缺失与原因</text>
+</g>
+<g class="node" data-id="G" data-label="整理目录、脱敏平台凭证并核对文件" data-shape="rectangle">
+  <rect x="189.60666666666665" y="828.42" width="358.23999999999995" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="368.72666666666663" y="860.8199999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">整理目录、脱敏平台凭证并核对文件</text>
+</g>
+<g class="node" data-id="H" data-label="生成摘要、索引与校验信息" data-shape="rectangle">
+  <rect x="226.08666666666664" y="957.2199999999999" width="285.28" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="368.72666666666663" y="989.6199999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">生成摘要、索引与校验信息</text>
+</g>
+<g class="node" data-id="I" data-label="下载一个 ZIP" data-shape="rectangle">
+  <rect x="284.9106666666666" y="1086.0199999999998" width="167.632" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="368.7266666666666" y="1118.4199999999998" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">下载一个 ZIP</text>
+</g>
+<g class="node" data-id="J" data-label="离线分析站点与执行过程" data-shape="rectangle">
+  <rect x="235.20666666666665" y="1214.8199999999997" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="368.72666666666663" y="1247.2199999999998" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">离线分析站点与执行过程</text>
+</g>
+</svg>

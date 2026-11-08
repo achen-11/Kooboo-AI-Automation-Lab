@@ -1,0 +1,69 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 782.545 805.7999999999998" width="783" height="806" style="background:#181818"><rect width="783" height="806" fill="#181818"/>
+<style>text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 572.5183333333333 223.7 L 572.5183333333333 229.7 Q 572.5183333333333 235.7 566.5183333333333 235.7 L 254.51666666666668 235.7 Q 246.51666666666668 235.7 246.51666666666668 243.7 L 246.51666666666668 293.1" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="范围与必需证据齐备" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 170.85000000000002 399.0333333333333 L 170.85000000000002 473.3 Q 170.85000000000002 481.3 162.85000000000002 481.3 L 127.92000000000002 481.3 Q 119.92000000000002 481.3 119.92000000000002 489.3 L 119.92 580.1999999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 119.92 644.9999999999999 L 119.92 708.9999999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="缺口仍可自动补齐" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 155.7166666666667 293.09999999999997 L 155.7166666666667 243.7 Q 155.7166666666667 235.7 147.7166666666667 235.7 L 143.99 235.7 Q 135.99 235.7 135.99 227.7 L 135.99 156.8 Q 135.99 148.8 143.99 148.8 L 154.8 148.8 Q 162.8 148.8 162.8 140.8 L 162.8 96.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 206.76000000000002 96.8 L 206.76000000000002 232.87833333333333 Q 206.76000000000002 235.7 203.93833333333333 235.7 L 203.93833333333333 235.7 Q 201.11666666666667 235.7 201.11666666666667 238.52166666666665 L 201.11666666666667 247.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="范围冲突或无法补齐" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 231.38333333333335 399.0333333333333 L 231.38333333333335 473.3 Q 231.38333333333335 481.3 239.38333333333335 481.3 L 294.995 481.3 Q 302.995 481.3 302.995 489.3 L 302.995 560.1999999999999 Q 302.995 568.1999999999999 310.995 568.1999999999999 L 347.58500000000004 568.1999999999999 Q 353.58500000000004 568.1999999999999 353.58500000000004 574.1999999999999 L 353.58500000000004 580.1999999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="预算耗尽或持续无进展" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 250.72 96.8 L 250.72 215.7 Q 250.72 223.7 258.72 223.7 L 422.91666666666663 223.7 Q 430.91666666666663 223.7 430.91666666666663 231.7 L 430.91666666666663 567.9608333333333 Q 430.91666666666663 568.1999999999999 430.6775 568.1999999999999 L 430.6775 568.1999999999999 Q 430.4383333333334 568.1999999999999 430.4383333333334 568.4391666666666 L 430.4383333333334 580.1999999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 430.4383333333334 644.9999999999999 L 430.4383333333334 688.9999999999999 Q 430.4383333333334 696.9999999999999 438.4383333333334 696.9999999999999 L 566.5183333333333 696.9999999999999 Q 572.5183333333333 696.9999999999999 572.5183333333333 702.9999999999999 L 572.5183333333333 708.9999999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="A" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 661.5316666666666 708.9999999999999 L 661.5316666666666 223.7" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 353.58500000000004 644.9999999999999 L 353.58500000000004 708.9999999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="B" data-to="C" data-label="范围与必需证据齐备">
+  <rect x="47.420000000000016" y="488.3" width="144.31" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="119.57500000000002" y="504.75" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">范围与必需证据齐备</text>
+</g>
+<g class="edge-label" data-from="B" data-to="E" data-label="缺口仍可自动补齐">
+  <rect x="70.49" y="155.8" width="130.27" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="135.625" y="172.25" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">缺口仍可自动补齐</text>
+</g>
+<g class="edge-label" data-from="B" data-to="F" data-label="范围冲突或无法补齐">
+  <rect x="230.49499999999998" y="488.3" width="144.31" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="302.65" y="504.75" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">范围冲突或无法补齐</text>
+</g>
+<g class="edge-label" data-from="E" data-to="F" data-label="预算耗尽或持续无进展">
+  <rect x="351.41666666666663" y="453.40000000000003" width="158.35" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="430.59166666666664" y="469.85" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">预算耗尽或持续无进展</text>
+</g>
+<g class="node" data-id="A" data-label="自动采集并建立清单草稿" data-shape="rectangle">
+  <rect x="483.505" y="158.9" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="617.025" y="191.3" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">自动采集并建立清单草稿</text>
+</g>
+<g class="node" data-id="B" data-label="生成前核对" data-shape="diamond">
+  <polygon points="201.11666666666667,247.7 291.9166666666667,338.5 201.11666666666667,429.3 110.31666666666668,338.5" fill="#10283f" stroke="#2d4557" stroke-width="0.75"/>
+  <text x="201.11666666666667" y="338.5" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">生成前核对</text>
+</g>
+<g class="node" data-id="C" data-label="冻结清单版本" data-shape="rectangle">
+  <rect x="32" y="580.1999999999999" width="175.84" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="119.92" y="612.5999999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">冻结清单版本</text>
+</g>
+<g class="node" data-id="D" data-label="正式迁移生成" data-shape="rectangle">
+  <rect x="32" y="708.9999999999999" width="175.84" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="119.92" y="741.3999999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">正式迁移生成</text>
+</g>
+<g class="node" data-id="E" data-label="针对缺口补采" data-shape="rectangle">
+  <rect x="118.84" y="32" width="175.84" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="206.76" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">针对缺口补采</text>
+</g>
+<g class="node" data-id="F" data-label="保存进度并等待处理" data-shape="rectangle">
+  <rect x="276.7316666666667" y="580.1999999999999" width="230.56" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="392.01166666666666" y="612.5999999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">保存进度并等待处理</text>
+</g>
+<g class="node" data-id="G" data-label="用户补充来源或明确范围" data-shape="rectangle">
+  <rect x="483.505" y="708.9999999999999" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="617.025" y="741.3999999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">用户补充来源或明确范围</text>
+</g>
+<g class="node" data-id="H" data-label="用户停止任务" data-shape="rectangle">
+  <rect x="265.665" y="708.9999999999999" width="175.84" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="353.58500000000004" y="741.3999999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">用户停止任务</text>
+</g>
+</svg>

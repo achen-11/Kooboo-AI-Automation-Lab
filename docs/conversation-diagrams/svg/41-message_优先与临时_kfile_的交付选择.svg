@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 574.4159999999999 1232.9799999999998" width="575" height="1233" style="background:#181818"><rect width="575" height="1233" fill="#181818"/>
+<style>text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 284.472 96.8 L 284.4719999999999 160.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 284.4719999999999 225.60000000000002 L 284.472 289.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="是" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 232.9253333333333 547.3333333333334 L 232.9253333333333 642.88 Q 232.9253333333333 650.88 224.9253333333333 650.88 L 154.368 650.88 Q 146.368 650.88 146.368 658.88 L 146.368 749.78" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="否" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 336.0186666666666 547.3333333333334 L 336.0186666666666 642.88 Q 336.0186666666666 650.88 344.0186666666666 650.88 L 414.57599999999996 650.88 Q 422.57599999999996 650.88 422.57599999999996 658.88 L 422.57599999999996 749.78" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 146.368 814.5799999999999 L 146.368 858.5799999999999 Q 146.368 866.5799999999999 154.368 866.5799999999999 L 246.1253333333333 866.5799999999999 Q 252.1253333333333 866.5799999999999 252.1253333333333 872.5799999999999 L 252.1253333333333 878.5799999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 422.57599999999996 814.5799999999999 L 422.57599999999996 858.5799999999999 Q 422.57599999999996 866.5799999999999 414.57599999999996 866.5799999999999 L 322.8186666666666 866.5799999999999 Q 316.8186666666666 866.5799999999999 316.8186666666666 872.5799999999999 L 316.8186666666666 878.5799999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 284.472 943.3799999999999 L 284.472 1007.3799999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 284.472 1072.1799999999998 L 284.472 1136.1799999999998" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="C" data-to="D" data-label="是">
+  <rect x="130.368" y="657.88" width="31.990000000000002" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="146.363" y="674.33" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">是</text>
+</g>
+<g class="edge-label" data-from="C" data-to="E" data-label="否">
+  <rect x="406.57599999999996" y="657.88" width="31.990000000000002" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="422.57099999999997" y="674.33" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">否</text>
+</g>
+<g class="node" data-id="A" data-label="平台保存版本化任务包" data-shape="rectangle">
+  <rect x="160.07199999999995" y="32" width="248.79999999999998" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="284.4719999999999" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">平台保存版本化任务包</text>
+</g>
+<g class="node" data-id="B" data-label="message 携带目标与必守规则" data-shape="rectangle">
+  <rect x="134.99199999999996" y="160.8" width="298.96" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="284.472" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">message 携带目标与必守规则</text>
+</g>
+<g class="node" data-id="C" data-label="明细适合直接发送和处理吗" data-shape="diamond">
+  <polygon points="284.472,289.6 439.11199999999997,444.24 284.472,598.88 129.832,444.24" fill="#10283f" stroke="#2d4557" stroke-width="0.75"/>
+  <text x="284.472" y="444.24" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">明细适合直接发送和处理吗</text>
+</g>
+<g class="node" data-id="D" data-label="明细随 message 发送" data-shape="rectangle">
+  <rect x="32" y="749.78" width="228.736" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="146.368" y="782.18" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">明细随 message 发送</text>
+</g>
+<g class="node" data-id="E" data-label="message 引用临时 kfile" data-shape="rectangle">
+  <rect x="302.736" y="749.78" width="239.67999999999995" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="422.57599999999996" y="782.18" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">message 引用临时 kfile</text>
+</g>
+<g class="node" data-id="F" data-label="执行并核验结果" data-shape="rectangle">
+  <rect x="187.43199999999996" y="878.5799999999999" width="194.07999999999998" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="284.472" y="910.9799999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">执行并核验结果</text>
+</g>
+<g class="node" data-id="G" data-label="平台归档结果与必要证据" data-shape="rectangle">
+  <rect x="150.95199999999997" y="1007.3799999999999" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="284.472" y="1039.78" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">平台归档结果与必要证据</text>
+</g>
+<g class="node" data-id="H" data-label="无执行依赖时清理本任务临时文件" data-shape="rectangle">
+  <rect x="114.47199999999998" y="1136.1799999999998" width="339.99999999999994" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="284.472" y="1168.58" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">无执行依赖时清理本任务临时文件</text>
+</g>
+</svg>

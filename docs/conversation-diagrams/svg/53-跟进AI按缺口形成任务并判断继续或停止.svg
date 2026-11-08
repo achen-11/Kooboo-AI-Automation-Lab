@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1230.9766666666665 1524.36" width="1231" height="1525" style="background:#181818"><rect width="1231" height="1525" fill="#181818"/>
+<style>text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 1019.8566666666666 664.02 L 1019.8566666666666 708.02 Q 1019.8566666666666 716.02 1011.8566666666666 716.02 L 916.4659999999998 716.02 Q 910.4659999999998 716.02 910.4659999999998 722.02 L 910.4659999999998 728.02" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 854.4073333333331 792.8199999999999 L 854.4073333333332 856.8199999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 854.4073333333332 921.6199999999999 L 854.4073333333332 985.6199999999999" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="条件具备" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 781.6473333333332 1203.8999999999999 L 781.6473333333332 1280.6599999999999 Q 781.6473333333332 1288.6599999999999 773.6473333333332 1288.6599999999999 L 262.71466666666663 1288.6599999999999 Q 254.71466666666663 1288.6599999999999 254.71466666666663 1296.6599999999999 L 254.71466666666663 1387.56" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="K" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="任务依据不足" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 927.1673333333332 1203.8999999999999 L 927.1673333333332 1320.6599999999999 Q 927.1673333333332 1328.6599999999999 935.1673333333332 1328.6599999999999 L 963.9066666666665 1328.6599999999999 Q 971.9066666666665 1328.6599999999999 971.9066666666665 1336.6599999999999 L 971.9066666666665 1427.56" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 148.06933333333325 1387.56 L 148.06933333333325 1380.272 Q 148.06933333333325 1375.56 152.7813333333333 1375.56 L 152.7813333333333 1375.56 Q 157.49333333333334 1375.56 157.49333333333334 1370.848 L 157.49333333333334 96.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 282.9866666666667 96.8 L 282.9866666666667 140.8 Q 282.9866666666667 148.8 290.9866666666667 148.8 L 439.9853333333333 148.8 Q 445.9853333333333 148.8 445.9853333333333 154.8 L 445.9853333333333 160.8" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 445.9853333333333 225.60000000000002 L 445.9853333333333 289.6" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="H" data-to="I" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="阶段必需项通过" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 364.1053333333333 535.24 L 364.1053333333333 1022.0499999999997 Q 364.1053333333333 1026.0599999999997 360.0953333333333 1026.0599999999997 L 360.0953333333333 1026.0599999999997 Q 356.0853333333333 1026.0599999999997 356.0853333333333 1030.0699999999997 L 356.08533333333327 1124.9599999999998" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="H" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="有可执行目标且允许继续" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 527.8653333333333 535.24 L 527.8653333333333 621.12 Q 527.8653333333333 629.12 535.8653333333333 629.12 L 708.8466666666666 629.12 Q 716.8466666666666 629.12 716.8466666666666 637.12 L 716.8466666666666 708.02 Q 716.8466666666666 716.02 724.8466666666666 716.02 L 792.3486666666665 716.02 Q 798.3486666666665 716.02 798.3486666666665 722.02 L 798.3486666666665 728.02" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="H" data-to="J" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="无新依据、阻塞或达到限制" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 445.9853333333333 617.12 L 445.9853333333333 1104.9599999999998 Q 445.9853333333333 1112.9599999999998 453.9853333333333 1112.9599999999998 L 518.1173333333332 1112.9599999999998 Q 526.1173333333332 1112.9599999999998 526.1173333333332 1120.9599999999998 L 526.1173333333332 1410.848 Q 526.1173333333332 1415.56 521.4053333333331 1415.56 L 521.4053333333331 1415.56 Q 516.6933333333332 1415.56 516.6933333333332 1420.272 L 516.6933333333332 1427.56" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="J" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="预算或执行状态不允许" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 854.4073333333332 1276.6599999999999 L 854.4073333333332 1320.6599999999999 Q 854.4073333333332 1328.6599999999999 846.4073333333332 1328.6599999999999 L 745.5049999999999 1328.6599999999999 Q 737.5049999999999 1328.6599999999999 737.5049999999999 1336.6599999999999 L 737.5049999999999 1407.56 Q 737.5049999999999 1415.56 729.5049999999999 1415.56 L 636.0266666666665 1415.56 Q 630.0266666666665 1415.56 630.0266666666665 1421.56 L 630.0266666666665 1427.56" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="D" data-to="E" data-label="条件具备">
+  <rect x="217.21466666666663" y="1295.6599999999999" width="74.11000000000001" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="254.26966666666664" y="1312.11" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">条件具备</text>
+</g>
+<g class="edge-label" data-from="D" data-to="K" data-label="任务依据不足">
+  <rect x="920.4066666666665" y="1335.6599999999999" width="102.19000000000001" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="971.5016666666666" y="1352.11" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">任务依据不足</text>
+</g>
+<g class="edge-label" data-from="H" data-to="I" data-label="阶段必需项通过">
+  <rect x="297.5853333333333" y="1033.0599999999997" width="116.23" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="355.70033333333333" y="1049.5099999999998" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">阶段必需项通过</text>
+</g>
+<g class="edge-label" data-from="H" data-to="B" data-label="有可执行目标且允许继续">
+  <rect x="630.3466666666666" y="636.12" width="172.39" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="716.5416666666665" y="652.57" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">有可执行目标且允许继续</text>
+</g>
+<g class="edge-label" data-from="H" data-to="J" data-label="无新依据、阻塞或达到限制">
+  <rect x="432.61733333333325" y="1248.7599999999998" width="186.43" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="525.8323333333333" y="1265.2099999999998" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">无新依据、阻塞或达到限制</text>
+</g>
+<g class="edge-label" data-from="D" data-to="J" data-label="预算或执行状态不允许">
+  <rect x="658.0049999999999" y="1335.6599999999999" width="158.35" height="32.900000000000006" rx="2" ry="2" fill="#181818" stroke="#2d4557" stroke-width="1"/>
+  <text x="737.1799999999998" y="1352.11" text-anchor="middle" font-size="13" font-weight="400" fill="#b4bec8" dy="4.55">预算或执行状态不允许</text>
+</g>
+<g class="node" data-id="A" data-label="当前版本的缺口、证据和上一轮结果" data-shape="rectangle">
+  <rect x="840.7366666666666" y="599.22" width="358.23999999999995" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="1019.8566666666666" y="631.62" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">当前版本的缺口、证据和上一轮结果</text>
+</g>
+<g class="node" data-id="B" data-label="跟进AI判断归属、共同原因与依赖" data-shape="rectangle">
+  <rect x="686.2313333333332" y="728.02" width="336.352" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="854.4073333333331" y="760.42" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">跟进AI判断归属、共同原因与依赖</text>
+</g>
+<g class="node" data-id="C" data-label="形成具体任务：目标、范围、验收和边界" data-shape="rectangle">
+  <rect x="657.0473333333332" y="856.8199999999999" width="394.71999999999997" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="854.4073333333332" y="889.2199999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">形成具体任务：目标、范围、验收和边界</text>
+</g>
+<g class="node" data-id="D" data-label="平台检查任务与执行条件" data-shape="diamond">
+  <polygon points="854.4073333333332,985.6199999999999 999.9273333333332,1131.1399999999999 854.4073333333332,1276.6599999999999 708.8873333333332,1131.1399999999999" fill="#10283f" stroke="#2d4557" stroke-width="0.75"/>
+  <text x="854.4073333333332" y="1131.1399999999999" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">平台检查任务与执行条件</text>
+</g>
+<g class="node" data-id="E" data-label="交给采集AI、Kooboo或核验程序" data-shape="rectangle">
+  <rect x="41.42399999999998" y="1387.56" width="319.9359999999999" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="201.39199999999994" y="1419.96" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">交给采集AI、Kooboo或核验程序</text>
+</g>
+<g class="node" data-id="K" data-label="限次补齐依据，无法补齐则保存结果" data-shape="rectangle">
+  <rect x="792.7866666666666" y="1427.56" width="358.23999999999995" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="971.9066666666666" y="1459.96" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">限次补齐依据，无法补齐则保存结果</text>
+</g>
+<g class="node" data-id="F" data-label="按任务目标重新取证并检查受影响范围" data-shape="rectangle">
+  <rect x="32" y="32" width="376.47999999999996" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="220.23999999999998" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">按任务目标重新取证并检查受影响范围</text>
+</g>
+<g class="node" data-id="G" data-label="分别记录实际修复、证据进展和新增问题" data-shape="rectangle">
+  <rect x="248.6253333333333" y="160.8" width="394.71999999999997" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="445.9853333333333" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">分别记录实际修复、证据进展和新增问题</text>
+</g>
+<g class="node" data-id="H" data-label="平台结合证据和累计预算决定" data-shape="diamond">
+  <polygon points="445.9853333333333,289.6 609.7453333333333,453.36 445.9853333333333,617.12 282.2253333333333,453.36" fill="#10283f" stroke="#2d4557" stroke-width="0.75"/>
+  <text x="445.9853333333333" y="453.36" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">平台结合证据和累计预算决定</text>
+</g>
+<g class="node" data-id="I" data-label="进入下一阶段" data-shape="rectangle">
+  <rect x="268.16533333333325" y="1124.9599999999998" width="175.84" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="356.08533333333327" y="1157.36" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">进入下一阶段</text>
+</g>
+<g class="node" data-id="J" data-label="保存进度与原因，等待处理或停止" data-shape="rectangle">
+  <rect x="403.3599999999999" y="1427.56" width="339.99999999999994" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="573.3599999999999" y="1459.96" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">保存进度与原因，等待处理或停止</text>
+</g>
+</svg>

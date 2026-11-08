@@ -122,9 +122,9 @@ try{
       return {svg:new XMLSerializer().serializeToString(element),width,height,nodes,edges:edgeCount};
     },{source:d.source,number:d.number,rawSvg,expectedNodes:[...graph.nodes.values()],expectedEdges:graph.edges});
     await page.evaluate(()=>document.fonts.ready);
-    await writeFile(resolve(root,'svg',d.file+'.svg'),result.svg+'\n');
-    await page.locator('#output').screenshot({path:resolve(root,'png',d.file+'.png'),timeout:30000});
-    results.push({number:d.number,file:d.file,title:d.title,width:result.width,height:result.height,nodes:result.nodes,edges:result.edges,svgBytes:(await stat(resolve(root,'svg',d.file+'.svg'))).size,pngBytes:(await stat(resolve(root,'png',d.file+'.png'))).size});
+    await writeFile(resolve(root,'svg',(d.filename||d.file)+'.svg'),result.svg+'\n');
+    await page.locator('#output').screenshot({path:resolve(root,'png',(d.filename||d.file)+'.png'),timeout:30000});
+    results.push({number:d.number,file:d.file,title:d.title,width:result.width,height:result.height,nodes:result.nodes,edges:result.edges,svgBytes:(await stat(resolve(root,'svg',(d.filename||d.file)+'.svg'))).size,pngBytes:(await stat(resolve(root,'png',(d.filename||d.file)+'.png'))).size});
     console.log(JSON.stringify({number:d.number,title:d.title,width:result.width,height:result.height}));
   }
   await writeFile(resolve(root,'render-results.json'),JSON.stringify({renderer:'beautiful-mermaid',version:beautifulPackage.version,layout:'ELK orthogonal, rounded bends',theme:'Codex screenshot reference',profile:{...profile,nodeRadius:17,bendRadius:8,fontSize:16,nodePadding:{horizontal:32,vertical:22}},validation:'Independent Mermaid parser: node labels and edge endpoints/labels matched; rendered node/edge counts matched; label bounds checked',diagrams:results},null,2)+'\n');

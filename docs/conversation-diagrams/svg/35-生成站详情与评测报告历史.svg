@@ -1,0 +1,40 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1118.032 235.60000000000002" width="1119" height="236" style="background:#181818"><rect width="1119" height="236" fill="#181818"/>
+<style>text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="#93989d" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 134.88 107 L 178.88 107 Q 186.88 107 186.88 99 L 186.88 70.4 Q 186.88 64.4 192.88 64.4 L 198.88 64.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="A" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 134.88 128.6 L 178.88000000000005 128.6 Q 186.88000000000005 128.6 186.88000000000005 136.6 L 186.88000000000005 165.20000000000002 Q 186.88000000000005 171.20000000000002 192.88000000000005 171.20000000000002 L 198.88000000000005 171.20000000000002" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 333.68 64.4 L 397.68 64.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 588.1120000000001 64.4 L 652.1120000000001 64.4" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="#93989d" stroke-width="1" marker-end="url(#arrowhead)" d="M 827.952 64.4 L 891.952 64.4" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="node" data-id="A" data-label="资源" data-shape="rectangle">
+  <rect x="32" y="85.4" width="102.88" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="83.44" y="117.80000000000001" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">资源</text>
+</g>
+<g class="node" data-id="B" data-label="生成站 A" data-shape="rectangle">
+  <rect x="198.88" y="32" width="134.8" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="266.28" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">生成站 A</text>
+</g>
+<g class="node" data-id="C" data-label="生成站 B" data-shape="rectangle">
+  <rect x="198.88000000000005" y="138.8" width="134.8" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="266.2800000000001" y="171.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">生成站 B</text>
+</g>
+<g class="node" data-id="D" data-label="详情 · 评测结果" data-shape="rectangle">
+  <rect x="397.68" y="32" width="190.432" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="492.896" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">详情 · 评测结果</text>
+</g>
+<g class="node" data-id="E" data-label="评测记录列表" data-shape="rectangle">
+  <rect x="652.1120000000001" y="32" width="175.84" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="740.032" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">评测记录列表</text>
+</g>
+<g class="node" data-id="F" data-label="某次报告与证据" data-shape="rectangle">
+  <rect x="891.952" y="32" width="194.07999999999998" height="64.8" rx="17" ry="17" fill="#10283f" stroke="#2d4557" stroke-width="1"/>
+  <text x="988.992" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="#83c5ff" dy="5.6">某次报告与证据</text>
+</g>
+</svg>

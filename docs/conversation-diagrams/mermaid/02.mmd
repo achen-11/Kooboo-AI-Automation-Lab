@@ -1,0 +1,12 @@
+flowchart LR
+    R["资源包库<br/>原 Admin 侧"] --> T["创建任务<br/>选择目标、范围与方案"]
+
+    subgraph A["Kooboo AI Agent 自动化系统"]
+        T --> P["资料与站点准备"]
+        P --> G["生成执行<br/>驱动 Kooboo AI Chat"]
+        G --> E["评测执行<br/>Codex SDK"]
+        E --> O["生成产物、评分与证据"]
+        C["生成 Skill<br/>评测 SOP、评分规则"] -.-> T
+    end
+
+    O -->|关联任务与历史| R

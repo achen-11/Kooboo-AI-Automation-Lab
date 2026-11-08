@@ -1,0 +1,804 @@
+<!doctype html>
+<html lang="zh-CN"><head><meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>主对话流程图归档 · Kooboo AI Automation Lab</title><style>
+:root{color-scheme:dark;font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif;background:#181818;color:#e3e7ed;font-synthesis:none}*{box-sizing:border-box}body{margin:0}a{color:#8bc8ff;text-decoration:none}a:hover{text-decoration:underline}button,input{font:inherit}button{cursor:pointer}aside{position:fixed;inset:0 auto 0 0;width:300px;padding:28px 18px;overflow:auto;border-right:1px solid #34383e;background:#1c1e21}aside h1{font-size:18px;margin:0 8px 10px}aside>p{font-size:13px;color:#aeb5c0;margin:8px 8px 20px}.search{width:100%;border:1px solid #454b55;border-radius:7px;padding:10px 12px;background:#24282e;color:inherit}nav{margin-top:18px;display:grid;gap:3px}nav a{display:flex;gap:10px;padding:9px 8px;font-size:13px;line-height:1.5;color:#c6ceda;border-radius:5px}nav a:hover{background:#29313b;text-decoration:none}nav a span{color:#8bc8ff;font-variant-numeric:tabular-nums}main{margin-left:300px;padding:36px clamp(20px,4vw,64px);max-width:1900px}.intro{margin-bottom:32px;line-height:1.8}.intro h1{font-size:27px;margin:0 0 10px}.intro p{margin:6px 0;color:#b7bfca}.intro .links{display:flex;gap:20px;flex-wrap:wrap;font-size:14px;margin-top:16px}article{scroll-margin-top:24px;padding:26px 0 32px;border-top:1px solid #353941}article>header{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap}article header>div:first-child{display:flex;align-items:baseline;gap:12px}.number{color:#8bc8ff;font-size:14px}h2{font-size:19px;line-height:1.5;margin:0}.actions{display:flex;align-items:center;gap:16px;font-size:13px}.actions button,dialog button{border:1px solid #495361;border-radius:6px;background:#253648;color:#b8ddff;padding:7px 12px}.note{line-height:1.7;color:#c7bb9b;font-size:13px;margin:14px 0}.diagram{display:block;width:100%;margin:20px 0;background:#181818;border:0;padding:12px;color:inherit}.diagram img{display:block;max-width:100%;max-height:720px;width:auto;height:auto;margin:auto}details{font-size:13px;color:#aeb8c5}summary{cursor:pointer;width:fit-content;padding:6px 0}details p{overflow-wrap:anywhere}pre{background:#20242b;border-radius:6px;padding:18px;overflow:auto;line-height:1.65;font-size:12px;color:#c6d7e9}dialog{width:calc(100vw - 40px);height:calc(100vh - 40px);max-width:none;max-height:none;background:#181818;color:#e3e7ed;border:1px solid #4b5563;border-radius:8px;padding:0}dialog::backdrop{background:#000b}.viewer-head{display:flex;align-items:center;justify-content:space-between;gap:18px;flex-wrap:wrap;padding:16px 20px;border-bottom:1px solid #38404b}.viewer-head h2{font-size:17px}.viewer-controls{display:flex;gap:14px;align-items:center;flex-wrap:wrap;font-size:13px}.viewer-body{height:calc(100% - 82px);overflow:auto;padding:28px}.viewer-body img{display:block;max-width:none;height:auto;margin:auto}#empty{color:#b7bfca;padding:40px 0}[hidden]{display:none!important}@media(max-width:900px){aside{position:static;width:auto;padding:22px}aside nav{max-height:220px;overflow:auto}main{margin:0;padding:24px 18px}.intro h1{font-size:23px}.viewer-head{padding:12px}.viewer-body{padding:14px;height:calc(100% - 140px)}}
+</style></head><body>
+<aside><h1>主对话流程图</h1><p id="count">共 34 张 · 2026-11-07 归档</p><input id="search" class="search" type="search" placeholder="搜索标题或图中内容" aria-label="搜索图表"><nav><a href="#diagram-01" data-nav="01"><span>01</span>初始架构：Admin、插件、评分平台与评测执行器</a>
+<a href="#diagram-02" data-nav="02"><span>02</span>资源包驱动的统一自动化流程</a>
+<a href="#diagram-03" data-nav="03"><span>03</span>内容、视觉与业务评测依据</a>
+<a href="#diagram-04" data-nav="04"><span>04</span>空白站点起步与三类克隆路径</a>
+<a href="#diagram-05" data-nav="05"><span>05</span>内部录入、外部导入与资源基线</a>
+<a href="#diagram-06" data-nav="06"><span>06</span>资源基线、输入版本与多个生成站</a>
+<a href="#diagram-07" data-nav="07"><span>07</span>生成执行模块的职责与人工接管</a>
+<a href="#diagram-08" data-nav="08"><span>08</span>早期生成方案分层提案</a>
+<a href="#diagram-09" data-nav="09"><span>09</span>首页样稿、成单与内页续建</a>
+<a href="#diagram-10" data-nav="10"><span>10</span>并发队列与早期外部 AI 跟进方案</a>
+<a href="#diagram-11" data-nav="11"><span>11</span>评分平台、评测 Skill 与本地 AI</a>
+<a href="#diagram-12" data-nav="12"><span>12</span>Site UI 还原度评测 SOP</a>
+<a href="#diagram-13" data-nav="13"><span>13</span>按 Banner 设计意图进行双端评测</a>
+<a href="#diagram-14" data-nav="14"><span>14</span>全站完整度清单与逐项核验</a>
+<a href="#diagram-15" data-nav="15"><span>15</span>SEO 迁移与旧 URL 承接</a>
+<a href="#diagram-16" data-nav="16"><span>16</span>AI App 用户目标、体验与业务评测</a>
+<a href="#diagram-17" data-nav="17"><span>17</span>评测 Skill 发布与版本快照</a>
+<a href="#diagram-18" data-nav="18"><span>18</span>报告、问题跟进、修复与复评</a>
+<a href="#diagram-19" data-nav="19"><span>19</span>Site 模板生成到独立评测</a>
+<a href="#diagram-20" data-nav="20"><span>20</span>生成状态识别与自动交接评测</a>
+<a href="#diagram-21" data-nav="21"><span>21</span>平台内置流程跟进 Agent</a>
+<a href="#diagram-22" data-nav="22"><span>22</span>一次发起后的自主推进与明确中断</a>
+<a href="#diagram-23" data-nav="23"><span>23</span>异常恢复、预算停止与报告交付</a>
+<a href="#diagram-24" data-nav="24"><span>24</span>按连接选择跨环境迁移与交付核验</a>
+<a href="#diagram-25" data-nav="25"><span>25</span>按独立报告自动修复与提分</a>
+<a href="#diagram-26" data-nav="26"><span>26</span>具体修复委托、重新取证与回归检查</a>
+<a href="#diagram-27" data-nav="27"><span>27</span>自动优化轮数与停止条件</a>
+<a href="#diagram-28" data-nav="28"><span>28</span>早期外部 Admin 轮次 API 提案</a>
+<a href="#diagram-29" data-nav="29"><span>29</span>修复与复评串行及报告适用性</a>
+<a href="#diagram-30" data-nav="30"><span>30</span>首页完成后补齐全站</a>
+<a href="#diagram-31" data-nav="31"><span>31</span>其余四类场景的建议验收顺序</a>
+<a href="#diagram-32" data-nav="32"><span>32</span>跨任务经验沉淀与反馈闭环</a>
+<a href="#diagram-33" data-nav="33"><span>33</span>本地 AI 自动选择、复盘与维护经验</a>
+<a href="#diagram-34" data-nav="34"><span>34</span>经验试用、效果验证与修订停用</a></nav></aside>
+<main><div class="intro"><h1>梳理自动化插件与评分平台需求</h1><p>主对话中的 34 张图，按讨论顺序完整保存，已按 Codex 截图优化样式。点击任意图放大，可单独下载 SVG、PNG 或 Mermaid 源码。</p><p>此处保留讨论演进中的原图，早期提案可能已被修订；图表不代表全部功能已实施。</p><div class="links"><a href="README.md">Markdown 汇编</a><a href="README.md#diagram-36">新增：36 · 迁移清单（仅源码）</a><a href="README.md#diagram-35">新增：35 · 评测报告历史（仅源码）</a><a href="source-messages.md">原始回复</a><a href="diagrams.json">来源索引</a><a href="#diagram-34">截图中的经验闭环 →</a></div></div>
+<p id="empty" hidden>没有匹配的流程图。</p><article id="diagram-01" data-search="初始架构：Admin、插件、评分平台与评测执行器 flowchart LR
+    A[外部 Admin] --&gt;|资料、需求、任务标识、评测方案| P[插件]
+    P --&gt;|创建 Site / AI App 并驱动聊天| K[Kooboo]
+    P --&gt;|生成结果身份、实际输入、评测方案| E[评分平台]
+    A --&gt;|直接发起评测或重评| E
+
+    E --&gt; C[SOP、案例集、评分规则]
+    E --&gt; R[评测执行器]
+    R --&gt; T[浏览器、数据与证据工具]
+    T --&gt; K
+    R --&gt; V[结果校验与总分计算]
+    V --&gt; D[报告与证据存储]
+    D --&gt;|状态、分数、覆盖情况、报告| A
+ ">
+<header><div><span class="number">01</span><h2>初始架构：Admin、插件、评分平台与评测执行器</h2></div><div class="actions"><button type="button" data-open="01">放大</button><a href="svg/01.svg" download>SVG</a><a href="png/01.png" download>PNG</a><a href="mermaid/01.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="01" aria-label="放大：初始架构：Admin、插件、评分平台与评测执行器"><img loading="lazy" src="svg/01.svg" alt="初始架构：Admin、插件、评分平台与评测执行器"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0fd86e5805944d32016aed97ddf2d487d0be572cf882f21877</code> · <a href="source-messages.md#message-0fd86e5805944d32016aed97ddf2d487d0be572cf882f21877">原始回复</a></p><pre>flowchart LR
+    A[外部 Admin] --&gt;|资料、需求、任务标识、评测方案| P[插件]
+    P --&gt;|创建 Site / AI App 并驱动聊天| K[Kooboo]
+    P --&gt;|生成结果身份、实际输入、评测方案| E[评分平台]
+    A --&gt;|直接发起评测或重评| E
+
+    E --&gt; C[SOP、案例集、评分规则]
+    E --&gt; R[评测执行器]
+    R --&gt; T[浏览器、数据与证据工具]
+    T --&gt; K
+    R --&gt; V[结果校验与总分计算]
+    V --&gt; D[报告与证据存储]
+    D --&gt;|状态、分数、覆盖情况、报告| A
+</pre></details>
+</article>
+<article id="diagram-02" data-search="资源包驱动的统一自动化流程 flowchart LR
+    R[&quot;资源包库&lt;br/&gt;原 Admin 侧&quot;] --&gt; T[&quot;创建任务&lt;br/&gt;选择目标、范围与方案&quot;]
+
+    subgraph A[&quot;Kooboo AI Agent 自动化系统&quot;]
+        T --&gt; P[&quot;资料与站点准备&quot;]
+        P --&gt; G[&quot;生成执行&lt;br/&gt;驱动 Kooboo AI Chat&quot;]
+        G --&gt; E[&quot;评测执行&lt;br/&gt;Codex SDK&quot;]
+        E --&gt; O[&quot;生成产物、评分与证据&quot;]
+        C[&quot;生成 Skill&lt;br/&gt;评测 SOP、评分规则&quot;] -.-&gt; T
+    end
+
+    O --&gt;|关联任务与历史| R
+ 此处为早期总体提案，克隆与站点起点的澄清见第 04 图。">
+<header><div><span class="number">02</span><h2>资源包驱动的统一自动化流程</h2></div><div class="actions"><button type="button" data-open="02">放大</button><a href="svg/02.svg" download>SVG</a><a href="png/02.png" download>PNG</a><a href="mermaid/02.mmd" download>源码</a></div></header>
+<p class="note">此处为早期总体提案，克隆与站点起点的澄清见第 04 图。</p>
+<button type="button" class="diagram" data-open="02" aria-label="放大：资源包驱动的统一自动化流程"><img loading="lazy" src="svg/02.svg" alt="资源包驱动的统一自动化流程"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0fd86e5805944d32016aeda4534fac87d0ac78d0893d6596f3</code> · <a href="source-messages.md#message-0fd86e5805944d32016aeda4534fac87d0ac78d0893d6596f3">原始回复</a></p><pre>flowchart LR
+    R[&quot;资源包库&lt;br/&gt;原 Admin 侧&quot;] --&gt; T[&quot;创建任务&lt;br/&gt;选择目标、范围与方案&quot;]
+
+    subgraph A[&quot;Kooboo AI Agent 自动化系统&quot;]
+        T --&gt; P[&quot;资料与站点准备&quot;]
+        P --&gt; G[&quot;生成执行&lt;br/&gt;驱动 Kooboo AI Chat&quot;]
+        G --&gt; E[&quot;评测执行&lt;br/&gt;Codex SDK&quot;]
+        E --&gt; O[&quot;生成产物、评分与证据&quot;]
+        C[&quot;生成 Skill&lt;br/&gt;评测 SOP、评分规则&quot;] -.-&gt; T
+    end
+
+    O --&gt;|关联任务与历史| R
+</pre></details>
+</article>
+<article id="diagram-03" data-search="内容、视觉与业务评测依据 flowchart LR
+    O[&quot;原站&quot;] --&gt;|迁移：视觉基准| V[&quot;还原度评测&quot;]
+    R[&quot;参考站&quot;] --&gt;|升级、Site 模板：视觉基准| V
+
+    O --&gt;|迁移、升级：内容依据| C[&quot;完整度评测&quot;]
+    M[&quot;资料包、需求文档&quot;] --&gt;|事实与要求| C
+    S[&quot;约定的页面、组件和业务范围&quot;] --&gt; C
+
+    D[&quot;App 业务需求与案例&quot;] --&gt; B[&quot;业务评测&quot;]
+ 此处保留当时使用的“原站”称呼，后续统一称为“内容站”，并明确了内容站与参考站的角色。">
+<header><div><span class="number">03</span><h2>内容、视觉与业务评测依据</h2></div><div class="actions"><button type="button" data-open="03">放大</button><a href="svg/03.svg" download>SVG</a><a href="png/03.png" download>PNG</a><a href="mermaid/03.mmd" download>源码</a></div></header>
+<p class="note">此处保留当时使用的“原站”称呼，后续统一称为“内容站”，并明确了内容站与参考站的角色。</p>
+<button type="button" class="diagram" data-open="03" aria-label="放大：内容、视觉与业务评测依据"><img loading="lazy" src="svg/03.svg" alt="内容、视觉与业务评测依据"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0fd86e5805944d32016aeda4534fac87d0ac78d0893d6596f3</code> · <a href="source-messages.md#message-0fd86e5805944d32016aeda4534fac87d0ac78d0893d6596f3">原始回复</a></p><pre>flowchart LR
+    O[&quot;原站&quot;] --&gt;|迁移：视觉基准| V[&quot;还原度评测&quot;]
+    R[&quot;参考站&quot;] --&gt;|升级、Site 模板：视觉基准| V
+
+    O --&gt;|迁移、升级：内容依据| C[&quot;完整度评测&quot;]
+    M[&quot;资料包、需求文档&quot;] --&gt;|事实与要求| C
+    S[&quot;约定的页面、组件和业务范围&quot;] --&gt; C
+
+    D[&quot;App 业务需求与案例&quot;] --&gt; B[&quot;业务评测&quot;]
+</pre></details>
+</article>
+<article id="diagram-04" data-search="空白站点起步与三类克隆路径 flowchart TD
+    Z[&quot;创建空白目标站&quot;] --&gt; T{&quot;任务场景&quot;}
+
+    T --&gt; A[&quot;迁移：有独立参考站&lt;br/&gt;即旧站升级&quot;]
+    A --&gt; A1[&quot;克隆内容站&quot;]
+    A1 --&gt; A2[&quot;导入资料包&quot;]
+    A2 --&gt; A3[&quot;Sandbox 克隆参考站&quot;]
+
+    T --&gt; B[&quot;迁移：无独立参考站&quot;]
+    B --&gt; B1[&quot;Sandbox 克隆内容站&lt;br/&gt;同时作为参考站&quot;]
+
+    T --&gt; C[&quot;AI Site 模板&quot;]
+    C --&gt; C1[&quot;Sandbox 克隆来源站&lt;br/&gt;同时作为内容站和参考站&quot;]
+    C1 --&gt; C2[&quot;生成约束：不复用参考站资源&lt;br/&gt;图片使用 imagePlaceholder&quot;]
+
+    A3 --&gt; G[&quot;Kooboo AI 构建目标站&quot;]
+    B1 --&gt; G
+    C2 --&gt; G
+
+    G --&gt; E[&quot;Codex SDK 评测&quot;]
+    E --&gt; O[&quot;产物、评分与证据&quot;]
+ ">
+<header><div><span class="number">04</span><h2>空白站点起步与三类克隆路径</h2></div><div class="actions"><button type="button" data-open="04">放大</button><a href="svg/04.svg" download>SVG</a><a href="png/04.png" download>PNG</a><a href="mermaid/04.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="04" aria-label="放大：空白站点起步与三类克隆路径"><img loading="lazy" src="svg/04.svg" alt="空白站点起步与三类克隆路径"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0fd86e5805944d32016aeda862054c87d088a01d101029947b</code> · <a href="source-messages.md#message-0fd86e5805944d32016aeda862054c87d088a01d101029947b">原始回复</a></p><pre>flowchart TD
+    Z[&quot;创建空白目标站&quot;] --&gt; T{&quot;任务场景&quot;}
+
+    T --&gt; A[&quot;迁移：有独立参考站&lt;br/&gt;即旧站升级&quot;]
+    A --&gt; A1[&quot;克隆内容站&quot;]
+    A1 --&gt; A2[&quot;导入资料包&quot;]
+    A2 --&gt; A3[&quot;Sandbox 克隆参考站&quot;]
+
+    T --&gt; B[&quot;迁移：无独立参考站&quot;]
+    B --&gt; B1[&quot;Sandbox 克隆内容站&lt;br/&gt;同时作为参考站&quot;]
+
+    T --&gt; C[&quot;AI Site 模板&quot;]
+    C --&gt; C1[&quot;Sandbox 克隆来源站&lt;br/&gt;同时作为内容站和参考站&quot;]
+    C1 --&gt; C2[&quot;生成约束：不复用参考站资源&lt;br/&gt;图片使用 imagePlaceholder&quot;]
+
+    A3 --&gt; G[&quot;Kooboo AI 构建目标站&quot;]
+    B1 --&gt; G
+    C2 --&gt; G
+
+    G --&gt; E[&quot;Codex SDK 评测&quot;]
+    E --&gt; O[&quot;产物、评分与证据&quot;]
+</pre></details>
+</article>
+<article id="diagram-05" data-search="内部录入、外部导入与资源基线 flowchart LR
+    A[&quot;本系统 Admin 录入&quot;] --&gt; I[&quot;导入与整理&quot;]
+    X[&quot;外部 Admin&quot;] --&gt;|文件导入 / 接口接入| I
+    I --&gt; B[&quot;资源基线库&quot;]
+    B --&gt; G[&quot;生成任务&quot;]
+    G --&gt; S[&quot;Kooboo 生成站&quot;]
+    S --&gt; E[&quot;评测与证据&quot;]
+    E --&gt;|关联回基线| B
+ ">
+<header><div><span class="number">05</span><h2>内部录入、外部导入与资源基线</h2></div><div class="actions"><button type="button" data-open="05">放大</button><a href="svg/05.svg" download>SVG</a><a href="png/05.png" download>PNG</a><a href="mermaid/05.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="05" aria-label="放大：内部录入、外部导入与资源基线"><img loading="lazy" src="svg/05.svg" alt="内部录入、外部导入与资源基线"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0fd86e5805944d32016aedac05a8e487d08370e2bc2540fcfe</code> · <a href="source-messages.md#message-0fd86e5805944d32016aedac05a8e487d08370e2bc2540fcfe">原始回复</a></p><pre>flowchart LR
+    A[&quot;本系统 Admin 录入&quot;] --&gt; I[&quot;导入与整理&quot;]
+    X[&quot;外部 Admin&quot;] --&gt;|文件导入 / 接口接入| I
+    I --&gt; B[&quot;资源基线库&quot;]
+    B --&gt; G[&quot;生成任务&quot;]
+    G --&gt; S[&quot;Kooboo 生成站&quot;]
+    S --&gt; E[&quot;评测与证据&quot;]
+    E --&gt;|关联回基线| B
+</pre></details>
+</article>
+<article id="diagram-06" data-search="资源基线、输入版本与多个生成站 flowchart TD
+    B[&quot;资源基线：某公司官网&quot;] --&gt; V[&quot;输入版本 v1&quot;]
+
+    V --&gt; A[&quot;生成 A&lt;br/&gt;方案 A&quot;]
+    V --&gt; C[&quot;生成 B&lt;br/&gt;方案 B&quot;]
+
+    A --&gt; SA[&quot;Kooboo 站点 A&quot;]
+    C --&gt; SB[&quot;Kooboo 站点 B&quot;]
+
+    SA --&gt; E1[&quot;评测 A：第 1 轮&quot;]
+    SA --&gt; E2[&quot;评测 A：第 2 轮&quot;]
+    SB --&gt; E3[&quot;评测 B：第 1 轮&quot;]
+ ">
+<header><div><span class="number">06</span><h2>资源基线、输入版本与多个生成站</h2></div><div class="actions"><button type="button" data-open="06">放大</button><a href="svg/06.svg" download>SVG</a><a href="png/06.png" download>PNG</a><a href="mermaid/06.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="06" aria-label="放大：资源基线、输入版本与多个生成站"><img loading="lazy" src="svg/06.svg" alt="资源基线、输入版本与多个生成站"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0fd86e5805944d32016aedac05a8e487d08370e2bc2540fcfe</code> · <a href="source-messages.md#message-0fd86e5805944d32016aedac05a8e487d08370e2bc2540fcfe">原始回复</a></p><pre>flowchart TD
+    B[&quot;资源基线：某公司官网&quot;] --&gt; V[&quot;输入版本 v1&quot;]
+
+    V --&gt; A[&quot;生成 A&lt;br/&gt;方案 A&quot;]
+    V --&gt; C[&quot;生成 B&lt;br/&gt;方案 B&quot;]
+
+    A --&gt; SA[&quot;Kooboo 站点 A&quot;]
+    C --&gt; SB[&quot;Kooboo 站点 B&quot;]
+
+    SA --&gt; E1[&quot;评测 A：第 1 轮&quot;]
+    SA --&gt; E2[&quot;评测 A：第 2 轮&quot;]
+    SB --&gt; E3[&quot;评测 B：第 1 轮&quot;]
+</pre></details>
+</article>
+<article id="diagram-07" data-search="生成执行模块的职责与人工接管 flowchart LR
+    T[&quot;生成任务&quot;] --&gt; Q[&quot;排队与调度&quot;]
+    Q --&gt; K[&quot;连接 Kooboo&lt;br/&gt;创建空白目标站&quot;]
+    K --&gt; C[&quot;驱动 AI Chat&lt;br/&gt;按场景准备输入并生成&quot;]
+    C --&gt; F[&quot;跟踪状态与异常&quot;]
+    F --&gt; E[&quot;交接评测&quot;]
+    H[&quot;人工接管&quot;] &lt;--&gt; F
+ ">
+<header><div><span class="number">07</span><h2>生成执行模块的职责与人工接管</h2></div><div class="actions"><button type="button" data-open="07">放大</button><a href="svg/07.svg" download>SVG</a><a href="png/07.png" download>PNG</a><a href="mermaid/07.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="07" aria-label="放大：生成执行模块的职责与人工接管"><img loading="lazy" src="svg/07.svg" alt="生成执行模块的职责与人工接管"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0fd86e5805944d32016aedaf37cecc87d099dad6f776c3d340</code> · <a href="source-messages.md#message-0fd86e5805944d32016aedaf37cecc87d099dad6f776c3d340">原始回复</a></p><pre>flowchart LR
+    T[&quot;生成任务&quot;] --&gt; Q[&quot;排队与调度&quot;]
+    Q --&gt; K[&quot;连接 Kooboo&lt;br/&gt;创建空白目标站&quot;]
+    K --&gt; C[&quot;驱动 AI Chat&lt;br/&gt;按场景准备输入并生成&quot;]
+    C --&gt; F[&quot;跟踪状态与异常&quot;]
+    F --&gt; E[&quot;交接评测&quot;]
+    H[&quot;人工接管&quot;] &lt;--&gt; F
+</pre></details>
+</article>
+<article id="diagram-08" data-search="早期生成方案分层提案 flowchart LR
+    A[&quot;选择场景&quot;] --&gt; B[&quot;选择生成方案&quot;]
+    B --&gt; D[&quot;本次生成任务&quot;]
+    C[&quot;资源基线中的资料&quot;] --&gt; D
+    E[&quot;本次补充要求&quot;] --&gt; D
+    D --&gt; F[&quot;驱动 Kooboo AI Chat&quot;]
+    F --&gt; G[&quot;生成站点&quot;]
+    G --&gt; H[&quot;按独立的评测 SOP 评测&quot;]
+ 历史提案；后续已收敛为场景提示词与一次完整 message 委托，不单独引入复杂生成方案层。">
+<header><div><span class="number">08</span><h2>早期生成方案分层提案</h2></div><div class="actions"><button type="button" data-open="08">放大</button><a href="svg/08.svg" download>SVG</a><a href="png/08.png" download>PNG</a><a href="mermaid/08.mmd" download>源码</a></div></header>
+<p class="note">历史提案；后续已收敛为场景提示词与一次完整 message 委托，不单独引入复杂生成方案层。</p>
+<button type="button" class="diagram" data-open="08" aria-label="放大：早期生成方案分层提案"><img loading="lazy" src="svg/08.svg" alt="早期生成方案分层提案"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0e6a4eb398885f36016aedb15d9fa887d083d1b54f3a0805c7</code> · <a href="source-messages.md#message-0e6a4eb398885f36016aedb15d9fa887d083d1b54f3a0805c7">原始回复</a></p><pre>flowchart LR
+    A[&quot;选择场景&quot;] --&gt; B[&quot;选择生成方案&quot;]
+    B --&gt; D[&quot;本次生成任务&quot;]
+    C[&quot;资源基线中的资料&quot;] --&gt; D
+    E[&quot;本次补充要求&quot;] --&gt; D
+    D --&gt; F[&quot;驱动 Kooboo AI Chat&quot;]
+    F --&gt; G[&quot;生成站点&quot;]
+    G --&gt; H[&quot;按独立的评测 SOP 评测&quot;]
+</pre></details>
+</article>
+<article id="diagram-09" data-search="首页样稿、成单与内页续建 flowchart TD
+    A[&quot;迁移 / 升级资源基线&quot;] --&gt; B[&quot;创建空白目标站&quot;]
+    B --&gt; C[&quot;一次委托：仅生成首页&quot;]
+    C --&gt; D[&quot;按首页范围评测&quot;]
+    D --&gt; E[&quot;保留首页成果，等待业务决定&quot;]
+    E --&gt;|暂未成单| F[&quot;暂不生成内页&quot;]
+    E --&gt;|成单后发起续建| G[&quot;在已有站点继续生成内页&quot;]
+    G --&gt; H[&quot;评测内页，并检查首页是否受影响&quot;]
+ ">
+<header><div><span class="number">09</span><h2>首页样稿、成单与内页续建</h2></div><div class="actions"><button type="button" data-open="09">放大</button><a href="svg/09.svg" download>SVG</a><a href="png/09.png" download>PNG</a><a href="mermaid/09.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="09" aria-label="放大：首页样稿、成单与内页续建"><img loading="lazy" src="svg/09.svg" alt="首页样稿、成单与内页续建"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0e6a4eb398885f36016aede73784e087d097d3fd890288d3b8</code> · <a href="source-messages.md#message-0e6a4eb398885f36016aede73784e087d097d3fd890288d3b8">原始回复</a></p><pre>flowchart TD
+    A[&quot;迁移 / 升级资源基线&quot;] --&gt; B[&quot;创建空白目标站&quot;]
+    B --&gt; C[&quot;一次委托：仅生成首页&quot;]
+    C --&gt; D[&quot;按首页范围评测&quot;]
+    D --&gt; E[&quot;保留首页成果，等待业务决定&quot;]
+    E --&gt;|暂未成单| F[&quot;暂不生成内页&quot;]
+    E --&gt;|成单后发起续建| G[&quot;在已有站点继续生成内页&quot;]
+    G --&gt; H[&quot;评测内页，并检查首页是否受影响&quot;]
+</pre></details>
+</article>
+<article id="diagram-10" data-search="并发队列与早期外部 AI 跟进方案 flowchart TD
+    B[&quot;批量提交任务&quot;] --&gt; Q[&quot;待执行队列&quot;]
+    Q --&gt;|有空位自动启动| R[&quot;Kooboo AI 执行&lt;br/&gt;最多同时运行 3 个&quot;]
+    R --&gt;|生成结束，释放名额| E[&quot;交接评测&quot;]
+    R --&gt;|停下等待，释放名额| P[&quot;pending&lt;br/&gt;保存原因与上下文&quot;]
+    P --&gt; X[&quot;外部 AI 监看&lt;br/&gt;收到通知或主动查询&quot;]
+    X --&gt;|提交跟进消息| Q
+    E -.-&gt;|自动补入下一项| Q
+    P -.-&gt;|自动补入下一项| Q
+ 历史方案；后续已将跟进决策纳入平台内置本地 AI，见第 21—23 图。">
+<header><div><span class="number">10</span><h2>并发队列与早期外部 AI 跟进方案</h2></div><div class="actions"><button type="button" data-open="10">放大</button><a href="svg/10.svg" download>SVG</a><a href="png/10.png" download>PNG</a><a href="mermaid/10.mmd" download>源码</a></div></header>
+<p class="note">历史方案；后续已将跟进决策纳入平台内置本地 AI，见第 21—23 图。</p>
+<button type="button" class="diagram" data-open="10" aria-label="放大：并发队列与早期外部 AI 跟进方案"><img loading="lazy" src="svg/10.svg" alt="并发队列与早期外部 AI 跟进方案"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0e6a4eb398885f36016aede91aa28887d0bfc4bd60394cd900</code> · <a href="source-messages.md#message-0e6a4eb398885f36016aede91aa28887d0bfc4bd60394cd900">原始回复</a></p><pre>flowchart TD
+    B[&quot;批量提交任务&quot;] --&gt; Q[&quot;待执行队列&quot;]
+    Q --&gt;|有空位自动启动| R[&quot;Kooboo AI 执行&lt;br/&gt;最多同时运行 3 个&quot;]
+    R --&gt;|生成结束，释放名额| E[&quot;交接评测&quot;]
+    R --&gt;|停下等待，释放名额| P[&quot;pending&lt;br/&gt;保存原因与上下文&quot;]
+    P --&gt; X[&quot;外部 AI 监看&lt;br/&gt;收到通知或主动查询&quot;]
+    X --&gt;|提交跟进消息| Q
+    E -.-&gt;|自动补入下一项| Q
+    P -.-&gt;|自动补入下一项| Q
+</pre></details>
+</article>
+<article id="diagram-11" data-search="评分平台、评测 Skill 与本地 AI flowchart LR
+    T[&quot;评测任务&lt;br/&gt;场景、范围、资料、目标站&quot;] --&gt; P[&quot;评分平台&quot;]
+    S[&quot;可更新的评测 Skill&lt;br/&gt;SOP、references、工具、评分规则&quot;] --&gt; P
+    P --&gt; A[&quot;本地评测 AI&lt;br/&gt;采集证据、检查、判断&quot;]
+    A --&gt; D[&quot;证据、分项评分&lt;br/&gt;问题、未验证项&quot;]
+    D --&gt; V[&quot;平台校验与汇总&quot;]
+    V --&gt; R[&quot;报告与历史记录&quot;]
+ ">
+<header><div><span class="number">11</span><h2>评分平台、评测 Skill 与本地 AI</h2></div><div class="actions"><button type="button" data-open="11">放大</button><a href="svg/11.svg" download>SVG</a><a href="png/11.png" download>PNG</a><a href="mermaid/11.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="11" aria-label="放大：评分平台、评测 Skill 与本地 AI"><img loading="lazy" src="svg/11.svg" alt="评分平台、评测 Skill 与本地 AI"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0e6a4eb398885f36016aeded62aef887d0ae9a93c4f23b7ebf</code> · <a href="source-messages.md#message-0e6a4eb398885f36016aeded62aef887d0ae9a93c4f23b7ebf">原始回复</a></p><pre>flowchart LR
+    T[&quot;评测任务&lt;br/&gt;场景、范围、资料、目标站&quot;] --&gt; P[&quot;评分平台&quot;]
+    S[&quot;可更新的评测 Skill&lt;br/&gt;SOP、references、工具、评分规则&quot;] --&gt; P
+    P --&gt; A[&quot;本地评测 AI&lt;br/&gt;采集证据、检查、判断&quot;]
+    A --&gt; D[&quot;证据、分项评分&lt;br/&gt;问题、未验证项&quot;]
+    D --&gt; V[&quot;平台校验与汇总&quot;]
+    V --&gt; R[&quot;报告与历史记录&quot;]
+</pre></details>
+</article>
+<article id="diagram-12" data-search="Site UI 还原度评测 SOP flowchart LR
+    A[&quot;明确参考与允许变化&quot;] --&gt; B[&quot;对应页面与状态&quot;]
+    B --&gt; C[&quot;统一条件采集证据&quot;]
+    C --&gt; D[&quot;整页检查＋区域对照&quot;]
+    D --&gt; E[&quot;复核差异&quot;]
+    E --&gt; F[&quot;分项判断、评分与问题报告&quot;]
+ ">
+<header><div><span class="number">12</span><h2>Site UI 还原度评测 SOP</h2></div><div class="actions"><button type="button" data-open="12">放大</button><a href="svg/12.svg" download>SVG</a><a href="png/12.png" download>PNG</a><a href="mermaid/12.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="12" aria-label="放大：Site UI 还原度评测 SOP"><img loading="lazy" src="svg/12.svg" alt="Site UI 还原度评测 SOP"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0e6a4eb398885f36016aedeeefe31887d0a48ee3434cc35dff</code> · <a href="source-messages.md#message-0e6a4eb398885f36016aedeeefe31887d0a48ee3434cc35dff">原始回复</a></p><pre>flowchart LR
+    A[&quot;明确参考与允许变化&quot;] --&gt; B[&quot;对应页面与状态&quot;]
+    B --&gt; C[&quot;统一条件采集证据&quot;]
+    C --&gt; D[&quot;整页检查＋区域对照&quot;]
+    D --&gt; E[&quot;复核差异&quot;]
+    E --&gt; F[&quot;分项判断、评分与问题报告&quot;]
+</pre></details>
+</article>
+<article id="diagram-13" data-search="按 Banner 设计意图进行双端评测 flowchart TD
+    A[&quot;理解参考页面&quot;] --&gt; B[&quot;拆解结构&lt;br/&gt;Header → Hero → 内容 Banner → Price → Footer&quot;]
+    B --&gt; C[&quot;PC 端逐 Banner 对照&quot;]
+    B --&gt; D[&quot;移动端逐 Banner 对照&quot;]
+    C --&gt; E[&quot;设计意图、视觉表达、动态交互&quot;]
+    D --&gt; E
+    E --&gt; F[&quot;两端分别形成结果&lt;br/&gt;首页 Hero 提高权重&quot;]
+ ">
+<header><div><span class="number">13</span><h2>按 Banner 设计意图进行双端评测</h2></div><div class="actions"><button type="button" data-open="13">放大</button><a href="svg/13.svg" download>SVG</a><a href="png/13.png" download>PNG</a><a href="mermaid/13.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="13" aria-label="放大：按 Banner 设计意图进行双端评测"><img loading="lazy" src="svg/13.svg" alt="按 Banner 设计意图进行双端评测"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0e6a4eb398885f36016aedf1f852c487d0a75066897ed9ed1d</code> · <a href="source-messages.md#message-0e6a4eb398885f36016aedf1f852c487d0a75066897ed9ed1d">原始回复</a></p><pre>flowchart TD
+    A[&quot;理解参考页面&quot;] --&gt; B[&quot;拆解结构&lt;br/&gt;Header → Hero → 内容 Banner → Price → Footer&quot;]
+    B --&gt; C[&quot;PC 端逐 Banner 对照&quot;]
+    B --&gt; D[&quot;移动端逐 Banner 对照&quot;]
+    C --&gt; E[&quot;设计意图、视觉表达、动态交互&quot;]
+    D --&gt; E
+    E --&gt; F[&quot;两端分别形成结果&lt;br/&gt;首页 Hero 提高权重&quot;]
+</pre></details>
+</article>
+<article id="diagram-14" data-search="全站完整度清单与逐项核验 flowchart LR
+    A[&quot;内容站＋资料包＋任务要求&quot;] --&gt; B[&quot;AI 整理应交付清单&quot;]
+    B --&gt; C[&quot;限定本次评测范围&quot;]
+    C --&gt; D[&quot;对应生成站的页面、内容与功能&quot;]
+    D --&gt; E[&quot;逐项核验并留证&quot;]
+    E --&gt; F[&quot;完成情况、遗漏、未验证项&quot;]
+ ">
+<header><div><span class="number">14</span><h2>全站完整度清单与逐项核验</h2></div><div class="actions"><button type="button" data-open="14">放大</button><a href="svg/14.svg" download>SVG</a><a href="png/14.png" download>PNG</a><a href="mermaid/14.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="14" aria-label="放大：全站完整度清单与逐项核验"><img loading="lazy" src="svg/14.svg" alt="全站完整度清单与逐项核验"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0e6a4eb398885f36016aedf78a3df887d08eb54497eef5792a</code> · <a href="source-messages.md#message-0e6a4eb398885f36016aedf78a3df887d08eb54497eef5792a">原始回复</a></p><pre>flowchart LR
+    A[&quot;内容站＋资料包＋任务要求&quot;] --&gt; B[&quot;AI 整理应交付清单&quot;]
+    B --&gt; C[&quot;限定本次评测范围&quot;]
+    C --&gt; D[&quot;对应生成站的页面、内容与功能&quot;]
+    D --&gt; E[&quot;逐项核验并留证&quot;]
+    E --&gt; F[&quot;完成情况、遗漏、未验证项&quot;]
+</pre></details>
+</article>
+<article id="diagram-15" data-search="SEO 迁移与旧 URL 承接 flowchart TD
+    A[内容站：旧 URL 与内容清单] --&gt; B[建立新旧对应关系]
+    B --&gt; C{原 URL 是否保留}
+    C --&gt;|保留| D[检查原地址能否访问正确内容]
+    C --&gt;|变更| E[检查是否正确重定向到对应内容]
+    D --&gt; F[检查内容与搜索配置]
+    E --&gt; F
+    F --&gt; G[交付评分、证据、问题与未验证项]
+ ">
+<header><div><span class="number">15</span><h2>SEO 迁移与旧 URL 承接</h2></div><div class="actions"><button type="button" data-open="15">放大</button><a href="svg/15.svg" download>SVG</a><a href="png/15.png" download>PNG</a><a href="mermaid/15.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="15" aria-label="放大：SEO 迁移与旧 URL 承接"><img loading="lazy" src="svg/15.svg" alt="SEO 迁移与旧 URL 承接"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_06763e789848107c016aedfbf933bc87d0ac316ca60f1d1f88</code> · <a href="source-messages.md#message-06763e789848107c016aedfbf933bc87d0ac316ca60f1d1f88">原始回复</a></p><pre>flowchart TD
+    A[内容站：旧 URL 与内容清单] --&gt; B[建立新旧对应关系]
+    B --&gt; C{原 URL 是否保留}
+    C --&gt;|保留| D[检查原地址能否访问正确内容]
+    C --&gt;|变更| E[检查是否正确重定向到对应内容]
+    D --&gt; F[检查内容与搜索配置]
+    E --&gt; F
+    F --&gt; G[交付评分、证据、问题与未验证项]
+</pre></details>
+</article>
+<article id="diagram-16" data-search="AI App 用户目标、体验与业务评测 flowchart TD
+    A[业务需求资料＋本次评测范围] --&gt; B[提取用户目标与预期结果]
+    B --&gt; C[形成本轮检查场景]
+    C --&gt; D[实际操作 App、收集证据]
+    D --&gt; E[UI 体验评价]
+    D --&gt; F[业务正确性评价]
+    E --&gt; G[分项评分、问题与未验证项]
+    F --&gt; G
+ ">
+<header><div><span class="number">16</span><h2>AI App 用户目标、体验与业务评测</h2></div><div class="actions"><button type="button" data-open="16">放大</button><a href="svg/16.svg" download>SVG</a><a href="png/16.png" download>PNG</a><a href="mermaid/16.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="16" aria-label="放大：AI App 用户目标、体验与业务评测"><img loading="lazy" src="svg/16.svg" alt="AI App 用户目标、体验与业务评测"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_06763e789848107c016aedff3c38a487d0bd4818872ac46300</code> · <a href="source-messages.md#message-06763e789848107c016aedff3c38a487d0bd4818872ac46300">原始回复</a></p><pre>flowchart TD
+    A[业务需求资料＋本次评测范围] --&gt; B[提取用户目标与预期结果]
+    B --&gt; C[形成本轮检查场景]
+    C --&gt; D[实际操作 App、收集证据]
+    D --&gt; E[UI 体验评价]
+    D --&gt; F[业务正确性评价]
+    E --&gt; G[分项评分、问题与未验证项]
+    F --&gt; G
+</pre></details>
+</article>
+<article id="diagram-17" data-search="评测 Skill 发布与版本快照 flowchart TD
+    A[编辑 SOP、资料与规则] --&gt; B[保存并启用新版本]
+    B --&gt; C[新评测开始时固定本轮内容]
+    C --&gt; D[执行评测并保存报告]
+    B --&gt; E[已有评测保留原口径]
+    D --&gt; F[需要时发起新一轮复评]
+ ">
+<header><div><span class="number">17</span><h2>评测 Skill 发布与版本快照</h2></div><div class="actions"><button type="button" data-open="17">放大</button><a href="svg/17.svg" download>SVG</a><a href="png/17.png" download>PNG</a><a href="mermaid/17.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="17" aria-label="放大：评测 Skill 发布与版本快照"><img loading="lazy" src="svg/17.svg" alt="评测 Skill 发布与版本快照"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_06763e789848107c016aee0097353487d08bd253edfd0ffef9</code> · <a href="source-messages.md#message-06763e789848107c016aee0097353487d08bd253edfd0ffef9">原始回复</a></p><pre>flowchart TD
+    A[编辑 SOP、资料与规则] --&gt; B[保存并启用新版本]
+    B --&gt; C[新评测开始时固定本轮内容]
+    C --&gt; D[执行评测并保存报告]
+    B --&gt; E[已有评测保留原口径]
+    D --&gt; F[需要时发起新一轮复评]
+</pre></details>
+</article>
+<article id="diagram-18" data-search="报告、问题跟进、修复与复评 flowchart TD
+    A[评测报告与证据] --&gt; B[外部 AI 或人工读取]
+    B --&gt; C{决定如何处理}
+    C --&gt;|缺材料或取证失败| D[补材料、重新评测]
+    C --&gt;|需要改站| E[提交问题与跟进要求]
+    E --&gt; F[进入生成调度队列]
+    F --&gt; G[Kooboo AI Chat 修复]
+    G --&gt; H[新一轮评测]
+    D --&gt; H
+    H --&gt; I[保留新旧报告与关联]
+ 保留当时外部 AI / 人工跟进方案；后续增加了内置跟进与自动质量优化。">
+<header><div><span class="number">18</span><h2>报告、问题跟进、修复与复评</h2></div><div class="actions"><button type="button" data-open="18">放大</button><a href="svg/18.svg" download>SVG</a><a href="png/18.png" download>PNG</a><a href="mermaid/18.mmd" download>源码</a></div></header>
+<p class="note">保留当时外部 AI / 人工跟进方案；后续增加了内置跟进与自动质量优化。</p>
+<button type="button" class="diagram" data-open="18" aria-label="放大：报告、问题跟进、修复与复评"><img loading="lazy" src="svg/18.svg" alt="报告、问题跟进、修复与复评"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_06763e789848107c016aee02370e8087d0bc7a966ba638bc60</code> · <a href="source-messages.md#message-06763e789848107c016aee02370e8087d0bc7a966ba638bc60">原始回复</a></p><pre>flowchart TD
+    A[评测报告与证据] --&gt; B[外部 AI 或人工读取]
+    B --&gt; C{决定如何处理}
+    C --&gt;|缺材料或取证失败| D[补材料、重新评测]
+    C --&gt;|需要改站| E[提交问题与跟进要求]
+    E --&gt; F[进入生成调度队列]
+    F --&gt; G[Kooboo AI Chat 修复]
+    G --&gt; H[新一轮评测]
+    D --&gt; H
+    H --&gt; I[保留新旧报告与关联]
+</pre></details>
+</article>
+<article id="diagram-19" data-search="Site 模板生成到独立评测 flowchart LR
+  A[AI Site 模板任务] --&gt; B[Kooboo AI 生成站点]
+  B --&gt; C[本地 Codex Agent 独立评测]
+  C --&gt; D[评分、问题与证据报告]
+ ">
+<header><div><span class="number">19</span><h2>Site 模板生成到独立评测</h2></div><div class="actions"><button type="button" data-open="19">放大</button><a href="svg/19.svg" download>SVG</a><a href="png/19.png" download>PNG</a><a href="mermaid/19.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="19" aria-label="放大：Site 模板生成到独立评测"><img loading="lazy" src="svg/19.svg" alt="Site 模板生成到独立评测"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_02a05bd5a435cb87016aee7cf3a9bc87d08105400348559a58</code> · <a href="source-messages.md#message-02a05bd5a435cb87016aee7cf3a9bc87d08105400348559a58">原始回复</a></p><pre>flowchart LR
+  A[AI Site 模板任务] --&gt; B[Kooboo AI 生成站点]
+  B --&gt; C[本地 Codex Agent 独立评测]
+  C --&gt; D[评分、问题与证据报告]
+</pre></details>
+</article>
+<article id="diagram-20" data-search="生成状态识别与自动交接评测 flowchart TD
+    A[提交生成委托] --&gt; B[绑定站点、会话和本轮执行身份]
+    B --&gt; C[持续追踪执行状态]
+    C --&gt; D{本轮状态}
+    D --&gt;|运行中| C
+    D --&gt;|正常结束| E[获取并确认评测地址]
+    E --&gt; F[自动进入独立评测]
+    D --&gt;|暂时无法确认| G[自动核对与有限重试]
+    G --&gt; D
+    G --&gt;|仍无法确认| H[待跟进并保存具体证据]
+    D --&gt;|确需输入或明确失败| H
+ ">
+<header><div><span class="number">20</span><h2>生成状态识别与自动交接评测</h2></div><div class="actions"><button type="button" data-open="20">放大</button><a href="svg/20.svg" download>SVG</a><a href="png/20.png" download>PNG</a><a href="mermaid/20.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="20" aria-label="放大：生成状态识别与自动交接评测"><img loading="lazy" src="svg/20.svg" alt="生成状态识别与自动交接评测"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0ea4717fbae34248016aee8210aff487d0984eba1a724107ba</code> · <a href="source-messages.md#message-0ea4717fbae34248016aee8210aff487d0984eba1a724107ba">原始回复</a></p><pre>flowchart TD
+    A[提交生成委托] --&gt; B[绑定站点、会话和本轮执行身份]
+    B --&gt; C[持续追踪执行状态]
+    C --&gt; D{本轮状态}
+    D --&gt;|运行中| C
+    D --&gt;|正常结束| E[获取并确认评测地址]
+    E --&gt; F[自动进入独立评测]
+    D --&gt;|暂时无法确认| G[自动核对与有限重试]
+    G --&gt; D
+    G --&gt;|仍无法确认| H[待跟进并保存具体证据]
+    D --&gt;|确需输入或明确失败| H
+</pre></details>
+</article>
+<article id="diagram-21" data-search="平台内置流程跟进 Agent flowchart TD
+    A[Kooboo AI 执行生成] --&gt; B{执行状态}
+    B --&gt;|正常结束| E[独立评测 Agent]
+    B --&gt;|异常、停顿或状态不明| C[流程跟进 Agent]
+    C --&gt; D[读取会话、状态和站点证据]
+    D --&gt; F{决定下一步}
+    F --&gt;|继续观察| D
+    F --&gt;|需要继续生成| G[通过调度器跟进原会话]
+    G --&gt; A
+    F --&gt;|确认可以评测| E
+    F --&gt;|确需用户输入| H[保留上下文并提出具体问题]
+ ">
+<header><div><span class="number">21</span><h2>平台内置流程跟进 Agent</h2></div><div class="actions"><button type="button" data-open="21">放大</button><a href="svg/21.svg" download>SVG</a><a href="png/21.png" download>PNG</a><a href="mermaid/21.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="21" aria-label="放大：平台内置流程跟进 Agent"><img loading="lazy" src="svg/21.svg" alt="平台内置流程跟进 Agent"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0ea4717fbae34248016aee83a01e7c87d08d78a19f6a464089</code> · <a href="source-messages.md#message-0ea4717fbae34248016aee83a01e7c87d08d78a19f6a464089">原始回复</a></p><pre>flowchart TD
+    A[Kooboo AI 执行生成] --&gt; B{执行状态}
+    B --&gt;|正常结束| E[独立评测 Agent]
+    B --&gt;|异常、停顿或状态不明| C[流程跟进 Agent]
+    C --&gt; D[读取会话、状态和站点证据]
+    D --&gt; F{决定下一步}
+    F --&gt;|继续观察| D
+    F --&gt;|需要继续生成| G[通过调度器跟进原会话]
+    G --&gt; A
+    F --&gt;|确认可以评测| E
+    F --&gt;|确需用户输入| H[保留上下文并提出具体问题]
+</pre></details>
+</article>
+<article id="diagram-22" data-search="一次发起后的自主推进与明确中断 flowchart TD
+    A[你发起任务] --&gt; B[系统推进：准备 → 生成 → 评测]
+    B --&gt;|顺利完成| C[交付评测报告]
+    B --&gt;|出现不确定或阻塞| D[内置 AI 查证并调用工具处理]
+    D --&gt; E{是否能够继续}
+    E --&gt;|能够继续| F[从对应阶段恢复]
+    F --&gt; B
+    E --&gt;|明确不能继续| G[中断并通知你：原因与下一步]
+ ">
+<header><div><span class="number">22</span><h2>一次发起后的自主推进与明确中断</h2></div><div class="actions"><button type="button" data-open="22">放大</button><a href="svg/22.svg" download>SVG</a><a href="png/22.png" download>PNG</a><a href="mermaid/22.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="22" aria-label="放大：一次发起后的自主推进与明确中断"><img loading="lazy" src="svg/22.svg" alt="一次发起后的自主推进与明确中断"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0ea4717fbae34248016aee8415eedc87d0abe1f3d2e735b2a3</code> · <a href="source-messages.md#message-0ea4717fbae34248016aee8415eedc87d0abe1f3d2e735b2a3">原始回复</a></p><pre>flowchart TD
+    A[你发起任务] --&gt; B[系统推进：准备 → 生成 → 评测]
+    B --&gt;|顺利完成| C[交付评测报告]
+    B --&gt;|出现不确定或阻塞| D[内置 AI 查证并调用工具处理]
+    D --&gt; E{是否能够继续}
+    E --&gt;|能够继续| F[从对应阶段恢复]
+    F --&gt; B
+    E --&gt;|明确不能继续| G[中断并通知你：原因与下一步]
+</pre></details>
+</article>
+<article id="diagram-23" data-search="异常恢复、预算停止与报告交付 flowchart TD
+    A[准备 → 生成 → 评测] --&gt; B[报告与证据]
+    A --&gt;|异常或停顿| C[内置 AI 查证并处理]
+    C --&gt;|重试 / 继续 / 回答 / 交接| A
+    C --&gt;|无法继续或预算耗尽| D[中断原因、下一步与通知]
+ ">
+<header><div><span class="number">23</span><h2>异常恢复、预算停止与报告交付</h2></div><div class="actions"><button type="button" data-open="23">放大</button><a href="svg/23.svg" download>SVG</a><a href="png/23.png" download>PNG</a><a href="mermaid/23.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="23" aria-label="放大：异常恢复、预算停止与报告交付"><img loading="lazy" src="svg/23.svg" alt="异常恢复、预算停止与报告交付"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_096d87c3fae9720a016aee8d2e5f1887d09dc5873057d85215</code> · <a href="source-messages.md#message-096d87c3fae9720a016aee8d2e5f1887d09dc5873057d85215">原始回复</a></p><pre>flowchart TD
+    A[准备 → 生成 → 评测] --&gt; B[报告与证据]
+    A --&gt;|异常或停顿| C[内置 AI 查证并处理]
+    C --&gt;|重试 / 继续 / 回答 / 交接| A
+    C --&gt;|无法继续或预算耗尽| D[中断原因、下一步与通知]
+</pre></details>
+</article>
+<article id="diagram-24" data-search="按连接选择跨环境迁移与交付核验 flowchart TD
+    A[选择 Kooboo 连接] --&gt; B[生成 → 完整评测]
+    B --&gt; C{是否需要迁移交付}
+    C --&gt;|Local 无交付| D[报告完成]
+    C --&gt;|香港连接 需要交付| E[迁移德国 → 交付核验]
+    E --&gt; D
+ ">
+<header><div><span class="number">24</span><h2>按连接选择跨环境迁移与交付核验</h2></div><div class="actions"><button type="button" data-open="24">放大</button><a href="svg/24.svg" download>SVG</a><a href="png/24.png" download>PNG</a><a href="mermaid/24.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="24" aria-label="放大：按连接选择跨环境迁移与交付核验"><img loading="lazy" src="svg/24.svg" alt="按连接选择跨环境迁移与交付核验"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_084a5bc7650ffc0e016aee900437f887d0940022f5ee8ea7a6</code> · <a href="source-messages.md#message-084a5bc7650ffc0e016aee900437f887d0940022f5ee8ea7a6">原始回复</a></p><pre>flowchart TD
+    A[选择 Kooboo 连接] --&gt; B[生成 → 完整评测]
+    B --&gt; C{是否需要迁移交付}
+    C --&gt;|Local 无交付| D[报告完成]
+    C --&gt;|香港连接 需要交付| E[迁移德国 → 交付核验]
+    E --&gt; D
+</pre></details>
+</article>
+<article id="diagram-25" data-search="按独立报告自动修复与提分 flowchart TD
+    A[生成站点] --&gt; B[独立评测]
+    B --&gt; C{任务目标}
+    C --&gt;|生成并评测| D[交付报告]
+    C --&gt;|自动优化| E{达到质量目标？}
+    E --&gt;|达到| D
+    E --&gt;|未达到| F[跟进 AI 查看报告与截图]
+    F --&gt; G[Kooboo AI 在原站修复]
+    G --&gt; B
+    F --&gt;|预算耗尽或无法继续| H[保留成果并说明停止原因]
+ ">
+<header><div><span class="number">25</span><h2>按独立报告自动修复与提分</h2></div><div class="actions"><button type="button" data-open="25">放大</button><a href="svg/25.svg" download>SVG</a><a href="png/25.png" download>PNG</a><a href="mermaid/25.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="25" aria-label="放大：按独立报告自动修复与提分"><img loading="lazy" src="svg/25.svg" alt="按独立报告自动修复与提分"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_025d59537abc1714016aeed61b661887d0b1e2c9d96f51bbb3</code> · <a href="source-messages.md#message-025d59537abc1714016aeed61b661887d0b1e2c9d96f51bbb3">原始回复</a></p><pre>flowchart TD
+    A[生成站点] --&gt; B[独立评测]
+    B --&gt; C{任务目标}
+    C --&gt;|生成并评测| D[交付报告]
+    C --&gt;|自动优化| E{达到质量目标？}
+    E --&gt;|达到| D
+    E --&gt;|未达到| F[跟进 AI 查看报告与截图]
+    F --&gt; G[Kooboo AI 在原站修复]
+    G --&gt; B
+    F --&gt;|预算耗尽或无法继续| H[保留成果并说明停止原因]
+</pre></details>
+</article>
+<article id="diagram-26" data-search="具体修复委托、重新取证与回归检查 flowchart LR
+    A[报告与截图] --&gt; B[跟进 AI 选择本轮重点]
+    B --&gt; C[组织修复委托]
+    C --&gt; D[Kooboo 原站修复]
+    D --&gt; E[重新取证与独立复评]
+    E --&gt; F[核对改善与回归]
+ ">
+<header><div><span class="number">26</span><h2>具体修复委托、重新取证与回归检查</h2></div><div class="actions"><button type="button" data-open="26">放大</button><a href="svg/26.svg" download>SVG</a><a href="png/26.png" download>PNG</a><a href="mermaid/26.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="26" aria-label="放大：具体修复委托、重新取证与回归检查"><img loading="lazy" src="svg/26.svg" alt="具体修复委托、重新取证与回归检查"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_025d59537abc1714016aeed700937087d097443e9fc264c983</code> · <a href="source-messages.md#message-025d59537abc1714016aeed700937087d097443e9fc264c983">原始回复</a></p><pre>flowchart LR
+    A[报告与截图] --&gt; B[跟进 AI 选择本轮重点]
+    B --&gt; C[组织修复委托]
+    C --&gt; D[Kooboo 原站修复]
+    D --&gt; E[重新取证与独立复评]
+    E --&gt; F[核对改善与回归]
+</pre></details>
+</article>
+<article id="diagram-27" data-search="自动优化轮数与停止条件 flowchart TD
+    A[取得有效评测报告] --&gt; B{达到质量目标？}
+    B --&gt;|是| C[完成：目标达成]
+    B --&gt;|否| D{轮数、费用及改善情况允许继续？}
+    D --&gt;|是| E[委托修复 → 独立复评]
+    E --&gt; A
+    D --&gt;|否| F[停止：保留结果并说明原因和下一步]
+ ">
+<header><div><span class="number">27</span><h2>自动优化轮数与停止条件</h2></div><div class="actions"><button type="button" data-open="27">放大</button><a href="svg/27.svg" download>SVG</a><a href="png/27.png" download>PNG</a><a href="mermaid/27.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="27" aria-label="放大：自动优化轮数与停止条件"><img loading="lazy" src="svg/27.svg" alt="自动优化轮数与停止条件"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_02e58a7082d6478b016aeeda40b5a887d0baab220b00f0a3e4</code> · <a href="source-messages.md#message-02e58a7082d6478b016aeeda40b5a887d0baab220b00f0a3e4">原始回复</a></p><pre>flowchart TD
+    A[取得有效评测报告] --&gt; B{达到质量目标？}
+    B --&gt;|是| C[完成：目标达成]
+    B --&gt;|否| D{轮数、费用及改善情况允许继续？}
+    D --&gt;|是| E[委托修复 → 独立复评]
+    E --&gt; A
+    D --&gt;|否| F[停止：保留结果并说明原因和下一步]
+</pre></details>
+</article>
+<article id="diagram-28" data-search="早期外部 Admin 轮次 API 提案 flowchart LR
+    A[外部 Admin] --&gt; B[流程摘要：进度、目标、当前结果、费用、停止原因]
+    B --&gt; C[分页读取各轮记录]
+    C --&gt; D[独立报告与证据]
+ 历史 API 提案；后续用户将对外范围收敛为当前版本最终结果，不再要求对外分页读取完整轮次。">
+<header><div><span class="number">28</span><h2>早期外部 Admin 轮次 API 提案</h2></div><div class="actions"><button type="button" data-open="28">放大</button><a href="svg/28.svg" download>SVG</a><a href="png/28.png" download>PNG</a><a href="mermaid/28.mmd" download>源码</a></div></header>
+<p class="note">历史 API 提案；后续用户将对外范围收敛为当前版本最终结果，不再要求对外分页读取完整轮次。</p>
+<button type="button" class="diagram" data-open="28" aria-label="放大：早期外部 Admin 轮次 API 提案"><img loading="lazy" src="svg/28.svg" alt="早期外部 Admin 轮次 API 提案"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_02e58a7082d6478b016aeedae4f96c87d0b8be9f95ca27443d</code> · <a href="source-messages.md#message-02e58a7082d6478b016aeedae4f96c87d0b8be9f95ca27443d">原始回复</a></p><pre>flowchart LR
+    A[外部 Admin] --&gt; B[流程摘要：进度、目标、当前结果、费用、停止原因]
+    B --&gt; C[分页读取各轮记录]
+    C --&gt; D[独立报告与证据]
+</pre></details>
+</article>
+<article id="diagram-29" data-search="修复与复评串行及报告适用性 flowchart LR
+    A[修复中] --&gt; B[修复完成]
+    B --&gt; C[独立复评]
+    C --&gt; D[当前版本分数与证据]
+    A --&gt;|中断| E[恢复修复或明确停止]
+    C --&gt;|中断| F[恢复复评]
+ ">
+<header><div><span class="number">29</span><h2>修复与复评串行及报告适用性</h2></div><div class="actions"><button type="button" data-open="29">放大</button><a href="svg/29.svg" download>SVG</a><a href="png/29.png" download>PNG</a><a href="mermaid/29.mmd" download>源码</a></div></header>
+
+<button type="button" class="diagram" data-open="29" aria-label="放大：修复与复评串行及报告适用性"><img loading="lazy" src="svg/29.svg" alt="修复与复评串行及报告适用性"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_02e58a7082d6478b016aeee2d2913887d0b358273b0bf5b4a4</code> · <a href="source-messages.md#message-02e58a7082d6478b016aeee2d2913887d0b358273b0bf5b4a4">原始回复</a></p><pre>flowchart LR
+    A[修复中] --&gt; B[修复完成]
+    B --&gt; C[独立复评]
+    C --&gt; D[当前版本分数与证据]
+    A --&gt;|中断| E[恢复修复或明确停止]
+    C --&gt;|中断| F[恢复复评]
+</pre></details>
+</article>
+<article id="diagram-30" data-search="首页完成后补齐全站 flowchart LR
+ A[现有首页] --&gt; B[同一站点继续生成]
+ B --&gt; C[补齐内页、导航和交互]
+ C --&gt; D[全站独立评测]
+ D --&gt; E[按需继续优化]
+ 表示目标续建流程；当时全站完整度验收仍待真实验证。">
+<header><div><span class="number">30</span><h2>首页完成后补齐全站</h2></div><div class="actions"><button type="button" data-open="30">放大</button><a href="svg/30.svg" download>SVG</a><a href="png/30.png" download>PNG</a><a href="mermaid/30.mmd" download>源码</a></div></header>
+<p class="note">表示目标续建流程；当时全站完整度验收仍待真实验证。</p>
+<button type="button" class="diagram" data-open="30" aria-label="放大：首页完成后补齐全站"><img loading="lazy" src="svg/30.svg" alt="首页完成后补齐全站"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0ae283427fb0864b016aef00b6a3b887d091f701db0c7e4760</code> · <a href="source-messages.md#message-0ae283427fb0864b016aef00b6a3b887d091f701db0c7e4760">原始回复</a></p><pre>flowchart LR
+ A[现有首页] --&gt; B[同一站点继续生成]
+ B --&gt; C[补齐内页、导航和交互]
+ C --&gt; D[全站独立评测]
+ D --&gt; E[按需继续优化]
+</pre></details>
+</article>
+<article id="diagram-31" data-search="其余四类场景的建议验收顺序 flowchart LR
+ A[资料建站] --&gt; B[站点迁移]
+ B --&gt; C[旧站升级]
+ C --&gt; D[AI App 模板]
+ 当时建议顺序；后续新增经验沉淀与预算保护作为优先议题。">
+<header><div><span class="number">31</span><h2>其余四类场景的建议验收顺序</h2></div><div class="actions"><button type="button" data-open="31">放大</button><a href="svg/31.svg" download>SVG</a><a href="png/31.png" download>PNG</a><a href="mermaid/31.mmd" download>源码</a></div></header>
+<p class="note">当时建议顺序；后续新增经验沉淀与预算保护作为优先议题。</p>
+<button type="button" class="diagram" data-open="31" aria-label="放大：其余四类场景的建议验收顺序"><img loading="lazy" src="svg/31.svg" alt="其余四类场景的建议验收顺序"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0ae283427fb0864b016aef05e10ae087d09f102c71764463dd</code> · <a href="source-messages.md#message-0ae283427fb0864b016aef05e10ae087d09f102c71764463dd">原始回复</a></p><pre>flowchart LR
+ A[资料建站] --&gt; B[站点迁移]
+ B --&gt; C[旧站升级]
+ C --&gt; D[AI App 模板]
+</pre></details>
+</article>
+<article id="diagram-32" data-search="跨任务经验沉淀与反馈闭环 flowchart LR
+ A[生成与跟进] --&gt; B[独立评测或明确中断]
+ B --&gt; C[结合证据复盘]
+ C --&gt; D[提炼候选经验]
+ D --&gt; E[后续案例验证]
+ E --&gt; F[按适用条件采用]
+ F --&gt; A
+ E --&gt; G[修订或停用]
+ 经验闭环为讨论方案；后续确认默认由本地 AI 决策与执行。">
+<header><div><span class="number">32</span><h2>跨任务经验沉淀与反馈闭环</h2></div><div class="actions"><button type="button" data-open="32">放大</button><a href="svg/32.svg" download>SVG</a><a href="png/32.png" download>PNG</a><a href="mermaid/32.mmd" download>源码</a></div></header>
+<p class="note">经验闭环为讨论方案；后续确认默认由本地 AI 决策与执行。</p>
+<button type="button" class="diagram" data-open="32" aria-label="放大：跨任务经验沉淀与反馈闭环"><img loading="lazy" src="svg/32.svg" alt="跨任务经验沉淀与反馈闭环"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0ae283427fb0864b016aef072252f487d0bc7719991f924a4c</code> · <a href="source-messages.md#message-0ae283427fb0864b016aef072252f487d0bc7719991f924a4c">原始回复</a></p><pre>flowchart LR
+ A[生成与跟进] --&gt; B[独立评测或明确中断]
+ B --&gt; C[结合证据复盘]
+ C --&gt; D[提炼候选经验]
+ D --&gt; E[后续案例验证]
+ E --&gt; F[按适用条件采用]
+ F --&gt; A
+ E --&gt; G[修订或停用]
+</pre></details>
+</article>
+<article id="diagram-33" data-search="本地 AI 自动选择、复盘与维护经验 flowchart TD
+ A[即将执行某个阶段] --&gt; B[本地 AI 选择适用经验]
+ B --&gt; C[生成 / 跟进 / 独立评测]
+ C --&gt; D[本地 AI 根据结果复盘]
+ D --&gt; E[新增、合并、修订或停用经验]
+ E --&gt; F[经验库]
+ F --&gt; B
+ H[人工查看与调整] &lt;--&gt; F
+ 已确认的产品方向，图本身不证明对应运行机制已实施。">
+<header><div><span class="number">33</span><h2>本地 AI 自动选择、复盘与维护经验</h2></div><div class="actions"><button type="button" data-open="33">放大</button><a href="svg/33.svg" download>SVG</a><a href="png/33.png" download>PNG</a><a href="mermaid/33.mmd" download>源码</a></div></header>
+<p class="note">已确认的产品方向，图本身不证明对应运行机制已实施。</p>
+<button type="button" class="diagram" data-open="33" aria-label="放大：本地 AI 自动选择、复盘与维护经验"><img loading="lazy" src="svg/33.svg" alt="本地 AI 自动选择、复盘与维护经验"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0ae283427fb0864b016aef0833195887d0bf28046c9821865e</code> · <a href="source-messages.md#message-0ae283427fb0864b016aef0833195887d0bf28046c9821865e">原始回复</a></p><pre>flowchart TD
+ A[即将执行某个阶段] --&gt; B[本地 AI 选择适用经验]
+ B --&gt; C[生成 / 跟进 / 独立评测]
+ C --&gt; D[本地 AI 根据结果复盘]
+ D --&gt; E[新增、合并、修订或停用经验]
+ E --&gt; F[经验库]
+ F --&gt; B
+ H[人工查看与调整] &lt;--&gt; F
+</pre></details>
+</article>
+<article id="diagram-34" data-search="经验试用、效果验证与修订停用 flowchart LR
+ A[提炼经验] --&gt; B[AI 判断适用并试用]
+ B --&gt; C[检查实际执行与独立结果]
+ C --&gt; D[补充支持证据]
+ C --&gt; E[收窄条件、修订或停用]
+ D --&gt; B
+ E --&gt; B
+ 经验条目与效果判定的首版讨论提案。">
+<header><div><span class="number">34</span><h2>经验试用、效果验证与修订停用</h2></div><div class="actions"><button type="button" data-open="34">放大</button><a href="svg/34.svg" download>SVG</a><a href="png/34.png" download>PNG</a><a href="mermaid/34.mmd" download>源码</a></div></header>
+<p class="note">经验条目与效果判定的首版讨论提案。</p>
+<button type="button" class="diagram" data-open="34" aria-label="放大：经验试用、效果验证与修订停用"><img loading="lazy" src="svg/34.svg" alt="经验试用、效果验证与修订停用"></button>
+<details><summary>查看 Mermaid 源码与来源</summary><p>来源消息 <code>msg_0ae283427fb0864b016aef08b102ec87d08f448e3ee829931c</code> · <a href="source-messages.md#message-0ae283427fb0864b016aef08b102ec87d08f448e3ee829931c">原始回复</a></p><pre>flowchart LR
+ A[提炼经验] --&gt; B[AI 判断适用并试用]
+ B --&gt; C[检查实际执行与独立结果]
+ C --&gt; D[补充支持证据]
+ C --&gt; E[收窄条件、修订或停用]
+ D --&gt; B
+ E --&gt; B
+</pre></details>
+</article></main>
+<dialog id="viewer" aria-labelledby="viewer-title"><div class="viewer-head"><h2 id="viewer-title"></h2><div class="viewer-controls"><label>缩放 <input id="zoom" type="range" min="25" max="250" value="100" step="5"></label><span id="zoom-value">100%</span><button id="fit" type="button">适合窗口</button><a id="viewer-svg" download>下载 SVG</a><a id="viewer-png" download>下载 PNG</a><button id="close" type="button">关闭</button></div></div><div class="viewer-body"><img id="viewer-image" alt=""></div></dialog>
+<script>
+const charts=[{"file":"01","title":"初始架构：Admin、插件、评分平台与评测执行器"},{"file":"02","title":"资源包驱动的统一自动化流程"},{"file":"03","title":"内容、视觉与业务评测依据"},{"file":"04","title":"空白站点起步与三类克隆路径"},{"file":"05","title":"内部录入、外部导入与资源基线"},{"file":"06","title":"资源基线、输入版本与多个生成站"},{"file":"07","title":"生成执行模块的职责与人工接管"},{"file":"08","title":"早期生成方案分层提案"},{"file":"09","title":"首页样稿、成单与内页续建"},{"file":"10","title":"并发队列与早期外部 AI 跟进方案"},{"file":"11","title":"评分平台、评测 Skill 与本地 AI"},{"file":"12","title":"Site UI 还原度评测 SOP"},{"file":"13","title":"按 Banner 设计意图进行双端评测"},{"file":"14","title":"全站完整度清单与逐项核验"},{"file":"15","title":"SEO 迁移与旧 URL 承接"},{"file":"16","title":"AI App 用户目标、体验与业务评测"},{"file":"17","title":"评测 Skill 发布与版本快照"},{"file":"18","title":"报告、问题跟进、修复与复评"},{"file":"19","title":"Site 模板生成到独立评测"},{"file":"20","title":"生成状态识别与自动交接评测"},{"file":"21","title":"平台内置流程跟进 Agent"},{"file":"22","title":"一次发起后的自主推进与明确中断"},{"file":"23","title":"异常恢复、预算停止与报告交付"},{"file":"24","title":"按连接选择跨环境迁移与交付核验"},{"file":"25","title":"按独立报告自动修复与提分"},{"file":"26","title":"具体修复委托、重新取证与回归检查"},{"file":"27","title":"自动优化轮数与停止条件"},{"file":"28","title":"早期外部 Admin 轮次 API 提案"},{"file":"29","title":"修复与复评串行及报告适用性"},{"file":"30","title":"首页完成后补齐全站"},{"file":"31","title":"其余四类场景的建议验收顺序"},{"file":"32","title":"跨任务经验沉淀与反馈闭环"},{"file":"33","title":"本地 AI 自动选择、复盘与维护经验"},{"file":"34","title":"经验试用、效果验证与修订停用"}];
+const viewer=document.getElementById('viewer'),image=document.getElementById('viewer-image'),zoom=document.getElementById('zoom');
+let naturalWidth=0,trigger=null;
+function setZoom(value){zoom.value=String(value);document.getElementById('zoom-value').textContent=value+'%';image.style.width=Math.round(naturalWidth*value/100)+'px';}
+function fit(){const available=viewer.querySelector('.viewer-body').clientWidth-56;setZoom(Math.max(25,Math.min(100,Math.floor(available/naturalWidth*100/5)*5)));}
+document.querySelectorAll('[data-open]').forEach(button=>button.addEventListener('click',()=>{const chart=charts.find(c=>c.file===button.dataset.open);trigger=button;document.getElementById('viewer-title').textContent=chart.file+' · '+chart.title;document.getElementById('viewer-svg').href='svg/'+chart.file+'.svg';document.getElementById('viewer-png').href='png/'+chart.file+'.png';image.alt=chart.title;image.onload=()=>{naturalWidth=image.naturalWidth;fit();};image.src='svg/'+chart.file+'.svg';viewer.showModal();document.getElementById('close').focus();}));
+zoom.addEventListener('input',()=>setZoom(Number(zoom.value)));document.getElementById('fit').addEventListener('click',fit);document.getElementById('close').addEventListener('click',()=>viewer.close());viewer.addEventListener('close',()=>{image.removeAttribute('src');trigger?.focus();});
+document.getElementById('search').addEventListener('input',event=>{const query=event.target.value.trim().toLowerCase();let visible=0;document.querySelectorAll('article[data-search]').forEach(article=>{const show=article.dataset.search.toLowerCase().includes(query);article.hidden=!show;document.querySelector('[data-nav="'+article.id.slice(8)+'"]').hidden=!show;if(show)visible++;});document.getElementById('count').textContent=query?'找到 '+visible+' / 34 张':'共 34 张 · 2026-11-07 归档';document.getElementById('empty').hidden=visible>0;});
+</script></body></html>

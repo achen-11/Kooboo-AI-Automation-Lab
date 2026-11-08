@@ -1,0 +1,65 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 582.5999999999999 772.8" width="583" height="773" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="583" height="773" fill="#181818"/>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 264.6400146484375 96.80000305175781 L 264.6400146484375 160.8000030517578" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 225.90933227539062 225.60000610351562 L 225.90933227539062 269.6000061035156 Q 225.90933227539062 277.6000061035156 217.90933227539062 277.6000061035156 L 189.75999450683594 277.6000061035156 Q 183.75999450683594 277.6000061035156 183.75999450683594 283.6000061035156 L 183.75999450683594 289.6000061035156" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 183.75999450683594 354.3999938964844 L 183.75999450683594 418.3999938964844" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 183.75999450683594 483.20001220703125 L 183.75999450683594 547.2000122070312" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 183.75999450683594 612 L 183.75999450683594 656 Q 183.75999450683594 664 191.75999450683594 664 L 309.239990234375 664 Q 315.239990234375 664 315.239990234375 670 L 315.239990234375 676" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 345.5199890136719 676 L 345.5199890136719 285.6000061035156 Q 345.5199890136719 277.6000061035156 337.5199890136719 277.6000061035156 L 311.37066650390625 277.6000061035156 Q 303.37066650390625 277.6000061035156 303.37066650390625 269.6000061035156 L 303.37066650390625 225.60000610351562" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="H" data-to="F" data-style="solid" data-arrow-start="true" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" marker-start="url(#arrowhead-start)" d="M 453.55999755859375 612 L 453.55999755859375 656 Q 453.55999755859375 664 445.55999755859375 664 L 381.79998779296875 664 Q 375.79998779296875 664 375.79998779296875 670 L 375.79998779296875 676" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="node" data-id="A" data-label="即将执行某个阶段" data-shape="rectangle">
+  <rect x="158.48" y="32" width="212.32" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="264.64" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">即将执行某个阶段</text>
+</g>
+<g class="node" data-id="B" data-label="本地 AI 选择适用经验" data-shape="rectangle">
+  <rect x="148.44799999999998" y="160.8" width="232.384" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="264.64" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">本地 AI 选择适用经验</text>
+</g>
+<g class="node" data-id="C" data-label="生成 / 跟进 / 独立评测" data-shape="rectangle">
+  <rect x="67.56799999999998" y="289.6" width="232.38400000000001" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="183.76" y="322" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">生成 / 跟进 / 独立评测</text>
+</g>
+<g class="node" data-id="D" data-label="本地 AI 根据结果复盘" data-shape="rectangle">
+  <rect x="67.56799999999998" y="418.40000000000003" width="232.384" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="183.76" y="450.8" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">本地 AI 根据结果复盘</text>
+</g>
+<g class="node" data-id="E" data-label="新增、合并、修订或停用经验" data-shape="rectangle">
+  <rect x="32" y="547.2" width="303.52" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="183.76" y="579.6" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">新增、合并、修订或停用经验</text>
+</g>
+<g class="node" data-id="F" data-label="经验库" data-shape="rectangle">
+  <rect x="284.96" y="676" width="121.12" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="345.52" y="708.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">经验库</text>
+</g>
+<g class="node" data-id="H" data-label="人工查看与调整" data-shape="rectangle">
+  <rect x="356.52" y="547.2" width="194.07999999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="453.55999999999995" y="579.6" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">人工查看与调整</text>
+</g>
+</svg>

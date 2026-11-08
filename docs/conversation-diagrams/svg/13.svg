@@ -1,0 +1,60 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 566.2080000000001 685.6" width="567" height="686" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="567" height="686" fill="#181818"/>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 280.1400146484375 96.80000305175781 L 280.1400146484375 160.8000030517578" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 213.5933380126953 246.39999389648438 L 213.5933380126953 290.3999938964844 Q 213.5933380126953 298.3999938964844 205.5933380126953 298.3999938964844 L 150.08799743652344 298.3999938964844 Q 144.08799743652344 298.3999938964844 144.08799743652344 304.3999938964844 L 144.08799743652344 310.3999938964844" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 346.6866760253906 246.39999389648438 L 346.6866760253906 290.3999938964844 Q 346.6866760253906 298.3999938964844 354.6866760253906 298.3999938964844 L 410.1919860839844 298.3999938964844 Q 416.1919860839844 298.3999938964844 416.1919860839844 304.3999938964844 L 416.1919860839844 310.3999938964844" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 144.08799743652344 375.20001220703125 L 144.08799743652344 419.20001220703125 Q 144.08799743652344 427.20001220703125 152.08799743652344 427.20001220703125 L 220.51333618164062 427.20001220703125 Q 226.51333618164062 427.20001220703125 226.51333618164062 433.20001220703125 L 226.51333618164062 439.20001220703125" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 416.1919860839844 375.20001220703125 L 416.1919860839844 419.20001220703125 Q 416.1919860839844 427.20001220703125 408.1919860839844 427.20001220703125 L 339.76666259765625 427.20001220703125 Q 333.76666259765625 427.20001220703125 333.76666259765625 433.20001220703125 L 333.76666259765625 439.20001220703125" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 280.1400146484375 504 L 280.1400146484375 568" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="node" data-id="A" data-label="理解参考页面" data-shape="rectangle">
+  <rect x="192.22000000000003" y="32" width="175.84" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="280.14000000000004" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">理解参考页面</text>
+</g>
+<g class="node" data-id="B" data-label="拆解结构&#10;Header → Hero → 内容 Banner → Price → Footer" data-shape="rectangle">
+  <rect x="80.50000000000006" y="160.8" width="399.28" height="85.6" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="280.14000000000004" y="203.60000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)"><tspan x="280.14000000000004" dy="-4.800000000000001">拆解结构</tspan><tspan x="280.14000000000004" dy="20.8">Header → Hero → 内容 Banner → Price → Footer</tspan></text>
+</g>
+<g class="node" data-id="C" data-label="PC 端逐 Banner 对照" data-shape="rectangle">
+  <rect x="32.000000000000014" y="310.4" width="224.176" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="144.08800000000002" y="342.79999999999995" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">PC 端逐 Banner 对照</text>
+</g>
+<g class="node" data-id="D" data-label="移动端逐 Banner 对照" data-shape="rectangle">
+  <rect x="298.17600000000004" y="310.4" width="236.032" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="416.19200000000006" y="342.79999999999995" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">移动端逐 Banner 对照</text>
+</g>
+<g class="node" data-id="E" data-label="设计意图、视觉表达、动态交互" data-shape="rectangle">
+  <rect x="119.26000000000002" y="439.2" width="321.76" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="280.14" y="471.59999999999997" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">设计意图、视觉表达、动态交互</text>
+</g>
+<g class="node" data-id="F" data-label="两端分别形成结果&#10;首页 Hero 提高权重" data-shape="rectangle">
+  <rect x="171.244" y="568" width="217.792" height="85.6" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="280.14" y="610.8" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)"><tspan x="280.14" dy="-4.800000000000001">两端分别形成结果</tspan><tspan x="280.14" dy="20.8">首页 Hero 提高权重</tspan></text>
+</g>
+</svg>

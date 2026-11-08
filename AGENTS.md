@@ -1,16 +1,17 @@
-# Project instructions
+# 项目协作约定
 
-- This directory is the active Kooboo AI Automation Lab: Vue frontend plus an independent Node.js API and background workers. Maintain the unified automation platform here. The sibling `../site_evaluator_impl` is the original independent evaluator; do not modify it for Automation Lab features. The older `../ai_site_evaluator` is historical reference.
-- Read `README.md` and `.kooboo-ai/specs/frontend.md` before changing runtime, deployment, or resource layout.
-- Maintain active server code directly in `server/`, shared contracts in `shared/`, focused tests in `tests-node/`, and evaluation SOP documents in `sop/`. The legacy evaluator retains its configurable OpenAI-compatible executor. The unified automation module uses the user-approved Codex SDK with configurable Responses base URL, model, and encrypted API key; default model is deepseek-flash-1017. Never modify global Codex configuration.
-- The former Kooboo runtime resources under `src/api/`, `src/code/`, and `src/job/`, native binding types, and obsolete site publishing scripts have been removed. Consult Git history for the old implementation. Do not restore Kooboo runtime resources or use `kb push` as the deployment path.
-- Keep runtime data, API keys, environment tokens, `.env`, `.data/`, vault keys, and generated `kooboo.d.ts` out of Git and logs. Preserve the existing local `.data/` and its master key when copying source from a temporary workspace.
-- Local configuration is encrypted inside `.data/`; backups must include both data and its master key. Do not overwrite existing runtime configuration or regenerate its key during build.
-- The frontend establishes its local HttpOnly session automatically; do not add a manual entry or login screen for this local-only workspace. The default service binds to `127.0.0.1:4180`; production network deployment and user authentication require a separate design.
-- Preserve stage checkpoints, source-run evidence references, versioned rules/SOP snapshots, and Admin integration contracts. Model image capability must be tested with actual image input, not a text-only connectivity check.
-- Validate changes with focused tests, type checks, and build as appropriate. Do not claim real model, browser, remote, or visual acceptance from mocked tests. Browser control requires explicit user permission.
+- 当前目录是正在维护的 Kooboo AI Automation Lab，由 Vue 前端、独立 Node.js API 和后台 Worker 组成。统一自动化平台的功能在此维护。同级目录 `../site_evaluator_impl` 是原独立评测平台，不要为 Automation Lab 的功能修改它；更早的 `../ai_site_evaluator` 仅供历史参考。
+- 修改运行方式、部署方式或资源目录结构前，先阅读 `README.md` 和 `.kooboo-ai/specs/frontend.md`。
+- 服务端代码直接维护在 `server/`，共享接口与数据约定放在 `shared/`，针对性测试放在 `tests-node/`，评测 SOP 文档放在 `sop/`。旧评测模块保留可配置的 OpenAI 兼容执行器；统一自动化模块使用用户已确认的 Codex SDK，支持配置 Responses 接口基础地址、模型和加密保存的 API Key，默认模型为 `deepseek-flash-1017`。禁止修改全局 Codex 配置。
+- 原有 `src/api/`、`src/code/`、`src/job/` 下的 Kooboo 运行资源、原生绑定类型和过时的站点发布脚本均已移除。旧实现请查阅 Git 历史，不要恢复这些资源，也不要使用 `kb push` 部署。
+- 运行数据、API Key、环境令牌、`.env`、`.data/`、密钥库密钥及生成的 `kooboo.d.ts` 不得进入 Git 或日志。从临时工作区复制源码时，必须保留本地已有的 `.data/` 及其主密钥。
+- 本地配置加密保存在 `.data/` 中；备份必须同时包含数据和主密钥。构建时不得覆盖已有运行配置或重新生成密钥。
+- 前端自动建立本地 HttpOnly 会话，不要为这个仅供本机使用的工作区增加手动进入页或登录页。服务默认绑定 `127.0.0.1:4180`；生产网络部署和用户身份认证需要另行设计。
+- 保留阶段检查点、证据所属来源轮次的引用、带版本的规则与 SOP 快照，以及 Admin 集成约定。验证模型识图能力时，必须输入真实图片，不能用纯文本连通性测试代替。
+- 根据改动范围执行针对性测试、类型检查和构建。模拟测试通过不代表完成真实模型、浏览器、远端或视觉验收。控制浏览器必须取得用户明确许可。
 
-- The unified platform source is `frontend/src/views/automation/`, `server/automation/`, and `shared/automation.ts`. Preserve legacy reports and APIs. New automation runs are paused by default until enabled in settings.
-- Keep input versions, published rule snapshots, site identities, cancellation confirmation, pending context, and automatic generation-to-evaluation handoff durable. Do not redeliver uncertain generation after restart. New-site and continuation flows must remain distinct.
+- 统一平台的源码位于 `frontend/src/views/automation/`、`server/automation/` 和 `shared/automation.ts`。保留旧报告及 API。新的自动化运行默认暂停，需在设置中启用。
+- 输入版本、已发布规则快照、站点身份、取消确认、待处理上下文及生成到评测的自动交接都必须持久化。重启后不得重复投递执行结果不确定的生成请求。新建站点与继续生成的流程必须保持区分。
 
-- Show transient operation feedback (save, copy, import, publish) through the shared floating MessageHost / notify helper. Keep persistent connection failures and contextual validation errors near their controls.
+- 保存、复制、导入、发布等短暂操作反馈统一使用浮动 `MessageHost` / `notify`。持续性连接失败和与当前输入相关的校验错误，应显示在对应控件附近。
+- 本项目对话中产生的 Mermaid 图表归档到 `docs/conversation-diagrams/`：保留原始 `.mmd` 源码，并在归档索引中更新日期与讨论上下文。明确区分仅保存源码和已导出 SVG/PNG 的图表，不得编造来源消息 ID。

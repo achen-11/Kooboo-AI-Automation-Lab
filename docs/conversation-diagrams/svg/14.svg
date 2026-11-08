@@ -1,0 +1,59 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1894.1279999999997 128.8" width="1895" height="129" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="1895" height="129" fill="#181818"/>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 317.2799987792969 64.4000015258789 L 381.2799987792969 64.4000015258789" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 592.68798828125 64.4000015258789 L 656.68798828125 64.4000015258789" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 869.0079956054688 64.4000015258789 L 933.0079956054688 64.4000015258789" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 1254.7679443359375 64.4000015258789 L 1318.7679443359375 64.4000015258789" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 1512.8480224609375 64.4000015258789 L 1576.8480224609375 64.4000015258789" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="node" data-id="A" data-label="内容站＋资料包＋任务要求" data-shape="rectangle">
+  <rect x="32" y="32" width="285.28" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="174.64" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">内容站＋资料包＋任务要求</text>
+</g>
+<g class="node" data-id="B" data-label="AI 整理应交付清单" data-shape="rectangle">
+  <rect x="381.28" y="32" width="211.408" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="486.984" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">AI 整理应交付清单</text>
+</g>
+<g class="node" data-id="C" data-label="限定本次评测范围" data-shape="rectangle">
+  <rect x="656.688" y="32" width="212.32" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="762.848" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">限定本次评测范围</text>
+</g>
+<g class="node" data-id="D" data-label="对应生成站的页面、内容与功能" data-shape="rectangle">
+  <rect x="933.0079999999999" y="32" width="321.76" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="1093.888" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">对应生成站的页面、内容与功能</text>
+</g>
+<g class="node" data-id="E" data-label="逐项核验并留证" data-shape="rectangle">
+  <rect x="1318.768" y="32" width="194.07999999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="1415.808" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">逐项核验并留证</text>
+</g>
+<g class="node" data-id="F" data-label="完成情况、遗漏、未验证项" data-shape="rectangle">
+  <rect x="1576.848" y="32" width="285.28" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="1719.4879999999998" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">完成情况、遗漏、未验证项</text>
+</g>
+</svg>

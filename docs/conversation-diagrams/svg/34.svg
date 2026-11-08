@@ -1,0 +1,56 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 846.288 353.43999999999994" width="847" height="354" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="847" height="354" fill="#181818"/>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 538.8800048828125 75.44000244140625 L 570.8800048828125 75.44000244140625 Q 578.8800048828125 75.44000244140625 578.8800048828125 83.44000244140625 L 578.8800048828125 115.9800033569336 Q 578.8800048828125 123.9800033569336 586.8800048828125 123.9800033569336 L 602.8800048828125 123.9800033569336" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 602.8800048828125 111.0199966430664 L 596.8800048828125 111.0199966430664 Q 590.8800048828125 111.0199966430664 590.8800048828125 105.0199966430664 L 590.8800048828125 40.040000915527344 Q 590.8800048828125 32.040000915527344 582.8800048828125 32.040000915527344 L 359.0400085449219 32.040000915527344 Q 351.0400085449219 32.040000915527344 351.0400085449219 40.040000915527344 L 351.0400085449219 158.0399932861328 Q 351.0400085449219 166.0399932861328 343.0400085449219 166.0399932861328 L 299.0400085449219 166.0399932861328" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 299.0400085449219 182.24000549316406 L 363.0400085449219 182.24000549316406" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 299.0400085449219 198.44000244140625 L 310.0799865722656 198.44000244140625 Q 318.0799865722656 198.44000244140625 318.0799865722656 206.44000244140625 L 318.0799865722656 283.0400085449219 Q 318.0799865722656 289.0400085449219 324.0799865722656 289.0400085449219 L 330.0799865722656 289.0400085449219" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 538.8800048828125 182.24000549316406 L 570.8800048828125 182.24000549316406 Q 578.8800048828125 182.24000549316406 578.8800048828125 174.24000549316406 L 578.8800048828125 144.94000244140625 Q 578.8800048828125 136.94000244140625 586.8800048828125 136.94000244140625 L 602.8800048828125 136.94000244140625" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 578.8800048828125 289.0400085449219 L 584.8800048828125 289.0400085449219 Q 590.8800048828125 289.0400085449219 590.8800048828125 283.0400085449219 L 590.8800048828125 155.89999389648438 Q 590.8800048828125 149.89999389648438 596.8800048828125 149.89999389648438 L 602.8800048828125 149.89999389648438" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="node" data-id="A" data-label="提炼经验" data-shape="rectangle">
+  <rect x="399.52" y="43.039999999999964" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="469.2" y="75.43999999999997" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">提炼经验</text>
+</g>
+<g class="node" data-id="B" data-label="AI 判断适用并试用" data-shape="rectangle">
+  <rect x="602.88" y="98.05999999999995" width="211.408" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="708.584" y="130.45999999999995" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">AI 判断适用并试用</text>
+</g>
+<g class="node" data-id="C" data-label="检查实际执行与独立结果" data-shape="rectangle">
+  <rect x="32" y="149.83999999999992" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="165.51999999999998" y="182.23999999999992" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">检查实际执行与独立结果</text>
+</g>
+<g class="node" data-id="D" data-label="补充支持证据" data-shape="rectangle">
+  <rect x="363.03999999999996" y="149.83999999999992" width="175.84" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="450.96" y="182.23999999999992" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">补充支持证据</text>
+</g>
+<g class="node" data-id="E" data-label="收窄条件、修订或停用" data-shape="rectangle">
+  <rect x="330.08000000000004" y="256.63999999999993" width="248.79999999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="454.48" y="289.0399999999999" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">收窄条件、修订或停用</text>
+</g>
+</svg>

@@ -1,0 +1,83 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 539.76 1252.3399999999997" width="540" height="1253" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="540" height="1253" fill="#181818"/>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 265.32000732421875 96.80000305175781 L 265.32000732421875 160.8000030517578" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 265.32000732421875 225.60000610351562 L 265.32000732421875 289.6000061035156" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="缺材料或取证失败" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 232.01333618164062 456.1333312988281 L 232.01333618164062 791.0399780273438 Q 232.01333618164062 799.0399780273438 224.01333618164062 799.0399780273438 L 146.16000366210938 799.0399780273438 Q 138.16000366210938 799.0399780273438 138.16000366210938 807.0399780273438 L 138.16000366210938 897.9400024414062" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="需要改站" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 298.6266784667969 456.1333312988281 L 298.6266784667969 533.4400024414062 Q 298.6266784667969 541.4400024414062 306.6266784667969 541.4400024414062 L 384.4800109863281 541.4400024414062 Q 392.4800109863281 541.4400024414062 392.4800109863281 549.4400024414062 L 392.4800109863281 640.3400268554688" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 392.4800109863281 705.1400146484375 L 392.4800109863281 769.1400146484375" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 392.4800109863281 833.9400024414062 L 392.4800109863281 897.9400024414062" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 392.4800109863281 962.739990234375 L 392.4800109863281 1006.739990234375 Q 392.4800109863281 1014.739990234375 384.4800109863281 1014.739990234375 L 297.586669921875 1014.739990234375 Q 291.586669921875 1014.739990234375 291.586669921875 1020.739990234375 L 291.586669921875 1026.739990234375" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 138.16000366210938 962.739990234375 L 138.16000366210938 1006.739990234375 Q 138.16000366210938 1014.739990234375 146.16000366210938 1014.739990234375 L 233.05332946777344 1014.739990234375 Q 239.05332946777344 1014.739990234375 239.05332946777344 1020.739990234375 L 239.05332946777344 1026.739990234375" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="H" data-to="I" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 265.32000732421875 1091.5400390625 L 265.32000732421875 1155.5400390625" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="C" data-to="D" data-label="缺材料或取证失败">
+  <rect x="72.66000000000001" y="806.04" width="130.27" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="137.79500000000002" y="822.49" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">缺材料或取证失败</text>
+</g>
+<g class="edge-label" data-from="C" data-to="E" data-label="需要改站">
+  <rect x="354.98" y="548.44" width="74.11000000000001" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="392.035" y="564.8900000000001" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">需要改站</text>
+</g>
+<g class="node" data-id="A" data-label="评测报告与证据" data-shape="rectangle">
+  <rect x="168.28" y="32" width="194.07999999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="265.32" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">评测报告与证据</text>
+</g>
+<g class="node" data-id="B" data-label="外部 AI 或人工读取" data-shape="rectangle">
+  <rect x="158.248" y="160.8" width="214.14399999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="265.32" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">外部 AI 或人工读取</text>
+</g>
+<g class="node" data-id="C" data-label="决定如何处理" data-shape="diamond">
+  <polygon points="265.32,289.6 365.24,389.52000000000004 265.32,489.44000000000005 165.39999999999998,389.52000000000004" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75"/>
+  <text x="265.32" y="389.52000000000004" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">决定如何处理</text>
+</g>
+<g class="node" data-id="D" data-label="补材料、重新评测" data-shape="rectangle">
+  <rect x="32" y="897.9399999999999" width="212.32" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="138.16" y="930.3399999999999" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">补材料、重新评测</text>
+</g>
+<g class="node" data-id="E" data-label="提交问题与跟进要求" data-shape="rectangle">
+  <rect x="277.2" y="640.34" width="230.56" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="392.48" y="672.74" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">提交问题与跟进要求</text>
+</g>
+<g class="node" data-id="F" data-label="进入生成调度队列" data-shape="rectangle">
+  <rect x="286.32" y="769.14" width="212.32" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="392.48" y="801.54" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">进入生成调度队列</text>
+</g>
+<g class="node" data-id="G" data-label="Kooboo AI Chat 修复" data-shape="rectangle">
+  <rect x="284.952" y="897.9399999999999" width="215.056" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="392.48" y="930.3399999999999" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">Kooboo AI Chat 修复</text>
+</g>
+<g class="node" data-id="H" data-label="新一轮评测" data-shape="rectangle">
+  <rect x="186.52" y="1026.7399999999998" width="157.6" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="265.32" y="1059.1399999999999" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">新一轮评测</text>
+</g>
+<g class="node" data-id="I" data-label="保留新旧报告与关联" data-shape="rectangle">
+  <rect x="150.04" y="1155.5399999999997" width="230.56" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="265.32" y="1187.9399999999998" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">保留新旧报告与关联</text>
+</g>
+</svg>

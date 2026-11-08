@@ -1,0 +1,64 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1457.28 256.4" width="1458" height="257" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="1458" height="257" fill="#181818"/>
+<path class="edge" data-from="T" data-to="Q" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 171.36000061035156 74.80000305175781 L 235.36000061035156 74.80000305175781" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="Q" data-to="K" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 392.9599914550781 74.80000305175781 L 456.9599914550781 74.80000305175781" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="K" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 651.0399780273438 74.80000305175781 L 715.0399780273438 74.80000305175781" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 963.8400268554688 74.80000305175781 L 1007.8400268554688 74.80000305175781 Q 1015.8400268554688 74.80000305175781 1015.8400268554688 82.80000305175781 L 1015.8400268554688 116.60002899169922 Q 1015.8400268554688 122.5999984741211 1021.8399963378906 122.5999984741211 L 1027.8399658203125 122.5999984741211" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 1221.9200439453125 133.39999389648438 L 1285.9200439453125 133.39999389648438" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="H" data-to="F" data-style="solid" data-arrow-start="true" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" marker-start="url(#arrowhead-start)" d="M 963.8400268554688 192 L 1007.8400268554688 192 Q 1015.8400268554688 192 1015.8400268554688 184 L 1015.8400268554688 150.19996643066406 Q 1015.8400268554688 144.1999969482422 1021.8399963378906 144.1999969482422 L 1027.8399658203125 144.1999969482422" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="node" data-id="T" data-label="生成任务" data-shape="rectangle">
+  <rect x="32" y="42.400000000000006" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="101.68" y="74.80000000000001" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">生成任务</text>
+</g>
+<g class="node" data-id="Q" data-label="排队与调度" data-shape="rectangle">
+  <rect x="235.36" y="42.400000000000006" width="157.6" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="314.16" y="74.80000000000001" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">排队与调度</text>
+</g>
+<g class="node" data-id="K" data-label="连接 Kooboo&#10;创建空白目标站" data-shape="rectangle">
+  <rect x="456.96000000000004" y="32" width="194.07999999999998" height="85.6" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="554" y="74.8" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)"><tspan x="554" dy="-4.800000000000001">连接 Kooboo</tspan><tspan x="554" dy="20.8">创建空白目标站</tspan></text>
+</g>
+<g class="node" data-id="C" data-label="驱动 AI Chat&#10;按场景准备输入并生成" data-shape="rectangle">
+  <rect x="715.04" y="32" width="248.79999999999998" height="85.6" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="839.4399999999999" y="74.8" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)"><tspan x="839.4399999999999" dy="-4.800000000000001">驱动 AI Chat</tspan><tspan x="839.4399999999999" dy="20.8">按场景准备输入并生成</tspan></text>
+</g>
+<g class="node" data-id="F" data-label="跟踪状态与异常" data-shape="rectangle">
+  <rect x="1027.84" y="100.99999999999999" width="194.07999999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="1124.8799999999999" y="133.39999999999998" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">跟踪状态与异常</text>
+</g>
+<g class="node" data-id="E" data-label="交接评测" data-shape="rectangle">
+  <rect x="1285.9199999999998" y="100.99999999999999" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="1355.6" y="133.39999999999998" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">交接评测</text>
+</g>
+<g class="node" data-id="H" data-label="人工接管" data-shape="rectangle">
+  <rect x="824.4799999999999" y="159.6" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="894.1599999999999" y="192" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">人工接管</text>
+</g>
+</svg>

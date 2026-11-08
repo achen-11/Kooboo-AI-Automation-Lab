@@ -1,0 +1,77 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 585.3599999999999 988.4999999999999" width="586" height="989" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="586" height="989" fill="#181818"/>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 251.63999938964844 96.80000305175781 L 251.63999938964844 160.8000030517578" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 251.63999938964844 225.60000610351562 L 251.63999938964844 289.6000061035156" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 251.63999938964844 354.3999938964844 L 251.63999938964844 418.3999938964844" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 251.63999938964844 483.20001220703125 L 251.63999938964844 547.2000122070312" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="暂未成单" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 201.05332946777344 612 L 201.05332946777344 656 Q 201.05332946777344 664 193.05332946777344 664 L 127.91999816894531 664 Q 119.91999816894531 664 119.91999816894531 672 L 119.91999816894531 762.9000244140625" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="成单后发起续建" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 302.2266540527344 612 L 302.2266540527344 656 Q 302.2266540527344 664 310.2266540527344 664 L 375.3599853515625 664 Q 383.3599853515625 664 383.3599853515625 672 L 383.3599853515625 762.9000244140625" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 383.3599853515625 827.7000122070312 L 383.3599853515625 891.7000122070312" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="E" data-to="F" data-label="暂未成单">
+  <rect x="82.42" y="671" width="74.11000000000001" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="119.47500000000001" y="687.45" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">暂未成单</text>
+</g>
+<g class="edge-label" data-from="E" data-to="G" data-label="成单后发起续建">
+  <rect x="324.86" y="671" width="116.23" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="382.975" y="687.45" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">成单后发起续建</text>
+</g>
+<g class="node" data-id="A" data-label="迁移 / 升级资源基线" data-shape="rectangle">
+  <rect x="140.464" y="32" width="222.352" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="251.64" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">迁移 / 升级资源基线</text>
+</g>
+<g class="node" data-id="B" data-label="创建空白目标站" data-shape="rectangle">
+  <rect x="154.6" y="160.8" width="194.07999999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="251.64" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">创建空白目标站</text>
+</g>
+<g class="node" data-id="C" data-label="一次委托：仅生成首页" data-shape="rectangle">
+  <rect x="127.24" y="289.6" width="248.79999999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="251.64" y="322" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">一次委托：仅生成首页</text>
+</g>
+<g class="node" data-id="D" data-label="按首页范围评测" data-shape="rectangle">
+  <rect x="154.6" y="418.40000000000003" width="194.07999999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="251.64" y="450.8" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">按首页范围评测</text>
+</g>
+<g class="node" data-id="E" data-label="保留首页成果，等待业务决定" data-shape="rectangle">
+  <rect x="99.88" y="547.2" width="303.52" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="251.64" y="579.6" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">保留首页成果，等待业务决定</text>
+</g>
+<g class="node" data-id="F" data-label="暂不生成内页" data-shape="rectangle">
+  <rect x="32" y="762.9" width="175.84" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="119.92" y="795.3" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">暂不生成内页</text>
+</g>
+<g class="node" data-id="G" data-label="在已有站点继续生成内页" data-shape="rectangle">
+  <rect x="249.84" y="762.9" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="383.36" y="795.3" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">在已有站点继续生成内页</text>
+</g>
+<g class="node" data-id="H" data-label="评测内页，并检查首页是否受影响" data-shape="rectangle">
+  <rect x="213.36" y="891.6999999999999" width="339.99999999999994" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="383.36" y="924.0999999999999" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">评测内页，并检查首页是否受影响</text>
+</g>
+</svg>

@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 731.28 974.8039999999999" width="732" height="975" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="732" height="975" fill="#181818"/>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 361.0799865722656 96.80000305175781 L 361.0799865722656 160.8000030517578" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 361.0799865722656 225.60000610351562 L 361.0799865722656 289.6000061035156" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="保留" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 324.4293212890625 472.85333251953125 L 324.4293212890625 513.5040283203125 Q 324.4293212890625 521.5040283203125 316.4293212890625 521.5040283203125 L 191.75999450683594 521.5040283203125 Q 183.75999450683594 521.5040283203125 183.75999450683594 529.5040283203125 L 183.75999450683594 620.4039916992188" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="变更" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 397.73065185546875 472.85333251953125 L 397.73065185546875 513.5040283203125 Q 397.73065185546875 521.5040283203125 405.73065185546875 521.5040283203125 L 530.4000244140625 521.5040283203125 Q 538.4000244140625 521.5040283203125 538.4000244140625 529.5040283203125 L 538.4000244140625 620.4039916992188" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="D" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 183.75999450683594 685.2039794921875 L 183.75999450683594 729.2039794921875 Q 183.75999450683594 737.2039794921875 191.75999450683594 737.2039794921875 L 316.6533203125 737.2039794921875 Q 322.6533203125 737.2039794921875 322.6533203125 743.2039794921875 L 322.6533203125 749.2039794921875" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 538.4000244140625 685.2039794921875 L 538.4000244140625 729.2039794921875 Q 538.4000244140625 737.2039794921875 530.4000244140625 737.2039794921875 L 405.50665283203125 737.2039794921875 Q 399.50665283203125 737.2039794921875 399.50665283203125 743.2039794921875 L 399.50665283203125 749.2039794921875" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 361.0799865722656 814.0040283203125 L 361.0799865722656 878.0040283203125" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="C" data-to="D" data-label="保留">
+  <rect x="160.26" y="528.504" width="46.03" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="183.27499999999998" y="544.9540000000001" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">保留</text>
+</g>
+<g class="edge-label" data-from="C" data-to="E" data-label="变更">
+  <rect x="514.9" y="528.504" width="46.03" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="537.915" y="544.9540000000001" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">变更</text>
+</g>
+<g class="node" data-id="A" data-label="内容站：旧 URL 与内容清单" data-shape="rectangle">
+  <rect x="217.52800000000002" y="32" width="287.104" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="361.08000000000004" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">内容站：旧 URL 与内容清单</text>
+</g>
+<g class="node" data-id="B" data-label="建立新旧对应关系" data-shape="rectangle">
+  <rect x="254.92000000000002" y="160.8" width="212.32" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="361.08000000000004" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">建立新旧对应关系</text>
+</g>
+<g class="node" data-id="C" data-label="原 URL 是否保留" data-shape="diamond">
+  <polygon points="361.08,289.6 471.032,399.552 361.08,509.504 251.128,399.552" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75"/>
+  <text x="361.08" y="399.552" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">原 URL 是否保留</text>
+</g>
+<g class="node" data-id="D" data-label="检查原地址能否访问正确内容" data-shape="rectangle">
+  <rect x="32" y="620.404" width="303.52" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="183.76" y="652.804" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">检查原地址能否访问正确内容</text>
+</g>
+<g class="node" data-id="E" data-label="检查是否正确重定向到对应内容" data-shape="rectangle">
+  <rect x="377.52" y="620.404" width="321.76" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="538.4" y="652.804" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">检查是否正确重定向到对应内容</text>
+</g>
+<g class="node" data-id="F" data-label="检查内容与搜索配置" data-shape="rectangle">
+  <rect x="245.79999999999998" y="749.204" width="230.56" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="361.08" y="781.6039999999999" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">检查内容与搜索配置</text>
+</g>
+<g class="node" data-id="G" data-label="交付评分、证据、问题与未验证项" data-shape="rectangle">
+  <rect x="191.08" y="878.0039999999999" width="339.99999999999994" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="361.08" y="910.4039999999999" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">交付评分、证据、问题与未验证项</text>
+</g>
+</svg>

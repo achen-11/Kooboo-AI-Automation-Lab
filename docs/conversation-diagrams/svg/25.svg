@@ -1,0 +1,91 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 672.9193333333333 1327.2399999999998" width="673" height="1328" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="673" height="1328" fill="#181818"/>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 334.2650146484375 96.80000305175781 L 334.2650146484375 160.8000030517578" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 311.038330078125 225.60000610351562 L 311.038330078125 269.6000061035156 Q 311.038330078125 277.6000061035156 303.038330078125 277.6000061035156 L 196.3893280029297 277.6000061035156 Q 190.3893280029297 277.6000061035156 190.3893280029297 283.6000061035156 L 190.3893280029297 289.6000061035156" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="生成并评测" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 163.1626739501953 425.73333740234375 L 163.1626739501953 994.739990234375 Q 163.1626739501953 1002.739990234375 155.1626739501953 1002.739990234375 L 90.45333099365234 1002.739990234375 Q 82.45333099365234 1002.739990234375 82.45333099365234 1010.739990234375 L 82.45333099365234 1087.6400146484375 Q 82.45333099365234 1089.6400146484375 80.45333099365234 1089.6400146484375 L 80.45333099365234 1089.6400146484375 Q 78.45333099365234 1089.6400146484375 78.45333099365234 1091.6400146484375 L 78.45333099365234 1101.6400146484375" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="自动优化" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 217.61599731445312 425.73333740234375 L 217.61599731445312 496.9599914550781 Q 217.61599731445312 504.9599914550781 225.61599731445312 504.9599914550781 L 277.7343444824219 504.9599914550781 Q 285.7343444824219 504.9599914550781 285.7343444824219 512.9599914550781 L 285.7343444824219 603.8599853515625" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="达到" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 249.38766479492188 785.5933227539062 L 249.38766479492188 952.8400268554688 Q 249.38766479492188 960.8400268554688 241.38766479492188 960.8400268554688 L 186.85166931152344 960.8400268554688 Q 178.85166931152344 960.8400268554688 178.85166931152344 968.8400268554688 L 178.85166931152344 1081.6400146484375 Q 178.85166931152344 1089.6400146484375 170.85166931152344 1089.6400146484375 L 130.90666961669922 1089.6400146484375 Q 124.90666961669922 1089.6400146484375 124.90666961669922 1095.6400146484375 L 124.90666961669922 1101.6400146484375" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="未达到" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 322.08099365234375 785.5933227539062 L 322.08099365234375 865.9400024414062 Q 322.08099365234375 873.9400024414062 330.08099365234375 873.9400024414062 L 330.6719970703125 873.9400024414062 Q 338.6719970703125 873.9400024414062 338.6719970703125 881.9400024414062 L 338.6719970703125 972.8400268554688" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 380.4426574707031 1037.6400146484375 L 380.4426574707031 1081.6400146484375 Q 380.4426574707031 1089.6400146484375 388.4426574707031 1089.6400146484375 L 478.7806701660156 1089.6400146484375 Q 484.7806701660156 1089.6400146484375 484.7806701660156 1095.6400146484375 L 484.7806701660156 1101.6400146484375" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 562.8499755859375 1101.6400146484375 L 562.8499755859375 599.8599853515625 Q 562.8499755859375 591.8599853515625 554.8499755859375 591.8599853515625 L 365.4916687011719 591.8599853515625 Q 357.4916687011719 591.8599853515625 357.4916687011719 583.8599853515625 L 357.4916687011719 225.60000610351562" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="F" data-to="H" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="预算耗尽或无法继续" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 296.9013366699219 1037.6400146484375 L 296.9013366699219 1230.43994140625" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="C" data-to="D" data-label="生成并评测">
+  <rect x="37.95333333333332" y="1009.74" width="88.15" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="82.02833333333332" y="1026.19" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">生成并评测</text>
+</g>
+<g class="edge-label" data-from="C" data-to="E" data-label="自动优化">
+  <rect x="248.23433333333338" y="511.9600000000001" width="74.11000000000001" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="285.2893333333334" y="528.4100000000001" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">自动优化</text>
+</g>
+<g class="edge-label" data-from="E" data-to="D" data-label="达到">
+  <rect x="155.3516666666667" y="1009.74" width="46.03" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="178.36666666666667" y="1026.19" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">达到</text>
+</g>
+<g class="edge-label" data-from="E" data-to="F" data-label="未达到">
+  <rect x="308.172" y="880.94" width="60.07000000000001" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="338.20700000000005" y="897.3900000000001" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">未达到</text>
+</g>
+<g class="edge-label" data-from="F" data-to="H" data-label="预算耗尽或无法继续">
+  <rect x="224.40133333333333" y="1138.5399999999997" width="144.31" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="296.5563333333333" y="1154.9899999999998" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">预算耗尽或无法继续</text>
+</g>
+<g class="node" data-id="A" data-label="生成站点" data-shape="rectangle">
+  <rect x="264.58500000000004" y="32" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="334.26500000000004" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">生成站点</text>
+</g>
+<g class="node" data-id="B" data-label="独立评测" data-shape="rectangle">
+  <rect x="264.58500000000004" y="160.8" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="334.26500000000004" y="193.20000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">独立评测</text>
+</g>
+<g class="node" data-id="C" data-label="任务目标" data-shape="diamond">
+  <polygon points="190.38933333333335,289.6 272.06933333333336,371.28000000000003 190.38933333333335,452.96000000000004 108.70933333333335,371.28000000000003" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75"/>
+  <text x="190.38933333333335" y="371.28000000000003" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">任务目标</text>
+</g>
+<g class="node" data-id="D" data-label="交付报告" data-shape="rectangle">
+  <rect x="32" y="1101.6399999999999" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="101.68" y="1134.04" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">交付报告</text>
+</g>
+<g class="node" data-id="E" data-label="达到质量目标？" data-shape="diamond">
+  <polygon points="285.7343333333333,603.86 394.7743333333333,712.9 285.7343333333333,821.9399999999999 176.69433333333333,712.9" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="0.75"/>
+  <text x="285.7343333333333" y="712.9" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">达到质量目标？</text>
+</g>
+<g class="node" data-id="F" data-label="跟进 AI 查看报告与截图" data-shape="rectangle">
+  <rect x="213.36" y="972.84" width="250.624" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="338.672" y="1005.24" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">跟进 AI 查看报告与截图</text>
+</g>
+<g class="node" data-id="G" data-label="Kooboo AI 在原站修复" data-shape="rectangle">
+  <rect x="406.71133333333336" y="1101.6399999999999" width="234.20799999999997" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="523.8153333333333" y="1134.04" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">Kooboo AI 在原站修复</text>
+</g>
+<g class="node" data-id="H" data-label="保留成果并说明停止原因" data-shape="rectangle">
+  <rect x="163.38133333333337" y="1230.4399999999998" width="267.03999999999996" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="296.90133333333335" y="1262.84" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">保留成果并说明停止原因</text>
+</g>
+</svg>

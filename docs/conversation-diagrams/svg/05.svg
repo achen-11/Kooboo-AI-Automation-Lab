@@ -1,0 +1,73 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 1053.944 328" width="1054" height="328" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="1054" height="328" fill="#181818"/>
+<path class="edge" data-from="A" data-to="I" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 375.3840026855469 263.6000061035156 L 419.3840026855469 263.6000061035156 Q 427.3840026855469 263.6000061035156 427.3840026855469 255.60000610351562 L 427.3840026855469 237.25 Q 427.3840026855469 231.25 433.3840026855469 231.25 L 439.3840026855469 231.25" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="X" data-to="I" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="文件导入 / 接口接入" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 181.39199829101562 177.3000030517578 L 419.3840026855469 177.3000030517578 Q 427.3840026855469 177.3000030517578 427.3840026855469 185.3000030517578 L 427.3840026855469 203.64999389648438 Q 427.3840026855469 209.64999389648438 433.3840026855469 209.64999389648438 L 439.3840026855469 209.64999389648438" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="I" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 596.9840087890625 220.4499969482422 L 640.9840087890625 220.4499969482422 Q 648.9840087890625 220.4499969482422 648.9840087890625 212.4499969482422 L 648.9840087890625 188.64999389648438 Q 648.9840087890625 182.64999389648438 654.9840087890625 182.64999389648438 L 660.9840087890625 182.64999389648438" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="G" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 818.583984375 171.85000610351562 L 862.583984375 171.85000610351562 Q 870.583984375 171.85000610351562 870.583984375 163.85000610351562 L 870.583984375 161.5500030517578 Q 870.583984375 155.5500030517578 876.583984375 155.5500030517578 L 882.583984375 155.5500030517578" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="G" data-to="S" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 882.583984375 133.9499969482422 L 876.583984375 133.9499969482422 Q 870.583984375 133.9499969482422 870.583984375 127.94999694824219 L 870.583984375 50.70000076293945 Q 870.583984375 42.70000076293945 862.583984375 42.70000076293945 L 328.6840076446533 42.70000076293945 Q 323.2340087890625 42.70000076293945 323.2340087890625 48.14999961853027 L 323.2340087890625 48.14999961853027 Q 323.2340087890625 53.599998474121094 317.7840099334717 53.599998474121094 L 271.2340087890625 53.599998474121094" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="S" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 271.2340087890625 75.19999694824219 L 317.78400802612305 75.19999694824219 Q 323.2340087890625 75.19999694824219 323.2340087890625 80.64999771118164 L 323.2340087890625 80.64999771118164 Q 323.2340087890625 86.0999984741211 328.68400955200195 86.0999984741211 L 335.2340087890625 86.0999984741211" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="关联回基线" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 492.8340148925781 86.0999984741211 L 640.9840087890625 86.0999984741211 Q 648.9840087890625 86.0999984741211 648.9840087890625 94.0999984741211 L 648.9840087890625 155.0500030517578 Q 648.9840087890625 161.0500030517578 654.9840087890625 161.0500030517578 L 660.9840087890625 161.0500030517578" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="X" data-to="I" data-label="文件导入 / 接口接入">
+  <rect x="241.39200000000002" y="160.3" width="137.99200000000002" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="310.38800000000003" y="176.75" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">文件导入 / 接口接入</text>
+</g>
+<g class="edge-label" data-from="E" data-to="B" data-label="关联回基线">
+  <rect x="552.8340000000001" y="69.1" width="88.15" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="596.9090000000001" y="85.55" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">关联回基线</text>
+</g>
+<g class="node" data-id="A" data-label="本系统 Admin 录入" data-shape="rectangle">
+  <rect x="168.53600000000003" y="231.2" width="206.84799999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="271.96000000000004" y="263.59999999999997" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">本系统 Admin 录入</text>
+</g>
+<g class="node" data-id="I" data-label="导入与整理" data-shape="rectangle">
+  <rect x="439.384" y="188.05" width="157.6" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="518.184" y="220.45000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">导入与整理</text>
+</g>
+<g class="node" data-id="X" data-label="外部 Admin" data-shape="rectangle">
+  <rect x="32" y="144.9" width="149.392" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="106.696" y="177.3" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">外部 Admin</text>
+</g>
+<g class="node" data-id="B" data-label="资源基线库" data-shape="rectangle">
+  <rect x="660.984" y="139.45" width="157.6" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="739.784" y="171.85" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">资源基线库</text>
+</g>
+<g class="node" data-id="G" data-label="生成任务" data-shape="rectangle">
+  <rect x="882.5840000000001" y="112.35" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="952.2640000000001" y="144.75" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">生成任务</text>
+</g>
+<g class="node" data-id="S" data-label="Kooboo 生成站" data-shape="rectangle">
+  <rect x="90.83400000000006" y="32" width="180.39999999999998" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="181.03400000000005" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">Kooboo 生成站</text>
+</g>
+<g class="node" data-id="E" data-label="评测与证据" data-shape="rectangle">
+  <rect x="335.23400000000004" y="53.70000000000002" width="157.6" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="414.03400000000005" y="86.10000000000002" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">评测与证据</text>
+</g>
+</svg>

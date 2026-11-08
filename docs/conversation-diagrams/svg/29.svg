@@ -1,0 +1,67 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 897.23 278.79999999999995" width="898" height="279" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="898" height="279" fill="#181818"/>
+<path class="edge" data-from="A" data-to="B" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 153.1199951171875 150.1999969482422 L 197.1199951171875 150.1999969482422 Q 205.1199951171875 150.1999969482422 205.1199951171875 142.1999969482422 L 205.1199951171875 113.5999984741211 Q 205.1199951171875 107.5999984741211 211.1199951171875 107.5999984741211 L 217.1199951171875 107.5999984741211" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="B" data-to="C" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 356.4800109863281 107.5999984741211 L 425.8949890136719 107.5999984741211" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="D" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 565.2550048828125 96.80000305175781 L 603.8400268554688 96.80000305175781 Q 611.8400268554688 96.80000305175781 611.8400268554688 88.80000305175781 L 611.8400268554688 70.4000015258789 Q 611.8400268554688 64.4000015258789 617.8400268554688 64.4000015258789 L 623.8400268554688 64.4000015258789" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="A" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="中断" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 153.1199951171875 171.8000030517578 L 309.2799987792969 171.8000030517578 Q 317.2799987792969 171.8000030517578 317.2799987792969 179.8000030517578 L 317.2799987792969 206.39999389648438 Q 317.2799987792969 214.39999389648438 325.2799987792969 214.39999389648438 L 425.8949890136719 214.39999389648438" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="C" data-to="F" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="中断" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 565.2550048828125 118.4000015258789 L 603.8400268554688 118.4000015258789 Q 611.8400268554688 118.4000015258789 611.8400268554688 126.4000015258789 L 611.8400268554688 142.8000030517578 Q 611.8400268554688 150.8000030517578 619.8400268554688 150.8000030517578 L 725.8699951171875 150.8000030517578" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="A" data-to="E" data-label="中断">
+  <rect x="325.28" y="197.39999999999998" width="46.03" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="348.29499999999996" y="213.85" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">中断</text>
+</g>
+<g class="edge-label" data-from="C" data-to="F" data-label="中断">
+  <rect x="619.84" y="133.8" width="46.03" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="642.855" y="150.25" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">中断</text>
+</g>
+<g class="node" data-id="A" data-label="修复中" data-shape="rectangle">
+  <rect x="32" y="128.6" width="121.12" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="92.56" y="161" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">修复中</text>
+</g>
+<g class="node" data-id="B" data-label="修复完成" data-shape="rectangle">
+  <rect x="217.12" y="75.19999999999999" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="286.8" y="107.6" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">修复完成</text>
+</g>
+<g class="node" data-id="C" data-label="独立复评" data-shape="rectangle">
+  <rect x="425.895" y="75.19999999999999" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="495.575" y="107.6" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">独立复评</text>
+</g>
+<g class="node" data-id="D" data-label="当前版本分数与证据" data-shape="rectangle">
+  <rect x="623.8400000000001" y="32" width="230.56" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="739.1200000000001" y="64.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">当前版本分数与证据</text>
+</g>
+<g class="node" data-id="E" data-label="恢复修复或明确停止" data-shape="rectangle">
+  <rect x="425.895" y="182" width="230.56" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="541.175" y="214.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">恢复修复或明确停止</text>
+</g>
+<g class="node" data-id="F" data-label="恢复复评" data-shape="rectangle">
+  <rect x="725.87" y="118.4" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="795.55" y="150.8" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">恢复复评</text>
+</g>
+</svg>

@@ -1,0 +1,86 @@
+<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 754.8406666666667 749.4999999999999" width="755" height="750" style="--bg: #181818; --fg: #83c5ff; --line: #93989d; --accent: #93989d; --muted: #b4bec8; --surface: #10283f; --border: #2d4557; background: rgb(24, 24, 24); max-width: none;">
+<style>
+  500;600;700&amp;display=swap');
+  text { font-family: 'sans-serif', system-ui, sans-serif; }
+  svg {
+    /* Derived from --bg and --fg (overridable via --line, --accent, etc.) */
+    --_text:          var(--fg);
+    --_text-sec:      var(--muted, color-mix(in srgb, var(--fg) 60%, var(--bg)));
+    --_text-muted:    var(--muted, color-mix(in srgb, var(--fg) 40%, var(--bg)));
+    --_text-faint:    color-mix(in srgb, var(--fg) 25%, var(--bg));
+    --_line:          var(--line, color-mix(in srgb, var(--fg) 50%, var(--bg)));
+    --_arrow:         var(--accent, color-mix(in srgb, var(--fg) 85%, var(--bg)));
+    --_node-fill:     var(--surface, color-mix(in srgb, var(--fg) 3%, var(--bg)));
+    --_node-stroke:   var(--border, color-mix(in srgb, var(--fg) 20%, var(--bg)));
+    --_group-fill:    var(--bg);
+    --_group-hdr:     color-mix(in srgb, var(--fg) 5%, var(--bg));
+    --_inner-stroke:  color-mix(in srgb, var(--fg) 12%, var(--bg));
+    --_key-badge:     color-mix(in srgb, var(--fg) 10%, var(--bg));
+  }
+
+text{font-family:"PingFang SC","Hiragino Sans GB","Microsoft YaHei",sans-serif}</style>
+<defs>
+  <marker id="arrowhead" markerWidth="8" markerHeight="5" refX="7" refY="2.5" orient="auto">
+    <polyline points="0 0, 8 2.5, 0 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+  <marker id="arrowhead-start" markerWidth="8" markerHeight="5" refX="1" refY="2.5" orient="auto-start-reverse">
+    <polyline points="8 0, 0 2.5, 8 5" fill="none" stroke="var(--_arrow)" stroke-width="0.9" stroke-linecap="round" stroke-linejoin="round"/>
+  </marker>
+</defs><rect width="755" height="750" fill="#181818"/>
+<path class="edge" data-from="B" data-to="Q" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 634.920654296875 628.7000122070312 L 634.920654296875 634.7000122070312 Q 634.920654296875 640.7000122070312 628.920654296875 640.7000122070312 L 469.2539978027344 640.7000122070312 Q 463.2539978027344 640.7000122070312 463.2539978027344 646.7000122070312 L 463.2539978027344 652.7000122070312" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="Q" data-to="R" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="有空位自动启动" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 358.1873474121094 652.7000122070312 L 358.1873474121094 646.7000122070312 Q 358.1873474121094 640.7000122070312 352.1873474121094 640.7000122070312 L 94.5 640.7000122070312 Q 86.5 640.7000122070312 86.5 632.7000122070312 L 86.5 601.7999877929688 Q 86.5 593.7999877929688 94.5 593.7999877929688 L 126.42633056640625 593.7999877929688 Q 134.42633056640625 593.7999877929688 134.42633056640625 585.7999877929688 L 134.42633056640625 314.1000061035156" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="R" data-to="E" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="生成结束，释放名额" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 203.98367309570312 314.1000061035156 L 203.98367309570312 358.1000061035156 Q 203.98367309570312 366.1000061035156 211.98367309570312 366.1000061035156 L 243.91000366210938 366.1000061035156 Q 251.91000366210938 366.1000061035156 251.91000366210938 374.1000061035156 L 251.91000366210938 465" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="R" data-to="P" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="停下等待，释放名额" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 169.2050018310547 228.5 L 169.2050018310547 137.60000610351562 Q 169.2050018310547 129.60000610351562 177.2050018310547 129.60000610351562 L 351.64065170288086 129.60000610351562 Q 357.6406555175781 129.60000610351562 357.6406555175781 123.60000228881836 L 357.6406555175781 117.5999984741211" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="P" data-to="X" data-style="solid" data-arrow-start="false" data-arrow-end="true" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 410.7206726074219 117.5999984741211 L 410.7206726074219 228.5" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="X" data-to="Q" data-style="solid" data-arrow-start="false" data-arrow-end="true" data-label="提交跟进消息" fill="none" stroke="var(--_line)" stroke-width="1" marker-end="url(#arrowhead)" d="M 410.7206726074219 314.1000061035156 L 410.7206726074219 652.7000122070312" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="E" data-to="Q" data-style="dotted" data-arrow-start="false" data-arrow-end="true" data-label="自动补入下一项" fill="none" stroke="var(--_line)" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#arrowhead)" d="M 251.91000366210938 529.7999877929688 L 251.91000366210938 620.7000122070312 Q 251.91000366210938 628.7000122070312 259.9100036621094 628.7000122070312 L 376.4540100097656 628.7000122070312 Q 384.4540100097656 628.7000122070312 384.4540100097656 636.7000122070312 L 384.4540100097656 652.7000122070312" stroke-linecap="round" stroke-linejoin="round"/>
+<path class="edge" data-from="P" data-to="Q" data-style="dotted" data-arrow-start="false" data-arrow-end="true" data-label="自动补入下一项" fill="none" stroke="var(--_line)" stroke-width="1" stroke-dasharray="4 4" marker-end="url(#arrowhead)" d="M 463.8006591796875 117.5999984741211 L 463.8006591796875 208.5 Q 463.8006591796875 216.5 471.8006591796875 216.5 L 528.0006713867188 216.5 Q 536.0006713867188 216.5 536.0006713867188 224.5 L 536.0006713867188 620.7000122070312 Q 536.0006713867188 628.7000122070312 528.0006713867188 628.7000122070312 L 444.9873352050781 628.7000122070312 Q 436.9873352050781 628.7000122070312 436.9873352050781 636.7000122070312 L 436.9873352050781 652.7000122070312" stroke-linecap="round" stroke-linejoin="round"/>
+<g class="edge-label" data-from="Q" data-to="R" data-label="有空位自动启动">
+  <rect x="28.000000000000007" y="600.8" width="116.23" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="86.11500000000001" y="617.25" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">有空位自动启动</text>
+</g>
+<g class="edge-label" data-from="R" data-to="E" data-label="生成结束，释放名额">
+  <rect x="179.41000000000003" y="373.1" width="144.31" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="251.56500000000003" y="389.55" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">生成结束，释放名额</text>
+</g>
+<g class="edge-label" data-from="R" data-to="P" data-label="停下等待，释放名额">
+  <rect x="96.70500000000001" y="136.59999999999997" width="144.31" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="168.86" y="153.04999999999998" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">停下等待，释放名额</text>
+</g>
+<g class="edge-label" data-from="X" data-to="Q" data-label="提交跟进消息">
+  <rect x="359.2206666666667" y="560.8" width="102.19000000000001" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="410.31566666666674" y="577.25" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">提交跟进消息</text>
+</g>
+<g class="edge-label" data-from="E" data-to="Q" data-label="自动补入下一项">
+  <rect x="193.41000000000003" y="588.8" width="116.23" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="251.52500000000003" y="605.25" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">自动补入下一项</text>
+</g>
+<g class="edge-label" data-from="P" data-to="Q" data-label="自动补入下一项">
+  <rect x="477.5006666666667" y="472" width="116.23" height="32.900000000000006" rx="2" ry="2" fill="var(--bg)" stroke="var(--_inner-stroke)" stroke-width="1"/>
+  <text x="535.6156666666667" y="488.45" text-anchor="middle" font-size="13" font-weight="400" fill="var(--_text-sec)" dy="4.55">自动补入下一项</text>
+</g>
+<g class="node" data-id="B" data-label="批量提交任务" data-shape="rectangle">
+  <rect x="547.0006666666667" y="563.9" width="175.84" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="634.9206666666666" y="596.3" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">批量提交任务</text>
+</g>
+<g class="node" data-id="Q" data-label="待执行队列" data-shape="rectangle">
+  <rect x="331.9206666666667" y="652.6999999999999" width="157.6" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="410.7206666666667" y="685.0999999999999" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">待执行队列</text>
+</g>
+<g class="node" data-id="R" data-label="Kooboo AI 执行&#10;最多同时运行 3 个" data-shape="rectangle">
+  <rect x="64.86900000000001" y="228.5" width="208.672" height="85.6" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="169.205" y="271.3" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)"><tspan x="169.205" dy="-4.800000000000001">Kooboo AI 执行</tspan><tspan x="169.205" dy="20.8">最多同时运行 3 个</tspan></text>
+</g>
+<g class="node" data-id="E" data-label="交接评测" data-shape="rectangle">
+  <rect x="182.23000000000002" y="465" width="139.36" height="64.8" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="251.91000000000003" y="497.4" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)" dy="5.6">交接评测</text>
+</g>
+<g class="node" data-id="P" data-label="pending&#10;保存原因与上下文" data-shape="rectangle">
+  <rect x="304.56066666666675" y="32" width="212.32" height="85.6" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="410.7206666666667" y="74.8" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)"><tspan x="410.7206666666667" dy="-4.800000000000001">pending</tspan><tspan x="410.7206666666667" dy="20.8">保存原因与上下文</tspan></text>
+</g>
+<g class="node" data-id="X" data-label="外部 AI 监看&#10;收到通知或主动查询" data-shape="rectangle">
+  <rect x="295.4406666666667" y="228.5" width="230.56" height="85.6" rx="17" ry="17" fill="var(--_node-fill)" stroke="var(--_node-stroke)" stroke-width="1"/>
+  <text x="410.7206666666667" y="271.3" text-anchor="middle" font-size="16" font-weight="500" fill="var(--_text)"><tspan x="410.7206666666667" dy="-4.800000000000001">外部 AI 监看</tspan><tspan x="410.7206666666667" dy="20.8">收到通知或主动查询</tspan></text>
+</g>
+</svg>

@@ -146,3 +146,6 @@ vite.config.ts.timestamp-*
 
 # macOS folder metadata
 .DS_Store
+
+# Reproducible documentation bundles; keep sources and previews tracked
+/docs/conversation-diagrams-*.zip

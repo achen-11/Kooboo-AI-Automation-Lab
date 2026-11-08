@@ -36,7 +36,10 @@ export async function generationSession(task:AutomationTask,store:AutomationStor
   const expectedConversation=task.generation?.conversationId;
   const profile=resolve(directory,'generation-browsers',task.id);mkdirSync(profile,{recursive:true,mode:0o700});
   let context;
-  try { context=await chromium.launchPersistentContext(profile,{headless:false}); }
+  // Read once per session: setting changes never replace an active execution.
+  // Pin full Chromium so headless uses the same browser/profile as visible mode.
+  const headless=vault.automation().showExecutionBrowser!==true;
+  try { context=await chromium.launchPersistentContext(profile,{headless,channel:'chromium'}); }
   catch(error) {
     if(error instanceof Error&&/ProcessSingleton|SingletonLock|profile.*in use|user data directory.*in use/i.test(error.message))throw new UnconfirmedStop('原执行浏览器配置仍被占用，需确认原进程已停止后恢复');
     throw error;

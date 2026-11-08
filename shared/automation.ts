@@ -40,7 +40,7 @@ export interface GenerationCheckpoint { createAttempted?: boolean; transferTaskI
 export interface FollowupRun { budgetId?: string; budgetStartedAt?: number; elapsedMs?: number; activeStartedAt?: number; activeHeartbeatAt?: number; activeElapsedMs?:number; state: 'queued' | 'running' | 'waiting' | 'resolved' | 'interrupted'; attempts: number; startedAt: number; nextAt: number; tokens: number; threadId: string; policy: FollowupSettings; executionStopped: boolean; lastAction?: FollowupAction; observations: string[] }
 export interface AutomationNotice { id: string; taskId: string; title: string; message: string; createdAt: number; readAt: number | null }
 export interface AutomationTask { completenessPolicy?:CompletenessSettings; learningPolicy?: LearningSettings; requirementsId?: string; requirementsEnabled?: boolean; optimization?: OptimizationRun; optimizationRootId?: string; optimizationRound?: number; siteRevision?: string; repairEvidence?: { reportId: string; files: string[] }; usage?: import('./billing.js').UsageSummary; delivery?: DeliveryRun; id: string; stage?: AutomationStage; generation?: GenerationCheckpoint; followup?: FollowupRun; interruption?: TaskInterruption; artifacts?: MaterialFile[]; evaluationTaskId?: string; kind: 'generation' | 'evaluation'; resourceId: string; versionId: string; resourceName: string; scenario: Scenario; scope: Scope; environmentId: string; generatedSiteId: string | null; parentId: string | null; message: string; status: TaskStatus; stopped: boolean; createdAt: number; updatedAt: number; error: string; context: string; threadId: string; rule: AutomationRule | null; report: AutomationReport | null; siteUrl: string; model: { name: string; endpoint: string } | null }
-export interface AutomationSettings { completeness?:CompletenessSettings; learning?: LearningSettings; optimization?: OptimizationPolicy; followup: FollowupSettings; enabled: boolean; autoEvaluate: boolean; generationConcurrency: number; evaluationConcurrency: number; timeoutMinutes: number; evaluationModel: string; evaluationEndpoint: string; prompts: Record<Scenario, string> }
+export interface AutomationSettings { showExecutionBrowser?: boolean; completeness?:CompletenessSettings; learning?: LearningSettings; optimization?: OptimizationPolicy; followup: FollowupSettings; enabled: boolean; autoEvaluate: boolean; generationConcurrency: number; evaluationConcurrency: number; timeoutMinutes: number; evaluationModel: string; evaluationEndpoint: string; prompts: Record<Scenario, string> }
 export const defaultFollowupSettings: FollowupSettings = {
   enabled: true, concurrency: 1, maxAttempts: 5, maxMinutes: 20, maxTokens: 10000000, maxRequests: 80,
   sop: `你是自动化流程跟进员。目标是让本轮任务从准备、生成走到独立评测报告交付。
@@ -53,7 +53,7 @@ export const defaultFollowupSettings: FollowupSettings = {
 };
 export const defaultAutomationSettings: AutomationSettings = {
   completeness:defaultCompletenessSettings, learning: defaultLearningSettings, optimization: defaultOptimizationPolicy, followup: defaultFollowupSettings,
-  enabled: false, autoEvaluate: true, generationConcurrency: 3, evaluationConcurrency: 1, timeoutMinutes: 60,
+  enabled: false, autoEvaluate: true, showExecutionBrowser: false, generationConcurrency: 3, evaluationConcurrency: 1, timeoutMinutes: 60,
   evaluationModel: 'deepseek-flash-1017', evaluationEndpoint: '',
   prompts: {
     materials: '根据资料包从空白站点构建完整站点。优先使用 Kooboo 自带的 skill、reference 和 tools。',

@@ -35,7 +35,7 @@ export function taskHeader(task: AutomationTask): TaskHeader {
     workflowIds: [...new Set([task.id, ...(task.evaluationTaskId ? [task.evaluationTaskId] : []), ...(optimization?.rounds.flatMap(round => [round.generationTaskId, ...(round.evaluationTaskId ? [round.evaluationTaskId] : [])]) || [])])],
     collectionVersionId: task.collectionVersionId, requirementsEnabled: task.requirementsEnabled,
     error: brief(task.error),
-    rule: task.rule ? { criteria: task.rule.criteria.map(({ id, required, scopes, viewports }) => ({ id, required, scopes, viewports })) } : null,
+    rule: task.rule ? { criteria: (task.rule.criteria || []).map(({ id, required, scopes, viewports }) => ({ id, required, scopes, viewports })) } : null,
     optimization: optimization ? {
       state: optimization.state, reportId: optimization.reportId, activeTaskId: optimization.activeTaskId,
       currentRevision: optimization.currentRevision, reason: brief(optimization.reason), stoppedAt: optimization.stoppedAt,
@@ -54,7 +54,7 @@ export function taskHeader(task: AutomationTask): TaskHeader {
         checks: report.collectionTarget.checks.length ? [{ status: report.collectionTarget.checks.find(check => check.status !== 'verified')?.status || 'verified' }] : [],
       } : undefined,
     } : null,
-    delivery: task.delivery ? { status: task.delivery.status, stopped: task.delivery.stopped, nextAt: task.delivery.nextAt, error: brief(task.delivery.error) } : undefined,
+    delivery: task.delivery ? { status: task.delivery.status, stopped: task.delivery.stopped, nextAt: task.delivery.nextAt, error: brief(task.delivery.error || '') } : undefined,
     followup: task.followup ? { state: task.followup.state, nextAt: task.followup.nextAt } : undefined,
     reflectionKey: reflection ? `${task.id}:reflection:${createHash('sha256').update(JSON.stringify(report || task.interruption)).digest('hex')}` : null,
   };

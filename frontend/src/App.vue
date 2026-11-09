@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ClipboardCheck, SlidersHorizontal, FolderOpen, Settings2, ChevronLeft, RotateCw, BookOpen, ArrowUpCircle } from '@lucide/vue';
+import { ClipboardCheck, SlidersHorizontal, FolderOpen, Settings2, ChevronLeft, RotateCw, BookOpen, ArrowUpCircle, ChartNoAxesCombined } from '@lucide/vue';
 import { initialize, platform } from './api';
 import MessageHost from './components/MessageHost.vue';
 import SystemUpdateDialog from './components/SystemUpdateDialog.vue';
@@ -13,6 +13,7 @@ import AutomationTasks from './views/automation/TasksView.vue';
 import SettingsView from './views/automation/SettingsView.vue';
 import RulesView from './views/automation/RulesView.vue';
 import ExperiencesView from './views/automation/ExperiencesView.vue';
+import DashboardView from './views/automation/DashboardView.vue';
 const experienceEditor=ref<{dirty:boolean}>();
 const experienceId=computed(()=>/^\/experiences\/([a-f0-9-]+|new)$/.exec(route.value)?.[1]);
 
@@ -23,6 +24,7 @@ const ruleEditor = ref<{ dirty: boolean }>();
 const nav = [
   { path: '/resources', label: '资源库', icon: FolderOpen },
   { path: '/tasks', label: '任务中心', icon: ClipboardCheck },
+  { path: '/dashboard', label: '耗时与成本', icon: ChartNoAxesCombined },
   {path:'/experiences',label:'经验库',icon:BookOpen},
   { path: '/rules', label: '评测规则', icon: SlidersHorizontal },
   { path: '/settings', label: '系统设置', icon: Settings2 },
@@ -75,6 +77,7 @@ onUnmounted(() => { window.removeEventListener('hashchange', onHash); window.rem
       <template v-if="platform.ready">
         <EvaluationView v-if="detailId" :key="detailId" :id="detailId" />
         <ResourcesView v-else-if="route.startsWith('/resources')" :id="resourceId" />
+        <DashboardView v-else-if="route === '/dashboard'" />
         <AutomationTasks v-else-if="taskId" :key="taskId" :id="taskId" />
         <AutomationTasks v-else-if="route.startsWith('/reports')" :key="route" reports />
         <ExperiencesView v-else-if="route.startsWith('/experiences')" ref="experienceEditor" :id="experienceId" />

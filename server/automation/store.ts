@@ -10,6 +10,8 @@ import type { NoticePage } from '../../shared/task-presentation.js';
 import { defaultCompletenessSettings } from '../../shared/completeness.js';
 import { defaultLearningSettings } from '../../shared/experience.js';
 import { createAutonomousExecution } from '../../shared/autonomy.js';
+import { TimingLedger } from './timing.js';
+import { EvaluationExecutions } from './evaluation-execution.js';
 import { ResourceFolders } from './resource-folders.js';
 
 const initialSop = `你是独立评测员，只做审查与取证，不修改目标站。
@@ -23,9 +25,13 @@ App 从需求提炼用户目标与实际流程，检查 UI 的合理性、信息
 export class AutomationStore {
   readonly resourceFolders:ResourceFolders;
   readonly usage:UsageLedger;
+  readonly timing:TimingLedger;
+  readonly evaluations:EvaluationExecutions;
   constructor(readonly db: Database,private redact:(value:string)=>string=value=>value) {
     this.resourceFolders=new ResourceFolders(db);
-    this.usage=new UsageLedger(db);
+    this.usage=new UsageLedger(db,id => this.header(id)?.optimizationRound || 0);
+    this.timing=new TimingLedger(db,id => this.header(id)?.optimizationRound || 0);
+    this.evaluations=new EvaluationExecutions(db);
     db.exec(`CREATE TABLE IF NOT EXISTS auto_resources(id TEXT PRIMARY KEY, external_source TEXT, external_id TEXT, json TEXT NOT NULL);
       CREATE UNIQUE INDEX IF NOT EXISTS auto_external ON auto_resources(external_source,external_id) WHERE external_source<>'' AND external_id<>'';
       CREATE TABLE IF NOT EXISTS auto_versions(id TEXT PRIMARY KEY, resource_id TEXT NOT NULL, json TEXT NOT NULL);
@@ -186,6 +192,7 @@ export class AutomationStore {
       const json=this.redact(JSON.stringify({...task,usage:undefined}));
       this.db.prepare('INSERT INTO auto_tasks VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,site_key=excluded.site_key,json=excluded.json').run(task.id,task.status,task.kind,task.generatedSiteId,task.createdAt,json);
       this.indexTask(JSON.parse(json));
+      this.timing.observe(task,!current,task.updatedAt);
     });
     return task;
   }
@@ -312,10 +319,14 @@ export class AutomationStore {
     });
   }
   recover() {
+    this.timing.recover();
     for(const task of this.tasks()) {
       if(task.delivery&&['running','verifying'].includes(task.delivery.status)){task.delivery.status=task.delivery.target?'queued':'uncertain';task.delivery.stopped=true;task.delivery.error=task.delivery.target?'服务中断，保留目标回执，恢复交付核验。':'服务中断，迁移结果不确定；请核查目标环境并补录回执，不重复发送。';this.put(task);this.notice(task,'交付恢复检查',task.delivery.error);}
       // An explicit interruption must survive restarts without scheduling new followups.
       if(task.stopped||task.status==='interrupted')continue;
+      if(task.kind==='evaluation'&&task.scenario==='site-template'&&this.evaluations.get(task.id)?.state==='stopped'&&!['cancelling','cancelled','following-up'].includes(task.status)){
+        task.status='queued';task.stopped=true;task.error='平台更新后按已确认停止的独立评测检查点接续；保留全部证据和未知用量。';if(task.followup)task.followup.executionStopped=true;this.put(task);this.event(task.id,task.error);continue;
+      }
       if(task.autonomy&&task.kind==='generation'&&task.collectionId&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!['cancelling','cancelled'].includes(task.status)){
         task.status='queued';task.stopped=true;task.error='采集执行服务中断；保留批次、进程身份和检查点，先核对原采集操作后接续。';this.put(task);this.event(task.id,task.error);continue;
       }

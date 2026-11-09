@@ -18,6 +18,7 @@ import { cleanupGenerationContext } from './generation-context.js';
 import { koobooClient } from './kooboo.js';
 import { autonomousActionStrategy, autonomousReady, autonomousWindowRemaining, canReplayGeneration, followupAccountState, isAutonomousRetry, nextAutonomousWindow, recordAutonomousAttempt } from './autonomy.js';
 import { inMaintenance } from '../updates/maintenance.js';
+import { rememberSiteRetry, siteRetryBlocked } from './retry-guard.js';
 export type Execute=(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal)=>Promise<void>;
 export class AutomationWorker{
   private timer?:ReturnType<typeof setInterval>;
@@ -131,6 +132,7 @@ export class AutomationWorker{
     this.store.event(task.id,'已保留原站、会话、累计用量与检查点，退避后接续：'+detail);return true;
   }
   private async run(task:AutomationTask,controller:AbortController,timeout:number){
+    const heartbeat=setInterval(()=>this.store.timing.heartbeat(task.id),1000);heartbeat.unref();
     const timer=setTimeout(()=>controller.abort(new Pending('本轮执行达到时限，需要核对当前成果后继续')),timeout*60000);timer.unref();
     try{
       const budget=optimizationBudgetReason(task,this.store);
@@ -161,6 +163,7 @@ export class AutomationWorker{
       else if(reason instanceof FollowupRuntimeError)this.interrupt(task,task.error,reason.nextSteps);
       else this.recoverTask(task);
     }finally{
+      clearInterval(heartbeat);
       clearTimeout(timer);
       // A confirmed cancellation may clean only this task's registered copies.
       // Interruptions retain files; they may still be needed for recovery.
@@ -171,16 +174,23 @@ export class AutomationWorker{
     }
   }
   private async runDelivery(task:AutomationTask,controller:AbortController){
+    const finishTiming=this.store.timing.activity(task.id,'delivery');
     let unconfirmed=false;const delivery=task.delivery!;delivery.attempts=(delivery.attempts||0)+1;this.store.put(task);
     const timer=setTimeout(()=>controller.abort(new Error('交付执行达到本轮时限')),(delivery.policy.timeoutSeconds+this.vault.automation().timeoutMinutes*60)*1000);timer.unref();
     try{await executeDelivery(task,this.store,this.vault,this.directory,controller.signal);this.store.notice(task,delivery.status==='completed'?'交付核验完成':'交付需要核查',delivery.error||'目标站与独立交付核验证据已保存。');}
     catch(error){unconfirmed=error instanceof UnconfirmedStop;delivery.error=(error instanceof Error?error.message:'交付失败')+'；源站报告保留。';
       if(!unconfirmed&&delivery.target&&(delivery.attempts||0)<3&&!controller.signal.aborted&&!this.stopping){delivery.status='queued';delivery.nextAt=Date.now()+10000;this.store.event(task.id,'保留目标回执，稍后恢复原交付核验会话：'+delivery.error);}
       else{delivery.status=delivery.target?'failed':delivery.attemptedAt?'uncertain':'failed';this.store.notice(task,'交付已中断',delivery.error+' 请检查迁移回执、目标连接或核验证据后恢复核验。');}
-    }finally{clearTimeout(timer);delivery.stopped=!unconfirmed;delivery.updatedAt=Date.now();this.store.put(task);}
+    }finally{finishTiming();clearTimeout(timer);delivery.stopped=!unconfirmed;delivery.updatedAt=Date.now();this.store.put(task);}
   }
   private async runFollowup(task:AutomationTask,controller:AbortController){
+    if(siteRetryBlocked(task,this.store)){task.stopped=task.followup?.executionStopped??task.stopped;this.interrupt(task,'同一生成执行的失败终态没有变化，已停止重复 retry。',['查看当前 run 的具体失败原因，补齐条件或使用有明确新消息的同站继续生成；原站、证据和用量均已保留。']);return;}
     const followup=task.followup!;const policy=followup.policy;
+    if(task.scenario==='site-template'&&task.kind==='evaluation'&&!followup.executionStopped){
+      task.stopped=false;
+      this.interrupt(task,'原评测执行尚未确认停止，自动跟进无法安全重试。',['检查原评测进程，确认停止后点击“已检查并确认原执行停止”，再恢复原任务；保留已有证据和未知用量。']);
+      return;
+    }
     followup.budgetId||=randomUUID();this.store.put(task);
     let window=autonomousWindowRemaining(task);
     const account=task.autonomy?followupAccountState(task,this.store):undefined;
@@ -237,6 +247,7 @@ export class AutomationWorker{
       task.generation={...task.generation,deliveryState:'completed',state:'completed'};task.stage='handoff';
       this.store.ensureEvaluation(task,this.vault.automation());task.status='completed';task.error='';followup.state='resolved';
     }else{
+      if(action.action==='retry')rememberSiteRetry(task,this.store);
       if(action.action==='continue'||action.action==='answer')task.generation={...task.generation,next:action};
       task.status='queued';followup.state='resolved';
     }

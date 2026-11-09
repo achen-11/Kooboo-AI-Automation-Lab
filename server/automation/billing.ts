@@ -1,6 +1,7 @@
 import { randomUUID } from 'node:crypto';
 import type { Database } from '../runtime.js';
-import type { PriceSnapshot, TokenUsage, UsageEntry, UsageObservation, UsageSummary, UsageStage } from '../../shared/billing.js';
+import type { PriceSnapshot, TokenUsage, UsageEntry, UsageObservation, UsageSummary, UsageStage, UsageBreakdownStage, UsagePageEntry } from '../../shared/billing.js';
+import { generationStage } from '../../shared/generation-stage.js';
 
 // Calendar source: https://www.gov.cn/zhengce/content/202511/content_7047090.htm (verified 2026-11-07).
 // DeepSeek explicitly makes all weekends offpeak, including government make-up workdays.
@@ -54,7 +55,7 @@ export function mergeUsage(values: UsageSummary[], children: string[] = []): Usa
   return result;
 }
 export class UsageLedger {
-  constructor(private db:Database){db.exec('CREATE TABLE IF NOT EXISTS auto_usage(task_id TEXT NOT NULL,source TEXT NOT NULL,event_id TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(task_id,source,event_id)); CREATE TABLE IF NOT EXISTS auto_prices(id TEXT PRIMARY KEY,json TEXT NOT NULL)');if(!this.prices().length)this.publish(initialPrice);}
+  constructor(private db:Database, private generationRound: (taskId: string) => number = () => 0){db.exec('CREATE TABLE IF NOT EXISTS auto_usage(task_id TEXT NOT NULL,source TEXT NOT NULL,event_id TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(task_id,source,event_id)); CREATE TABLE IF NOT EXISTS auto_prices(id TEXT PRIMARY KEY,json TEXT NOT NULL)');if(!this.prices().length)this.publish(initialPrice);}
   prices():PriceSnapshot[]{return this.db.prepare('SELECT json FROM auto_prices ORDER BY rowid').all().map(r=>JSON.parse(r.json));}
   publish(price:Omit<PriceSnapshot,'id'> & {id?:string}){const value={...price,id:price.id||randomUUID()};this.db.prepare('INSERT INTO auto_prices VALUES(?,?)').run(value.id,JSON.stringify(value));return value;}
   price(endpoint:string,model:string,at:number){let official=false;try{official=new URL(endpoint).hostname==='api.deepseek.com';}catch{}return official?this.prices().filter(p=>p.effectiveFrom<=at&&p.models.some(m=>m.toLowerCase()===model.toLowerCase())).at(-1)||null:null;}
@@ -65,11 +66,13 @@ export class UsageLedger {
     const row=calculateUsage(value,taskId,price);this.db.prepare('UPDATE auto_usage SET json=? WHERE task_id=? AND source=? AND event_id=?').run(JSON.stringify(row),taskId,value.source,value.id);return row;
   }
   entries(taskId:string):UsageEntry[]{return this.db.prepare('SELECT json FROM auto_usage WHERE task_id=? ORDER BY rowid').all(taskId).map(r=>JSON.parse(r.json));}
-  page(taskId:string,children:string[],page:number,pageSize:number,stage?:UsageStage){
-    const ids=[...new Set([taskId,...children])],where=`task_id IN (${ids.map(()=>'?').join(',')})${stage?" AND json_extract(json,'$.stage')=?":''}`,args=[...ids,...(stage?[stage]:[])];
+  page(taskId:string,children:string[],page:number,pageSize:number,stage?:UsageBreakdownStage){
+    const ids=[...new Set([taskId,...children])],rounds=new Map(ids.map(id=>[id,this.generationRound(id)]));
+    const selected=stage==='generation'||stage==='repair'?ids.filter(id=>(rounds.get(id)!>0)===(stage==='repair')):ids;
+    const where=`task_id IN (${selected.length?selected.map(()=>'?').join(','):'NULL'})${stage?" AND json_extract(json,'$.stage')=?":''}`,args=[...selected,...(stage?[stage==='repair'?'generation':stage]:[])];
     const total=Number(this.db.prepare(`SELECT COUNT(*) AS total FROM auto_usage WHERE ${where}`).get(...args).total);
     const pages=Math.max(1,Math.ceil(total/pageSize)),current=Math.min(page,pages);
-    const items=this.db.prepare(`SELECT json FROM auto_usage WHERE ${where} ORDER BY json_extract(json,'$.startedAt') DESC,rowid DESC LIMIT ? OFFSET ?`).all(...args,pageSize,(current-1)*pageSize).map(r=>JSON.parse(r.json) as UsageEntry);
+    const items:UsagePageEntry[]=this.db.prepare(`SELECT json FROM auto_usage WHERE ${where} ORDER BY json_extract(json,'$.startedAt') DESC,rowid DESC LIMIT ? OFFSET ?`).all(...args,pageSize,(current-1)*pageSize).map(r=>{const entry=JSON.parse(r.json) as UsageEntry;return {...entry,stage:generationStage(entry.stage,rounds.get(entry.taskId))};});
     return {items,total,page:current,pageSize,pages};
   }
   summary(taskId:string,children:string[]=[],stage?:UsageStage):UsageSummary{

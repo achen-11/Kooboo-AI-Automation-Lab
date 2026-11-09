@@ -8,6 +8,7 @@ import { createApp } from '../server/app.js';
 import { defaultAutomationSettings, type AutomationTask, type AutomationReport } from '../shared/automation.js';
 import { siteDeliveries } from '../server/automation/site-delivery.js';
 import type { UsageStage } from '../shared/billing.js';
+import { dashboardAnalytics } from '../server/automation/dashboard-analytics.js';
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'site-delivery-'));
@@ -52,6 +53,61 @@ test('one delivery per actual site sums raw requests once, including continuatio
     const history = (await f.app.inject({ url: `/api/automation/site-deliveries/${f.site.id}/tasks?pageSize=1`, headers: f.headers })).json();
     assert.equal(history.total, 4); assert.equal(history.items.length, 1);
   } finally { await f.close(); }
+});
+
+test('historical generation and repair costs, timing and request filters match the dashboard without rewriting ledgers', async () => {
+  const f = await fixture(); try {
+    const first = f.create(), repair = f.create();
+    repair.optimizationRootId = first.id; repair.optimizationRound = 1;
+    for (const task of [first, repair]) { task.status = 'completed'; task.stopped = true; f.store.put(task); }
+    f.charge(first, 'generation', 1_000_000); f.charge(repair, 'generation', 4_000_000);
+    const start = Date.now() - 60_000;
+    for (const [task, duration] of [[first, 10_000], [repair, 20_000]] as const) {
+      f.store.db.prepare('DELETE FROM auto_timing_spans WHERE task_id=?').run(task.id);
+      f.store.db.prepare('INSERT INTO auto_timing_spans VALUES(?,?,?,?,?,?,?)').run(randomUUID(), task.id, 'generation', 0, start, start + duration, start + duration);
+    }
+    f.store.db.prepare('INSERT INTO auto_timing_spans VALUES(?,?,?,?,?,?,?)').run(randomUUID(), first.id, 'optimization', 0, start + 20_000, start + 25_000, start + 25_000);
+    const row = siteDeliveries(f.store, 80, f.site.id)[0];
+    assert.equal(row.stages.find(item => item.stage === 'generation')!.usage.knownCny, 1);
+    assert.equal(row.stages.find(item => item.stage === 'repair')!.usage.knownCny, 4);
+    assert.equal(row.usage.knownCny, 5);
+    const timed = (await f.app.inject({url:`/api/automation/site-deliveries/${f.site.id}/timing`,headers:f.headers})).json();
+    assert.equal(timed.stages.find((item:any) => item.stage === 'generation').recordedMs, 10_000);
+    assert.equal(timed.stages.find((item:any) => item.stage === 'repair').recordedMs, 25_000);
+    const analytics = dashboardAnalytics(f.store, {start:Date.parse('2026-11-08T00:00:00+08:00'),end:Date.now()+1,granularity:'day',scenario:'all',scope:'all',unit:'generation',page:1});
+    for (const stage of ['generation', 'repair'] as const) {
+      const total = analytics.consumption.stages.find(item => item.stage === stage)!;
+      assert.equal(total.knownCny, row.stages.find(item => item.stage === stage)!.usage.knownCny);
+      assert.equal(total.recordedMs, timed.stages.find((item:any) => item.stage === stage).recordedMs);
+      const page = (await f.app.inject({url:`/api/automation/site-deliveries/${f.site.id}/usage?stage=${stage}&pageSize=1`,headers:f.headers})).json();
+      assert.equal(page.total, 1); assert.equal(page.items[0].stage, stage);
+      assert.equal(page.items[0].taskId, stage === 'repair' ? repair.id : first.id);
+    }
+    const repairPage = (await f.app.inject({url:`/api/automation/tasks/${repair.id}/usage?stage=repair`,headers:f.headers})).json();
+    assert.equal(repairPage.total, 1); assert.equal(repairPage.items[0].stage, 'repair');
+    const empty = (await f.app.inject({url:`/api/automation/tasks/${repair.id}/usage?stage=generation`,headers:f.headers})).json();
+    assert.equal(empty.total, 0);
+    assert.equal(f.store.usage.entries(repair.id)[0].stage, 'generation', 'persisted billing evidence retains its original stage');
+  } finally { await f.close(); }
+});
+
+test('timing endpoints group all site requests and require the local session',async()=>{
+  const f=await fixture();try{
+    const task=f.create(),review=f.finish(task);f.charge(task,'generation',100);f.charge(review,'evaluation',200);
+    const siteTiming=await f.app.inject({url:`/api/automation/site-deliveries/${f.site.id}/timing`,headers:f.headers});
+    assert.equal(siteTiming.statusCode,200);assert.equal(siteTiming.json().stages.reduce((sum:number,row:{requests:number})=>sum+row.requests,0),2);
+    const workflow=await f.app.inject({url:`/api/automation/tasks/${task.id}/timing`,headers:f.headers});assert.equal(workflow.statusCode,200);assert.equal(workflow.json().modelMs,10,'overlapping request times are not added twice');
+    assert.equal((await f.app.inject({url:`/api/automation/tasks/${task.id}/timing`})).statusCode,401);
+    assert.equal((await f.app.inject({url:`/api/automation/site-deliveries/${randomUUID()}/timing`,headers:f.headers})).statusCode,404);
+    assert.doesNotMatch(siteTiming.body,/endpoint|raw|threadId|apiKey/);
+  }finally{await f.close();}
+});
+
+test('dashboard has authenticated, bounded projections and validates filters',async()=>{
+  const f=await fixture();try{const task=f.create();f.charge(task,'generation',100);const path='/api/automation/dashboard?days=7&scenario=all';
+    assert.equal((await f.app.inject({url:path})).statusCode,401);const response=await f.app.inject({url:path,headers:f.headers});assert.equal(response.statusCode,200);const result=response.json();assert.equal(result.daily.length,7);assert.equal(result.timezone,'Asia/Shanghai');assert.equal(result.current.finished,0,'queued workflows are not complete samples');assert.doesNotMatch(response.body,/endpoint|raw|threadId|apiKey|test-only/);
+    assert.equal((await f.app.inject({url:'/api/automation/dashboard?days=91',headers:f.headers})).statusCode,400);assert.equal((await f.app.inject({url:'/api/automation/dashboard?scenario=unknown',headers:f.headers})).statusCode,400);
+  }finally{await f.close();}
 });
 
 test('full-site continuation never inherits a passed homepage result while queued, changed or unreviewed', async () => {

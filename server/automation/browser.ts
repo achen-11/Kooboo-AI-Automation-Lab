@@ -7,7 +7,8 @@ import { z } from 'zod';
 import type { MaterialFile } from '../../shared/automation.js';
 
 const action=z.object({action:z.enum(['snapshot','screenshot','navigate','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),fullPage:z.boolean().default(false)});
-export interface EvaluationBrowserBinding { taskId:string; siteRevision:string }
+export const evaluationCapturePolicy='settled-pc1440-mobile390-v1';
+export interface EvaluationBrowserBinding { taskId:string; siteRevision:string; inputVersionId?:string; sourceSnapshotId?:string }
 export interface VisibleBrowserFrame { url:string; text:string }
 
 /** Runs in the containing frame, including ancestors outside a shadow root. */
@@ -61,22 +62,16 @@ export async function settlePage(page:Page,scroll:boolean,quick=false):Promise<P
 /** A per-run browser session, kept outside the management UI and closed with the worker. */
 export async function evaluationBrowser(urls:{target:string;reference:string;content:string},directory:string,signal:AbortSignal,initial:MaterialFile[]=[],checkpoint:(files:MaterialFile[])=>void=()=>{},binding?:EvaluationBrowserBinding){
   const allowed=new Set(Object.values(urls).filter(Boolean).map(u=>new URL(u).origin));
-  const trustedBinding=binding?{taskId:binding.taskId,siteRevision:binding.siteRevision}:undefined;
+  const trustedBinding=binding?{...binding,capturePolicy:evaluationCapturePolicy}:undefined;
   signal.throwIfAborted();
   const browser=await chromium.launch({headless:true});
   const pages=new Map<string,Page>();
   const artifacts:MaterialFile[]=structuredClone(initial);
   let busy=false;
   const token=randomUUID()+randomUUID();
-  const server=createServer(async(req,res)=>{
-    res.setHeader('Content-Type','application/json');
-    const finish=(status:number,body:unknown)=>{res.statusCode=status;res.end(JSON.stringify(body));};
-    const auth=Buffer.from(req.headers.authorization||'');const expected=Buffer.from(`Bearer ${token}`);
-    if(auth.length!==expected.length||!timingSafeEqual(auth,expected))return finish(401,{error:'Unauthorized'});
-    if(busy)return finish(409,{error:'上一浏览器操作仍在执行，请顺序调用'});busy=true;
-    try{
-      let data='';for await(const chunk of req){data+=chunk;if(data.length>24000)throw new Error('请求过大');}
-      const input=action.parse(JSON.parse(data));signal.throwIfAborted();
+  const capture=async(raw:unknown)=>{
+      if(busy)throw new Error('上一浏览器操作仍在执行，请顺序调用');busy=true;
+      try{const input=action.parse(raw);signal.throwIfAborted();
       if(!urls[input.role])throw new Error('没有提供此角色的站点');
       const key=input.role+'-'+input.viewport;let page=pages.get(key),navigated=false;
       if(!page){navigated=true;const mobile=input.viewport==='mobile';const context=await browser.newContext({viewport:{width:mobile?390:1440,height:mobile?844:1000},isMobile:mobile,hasTouch:mobile});
@@ -107,8 +102,17 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
       writeFileSync(resolve(directory,'evidence',jsonFile),textEvidence,{mode:0o600});
       artifacts.push(...[{name:file,type:'image/png',bytes:pixels},{name:jsonFile,type:'application/json',bytes:textEvidence}].map(f=>({id:randomUUID(),name:f.name,type:f.type,size:f.bytes.length,sha256:createHash('sha256').update(f.bytes).digest('hex'),role:input.role,viewport:input.viewport,settled:settlement.settled})));
       checkpoint(structuredClone(artifacts));
-      finish(200,{...observation,imagePath:resolve(directory,'evidence',file),...(settlement.settled?{}:{warning:`页面未稳定（仍有 ${settlement.pendingImages} 张可见图片未加载${settlement.loaded?'':'，load 未完成'}）：此截图不能作为“参考站没有某区段/图片”的依据，可稍后对同一页面重新 screenshot。`})});
-    }catch(error){finish(400,{error:error instanceof Error?error.message:'浏览器操作失败'});}finally{busy=false;}
+      return {...observation,imagePath:resolve(directory,'evidence',file),...(settlement.settled?{}:{warning:`页面未稳定（仍有 ${settlement.pendingImages} 张可见图片未加载${settlement.loaded?'':'，load 未完成'}）：此截图不能作为“参考站没有某区段/图片”的依据，可稍后对同一页面重新 screenshot。`})};
+      }finally{busy=false;}
+  };
+  const server=createServer(async(req,res)=>{
+    res.setHeader('Content-Type','application/json');
+    const finish=(status:number,body:unknown)=>{res.statusCode=status;res.end(JSON.stringify(body));};
+    const auth=Buffer.from(req.headers.authorization||'');const expected=Buffer.from(`Bearer ${token}`);
+    if(auth.length!==expected.length||!timingSafeEqual(auth,expected))return finish(401,{error:'Unauthorized'});
+    try{let data='';for await(const chunk of req){data+=chunk;if(data.length>24000)throw new Error('请求过大');}
+      finish(200,await capture(JSON.parse(data)));
+    }catch(error){finish(400,{error:error instanceof Error?error.message:'浏览器操作失败'});}
   });
   try{
   await new Promise<void>((resolve,reject)=>{server.once('error',reject);server.listen(0,'127.0.0.1',resolve);});
@@ -118,6 +122,6 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
   let closing:Promise<void>|undefined;
   const close=()=>closing??=(async()=>{signal.removeEventListener('abort',abort);server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await browser.close();})();
   const abort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',abort,{once:true});if(signal.aborted){await close();signal.throwIfAborted();}
-  return {artifacts,env:{EVALUATION_BROWSER_URL:`http://127.0.0.1:${address.port}`,EVALUATION_BROWSER_TOKEN:token},close};
+  return {artifacts,capture,env:{EVALUATION_BROWSER_URL:`http://127.0.0.1:${address.port}`,EVALUATION_BROWSER_TOKEN:token},close};
   }catch(error){server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await browser.close();throw error;}
 }

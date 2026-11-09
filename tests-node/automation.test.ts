@@ -175,6 +175,23 @@ test('generation automatically hands evaluation the original input version even 
   }finally{if(worker)await worker.stop();await f.close();}
 });
 
+test('unconfirmed evaluation shutdown pauses recovery before spending another AI followup attempt',async()=>{
+  const f=await fixture();let worker:AutomationWorker|undefined;
+  try{
+    const resource=f.automationStore.saveResource({...resourceInput,scenario:'site-template'}),settings={...defaultAutomationSettings,enabled:true};f.vault.updateAutomation(settings);
+    const site={id:randomUUID(),resourceId:resource.id,versionId:f.automationStore.versions(resource.id)[0].id,environmentId:f.environmentId,siteId:randomUUID(),name:'Existing',url:'https://generated.test/',createdAt:Date.now()};f.automationStore.saveSite(site);
+    const task=f.automationStore.create({resourceIds:[resource.id],kind:'evaluation',scope:'homepage',environmentId:f.environmentId,generatedSiteId:site.id,requirements:''},settings)[0];
+    task.status='pending';task.stopped=false;f.automationStore.put(task);f.automationStore.scheduleFollowup(task,settings.followup);
+    const attempts=task.followup!.attempts;let calls=0;
+    const execute:Execute=async()=>{throw new Error('unexpected execution');};
+    worker=new AutomationWorker(f.automationStore,f.vault,f.directory,{generation:execute,evaluation:execute},()=>true,async()=>{calls++;throw new Error('must not request another model');});
+    await worker.tick();await new Promise(resolve=>setTimeout(resolve,10));
+    const saved=f.automationStore.task(task.id)!;
+    assert.equal(calls,0);assert.equal(saved.status,'interrupted');assert.equal(saved.stopped,false);assert.equal(saved.followup!.attempts,attempts);
+    assert.match(saved.error,/尚未确认停止/);assert.match(saved.interruption!.nextSteps[0],/确认原执行停止/);
+  }finally{await worker?.stop();await f.close();}
+});
+
 test('Responses base URL conversion supports existing full Chat Completions endpoint without exposing URL credentials',()=>{
   assert.equal(responsesBaseUrl('https://api.deepseek.com/chat/completions'),'https://api.deepseek.com');
   assert.equal(responsesBaseUrl('https://provider.test/v1/responses'),'https://provider.test/v1');

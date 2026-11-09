@@ -18,6 +18,8 @@ import { registerLearningApi } from './learning-api.js';
 import { learningSettingsSchema } from './experience-store.js';
 import { executionTaskIds } from '../../shared/execution-log.js';
 import { registerSiteDeliveryApi } from './site-delivery.js';
+import { registerTimingApi } from './timing.js';
+import { registerDashboardApi } from './dashboard.js';
 import { registerMigrationApi } from './migration-api.js';
 import { retainStoppedFollowupReservations } from './budget-recovery.js';
 import { registerGenerationContextApi } from './generation-context-api.js';
@@ -58,6 +60,8 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
+  registerTimingApi(app,store);
+  registerDashboardApi(app,store);
   registerMigrationApi(app,store,vault,directory,owns);
   registerGenerationContextApi(app,store,vault,owns);
   registerCollectionApi(app,store,directory,owns);
@@ -195,7 +199,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.get('/api/automation/tasks/:id/usage',async(request,reply)=>{
     const {id}=params.parse(request.params),task=store.task(id);
     if(!task)return reply.code(404).send({error:'任务不存在'});
-    const q=pagination.extend({stage:z.enum(['generation','followup','evaluation','delivery','experience','planning']).optional()}).parse(request.query);
+    const q=pagination.extend({stage:z.enum(['generation','repair','followup','evaluation','delivery','experience','planning']).optional()}).parse(request.query);
     const round=z.coerce.number().int().min(0).max(10).optional().parse((request.query as Record<string,unknown>).round);const selected=round===undefined?undefined:task.optimization?.rounds.find(r=>r.number===round);if(round!==undefined&&!selected)throw new Conflict('优化轮次不存在');const ids=selected?[selected.generationTaskId,...(selected.evaluationTaskId?[selected.evaluationTaskId]:[])]:store.workflowIds(task);return {...store.usage.page(ids[0],ids.slice(1),q.page,q.pageSize,q.stage),rounds:task.optimization?.rounds.map(r=>r.number)};
   });
   app.get('/api/automation/tasks/:id/sections/:section',async(request,reply)=>{

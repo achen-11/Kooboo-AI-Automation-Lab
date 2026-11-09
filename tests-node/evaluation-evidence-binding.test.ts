@@ -46,6 +46,15 @@ test('trusted evaluation evidence keeps only current JSON/PNG pairs and preserve
   }finally{f.close();}
 });
 
+test('template reference pixels require the same source snapshot, input, policy, origin and settled observation',()=>{
+  const f=fixture();try{const snapshotId=randomUUID(),name=randomUUID()+'.png',image=f.write(name,png,{type:'image/png',role:'reference',viewport:'desktop'}),observation={role:'reference',viewport:'desktop',url:'https://source.invalid/',file:name,binding:{sourceSnapshotId:snapshotId,inputVersionId:f.task.versionId,capturePolicy:'settled-pc1440-mobile390-v1'},settlement:{settled:true}},json=f.write(name.replace('.png','.json'),Buffer.from(JSON.stringify(observation)),{role:'reference',viewport:'desktop'});
+    const binding={snapshotId,inputVersionId:f.task.versionId,referenceUrl:'https://source.invalid/'};
+    const read=(source=binding)=>validatedEvaluationEvidence(f.task,f.files,f.directory,base,f.site,undefined,source).files;
+    assert.deepEqual(read(),[image,json]);assert.deepEqual(read({...binding,snapshotId:randomUUID()}),[]);assert.deepEqual(read({...binding,inputVersionId:randomUUID()}),[]);assert.deepEqual(read({...binding,referenceUrl:'https://other.invalid/'}),[]);
+    const changed=Buffer.from(JSON.stringify({...observation,settlement:{settled:false}}));writeFileSync(resolve(f.directory,json.name),changed);json.size=changed.length;json.sha256=hash(changed);assert.deepEqual(read(),[]);
+  }finally{f.close();}
+});
+
 for(const mode of ['other-task','old-revision','missing-binding','wrong-origin','credentials','wrong-json-viewport','wrong-observed-viewport','wrong-observed-role','wrong-image-viewport','wrong-json-hash','wrong-png-hash','wrong-json-size','wrong-png-size','missing-json','missing-png','forged-png','mismatched-pair','duplicate-name'] as const){
   test(`target evidence with ${mode} cannot enter scoring or URL observations`,()=>{
     const f=fixture();try{
@@ -111,6 +120,7 @@ test('host inspection persists binding independently of remote payload and refus
     const result=await call({kind:'pages'});assert.equal(result.status,200);const record=await result.json();const saved=JSON.parse(readFileSync(resolve(work,'evidence',record.evidence),'utf8'));
     assert.deepEqual(saved.binding,f.binding());assert.equal(saved.value.binding.taskId,'forged');assert.deepEqual(requestedSites,[f.site.siteId]);assert.deepEqual(record.result.binding,saved.binding);
     const registered=f.store.task(f.task.id)!.artifacts!;assert.equal(registered.length,1);
+    assert.deepEqual(JSON.parse(readFileSync(resolve(work,'evidence-manifest.json'),'utf8')),registered,'first-pass implementation evidence is indexed before final submission');
     assert.deepEqual(validatedEvaluationEvidence(f.store.task(f.task.id)!,registered,resolve(work,'evidence'),base,f.store.site(f.site.id)).files,registered);
     mutate=()=>{const current=f.store.site(f.site.id)!;current.siteId=randomUUID();f.store.saveSite(current);};
     const stale=await call({kind:'pages'});assert.equal(stale.status,400);assert.match((await stale.json()).error,/期间任务或站点已变化/);assert.equal(f.files.length,1);
@@ -119,6 +129,23 @@ test('host inspection persists binding independently of remote payload and refus
     f.store.put(f.task);mutate=()=>{f.store.db.prepare('INSERT INTO auto_site_state VALUES(?,?,NULL)').run(f.site.id,'new-site-revision');};
     const revised=await call({kind:'pages'});assert.equal(revised.status,400);assert.match((await revised.json()).error,/期间任务或站点已变化/);assert.equal(f.files.length,1);
   }finally{await inspection?.close();server.closeAllConnections();await new Promise<void>(done=>server.close(()=>done()));f.close();}
+});
+
+test('draft preflight uses the host validator without creating evidence, reports or remote requests',async()=>{
+  const f=fixture();let inspection:Awaited<ReturnType<typeof inspectionTools>>|undefined;
+  try{
+    const vault=new Vault(resolve(f.directory,'vault')),work=resolve(f.directory,'work');
+    let calls=0;
+    inspection=await inspectionTools(f.task,f.store,vault,f.directory,work,f.files,new AbortController().signal,name=>{
+      calls++;if(name!=='current-result.json')throw new Error('只能检查当前提交');
+    });
+    const call=(resultFile:unknown)=>fetch(inspection!.env.INSPECTION_URL,{method:'POST',headers:{authorization:'Bearer '+inspection!.env.INSPECTION_TOKEN,'content-type':'application/json'},body:JSON.stringify({tool:'validate_result',resultFile})});
+    assert.equal((await call('../stale-result.json')).status,400);
+    const valid=await call('current-result.json');assert.equal(valid.status,200);assert.equal((await valid.json()).valid,true);
+    assert.equal(calls,2);assert.equal(f.files.length,0);assert.equal(f.store.task(f.task.id)!.report,null);
+    for(let i=0;i<5;i++)assert.equal((await call('current-result.json')).status,200);
+    const limited=await call('current-result.json');assert.equal(limited.status,400);assert.match((await limited.json()).error,/调用上限/);
+  }finally{await inspection?.close();f.close();}
 });
 
 test('page completeness uses the trusted target origin and exact path/query with both viewports',()=>{

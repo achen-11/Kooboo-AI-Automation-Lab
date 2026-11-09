@@ -4,7 +4,8 @@ import { brief } from '../../shared/task-presentation.js';
 import type { TaskHeader } from './task-index.js';
 import { mergeUsage } from './billing.js';
 import { siteDeliveryStates, usageStageNames, type SiteDeliverySummary } from '../../shared/site-delivery.js';
-import type { UsageStage } from '../../shared/billing.js';
+import type { UsageBreakdownStage } from '../../shared/billing.js';
+import { generationStage } from '../../shared/generation-stage.js';
 import type { AutomationStore } from './store.js';
 import { targetReached } from './optimization.js';
 import { registerSiteReportApi, selectSiteReport } from './site-reports.js';
@@ -59,7 +60,7 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
     if (delivery && ['failed', 'uncertain'].includes(delivery.status)) { state = 'attention'; reason = delivery.error || '交付核验尚未完成。'; }
     else if (delivery && ['queued', 'running', 'verifying'].includes(delivery.status)) { state = 'running'; reason = '正在迁移交付或核验目标环境。'; }
     const ids = members.map(task => task.id), entries=ids.flatMap(taskId=>[...(ledger.get(taskId)?.values()||[])]), usage = mergeUsage(entries,ids.slice(1));
-    const stages = (Object.keys(usageStageNames) as UsageStage[]).map(stage => ({ stage, usage: mergeUsage(ids.flatMap(taskId=>{const value=ledger.get(taskId)?.get(stage);return value?[value]:[];}),ids.slice(1)) }));
+    const stages = (Object.keys(usageStageNames) as UsageBreakdownStage[]).map(stage => ({ stage, usage: mergeUsage(members.flatMap(task=>[...(ledger.get(task.id)?.entries()||[])].filter(([raw])=>generationStage(raw,task.optimizationRound)===stage).map(([,value])=>value)),ids.slice(1)) }));
     const detail = controller?.optimization ? controller : latest?.kind === 'evaluation' && latestGeneration?.evaluationTaskId !== latest.id ? latest : latestGeneration || latest;
     return { id, generatedSiteId: site?.id || latest?.generatedSiteId || null, resourceId: resource?.id || latest!.resourceId,
       resourceName: resource?.name || latest?.resourceName || site?.name || '生成站', siteUrl: site?.url || latest?.siteUrl || '',
@@ -93,7 +94,7 @@ export function registerSiteDeliveryApi(app: FastifyInstance, store: AutomationS
     return { items: rows.slice((page - 1) * query.pageSize, page * query.pageSize).map(task => ({ ...task.summary, usage: store.usage.summary(task.id) })), page, pages, total: rows.length };
   });
   app.get('/api/automation/site-deliveries/:id/usage', async (request, reply) => {
-    const { id } = z.object({ id: z.string().uuid() }).parse(request.params), query = pagination.extend({ stage: z.enum(Object.keys(usageStageNames) as [UsageStage, ...UsageStage[]]).optional() }).parse(request.query);
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params), query = pagination.extend({ stage: z.enum(Object.keys(usageStageNames) as [UsageBreakdownStage, ...UsageBreakdownStage[]]).optional() }).parse(request.query);
     if (!store.site(id)) return reply.code(404).send({ error: '生成站不存在' });
     const ids = store.headers(id).map(task => task.id);
     return store.usage.page(ids[0] || id, ids.slice(1), query.page, query.pageSize, query.stage);

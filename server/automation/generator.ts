@@ -17,6 +17,8 @@ import { ensureSourceCollection } from './collection/orchestrator.js';
 import { effectiveCollectionInput } from './collection/store.js';
 import { frozenCollectionAssetGapGuidance, preflightCollectionTarget } from './collection/target-verification.js';
 import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, type SourceVisualIndex } from './collection/source-visual.js';
+import { adaptRepairImages } from './repair-images.js';
+import { resolve } from 'node:path';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
@@ -142,10 +144,12 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     if(initial&&task.generation.legacySubmitted&&!action)throw new Pending('旧任务已提交过原始委托，由 AI 核对交付并交接评测或明确继续，不能重发初始消息');
     if(initial||action?.action==='continue'||action?.action==='answer'){
       if(state.running)throw new Pending('原会话仍在执行，保留当前执行，稍后核对');
-      let images=task.repairEvidence?task.repairEvidence.files.map(name=>{
+      const repairSources=task.repairEvidence?task.repairEvidence.files.map(name=>{
         const file=store.task(task.repairEvidence!.reportId)?.report?.artifacts.find(f=>f.name===name);if(!file)throw new Error('修复引用的原报告图片不存在');
-        const image=readEvidence(directory,task.repairEvidence!.reportId,file);return {uri:'data:image/png;base64,'+image.bytes.toString('base64'),mediaType:'image/png' as const};
+        return readEvidence(directory,task.repairEvidence!.reportId,file);
       }):undefined;
+      const adapted=task.scenario==='site-template'&&repairSources?adaptRepairImages(repairSources,resolve(directory,'automation-runs',task.id,'repair-images')):undefined;
+      let images=adapted?.images||repairSources?.map(image=>({uri:'data:image/png;base64,'+image.bytes.toString('base64'),mediaType:'image/png' as const}));
       const baseline=initial&&!images&&state.imageInput?sourceVisualBaselineImages(input,directory):undefined;
       if(baseline?.images.length)images=baseline.images;
       if(images?.length&&!state.imageInput)throw new Pending('当前 Kooboo automation bridge 不支持图片修复委托，请更新 bridge 后恢复；尚未发送修复消息。');
@@ -157,7 +161,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       const prepared=action?.action==='answer'?undefined:await prepareGenerationContext(task,store,request,site.siteId,{
         instructions:action?.action==='continue'&&action.message!==task.message
           ?task.message+'\n\n本轮已核对的跟进要求：\n'+action.message:task.message,
-        guidance:adoptedGuidance(task,store,'generation')+collectionGuidance+acceptedAssetGuidance+(baseline?.label||''),
+        guidance:adoptedGuidance(task,store,'generation')+collectionGuidance+acceptedAssetGuidance+(baseline?.label||'')+(adapted?.label||''),
         manifest,
         materials,
       });

@@ -30,7 +30,7 @@ function fixture(){
 }
 function mockBrowser(options:{url?:string;text?:string;framesComplete?:boolean;textTruncated?:boolean;frames?:{url:string;text:string}[]}={}){
   let directory='',opens=0,requests=0,closes=0;
-  const open=(async(urls:any,path:string)=>{opens++;directory=path;assert.deepEqual(urls,{target:'',reference:'',content:pageUrl});return {artifacts:[],env:{EVALUATION_BROWSER_URL:'http://127.0.0.1:1',EVALUATION_BROWSER_TOKEN:'ephemeral-test-token'},close:async()=>{closes++;}};}) as typeof evaluationBrowser;
+  const open=(async(urls:any,path:string)=>{opens++;directory=path;assert.deepEqual(urls,{target:'',reference:'',content:pageUrl});return {artifacts:[],capture:async()=>{throw new Error('此测试不调用程序取证');},env:{EVALUATION_BROWSER_URL:'http://127.0.0.1:1',EVALUATION_BROWSER_TOKEN:'ephemeral-test-token'},close:async()=>{closes++;}};}) as typeof evaluationBrowser;
   const request:typeof fetch=async(_url,init)=>{
     requests++;assert.equal(init?.method,'POST');assert.equal(init?.redirect,'error');
     assert.deepEqual(JSON.parse(String(init?.body)),{action:'snapshot',role:'content',viewport:'desktop',fullPage:false});

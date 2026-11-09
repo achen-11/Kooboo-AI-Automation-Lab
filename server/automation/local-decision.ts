@@ -18,6 +18,10 @@ export class LocalDecisionInterrupted extends Error {
   constructor(readonly reason:'window'|'connection',cause:unknown){super(cause instanceof Error?cause.message:String(cause),{cause});this.name='LocalDecisionInterrupted';}
 }
 export async function localDecision<T>(options:LocalDecisionOptions<T>) {
+  const finish=options.store.timing.activity(options.task.id,options.stage);
+  try{return await runLocalDecision(options);}finally{finish();}
+}
+async function runLocalDecision<T>(options:LocalDecisionOptions<T>) {
   const {task,store,vault,directory}=options;
   const controller=new AbortController(),signal=AbortSignal.any([options.signal,controller.signal]);
   const toolController=new AbortController(),toolsSignal=AbortSignal.any([signal,toolController.signal]);

@@ -60,7 +60,7 @@ async function openContinuation() {
   finally { busy.value = false; }
 }
 const tabs = computed<{ id: TaskTab; label: string }[]>(() => [
-  { id: 'overview', label: '概览' }, { id: 'report', label: '评测结果' }, { id: 'execution', label: '执行记录' }, { id: 'usage', label: '用量费用' }, { id: 'input', label: '输入与配置' }, ...(data.value?.deliveryEnabled ? [{ id: 'delivery' as const, label: '交付' }] : []),
+  { id: 'overview', label: '概览' }, { id: 'report', label: '评测结果' }, { id: 'execution', label: '执行记录' }, { id: 'usage', label: '费用与耗时' }, { id: 'input', label: '输入与配置' }, ...(data.value?.deliveryEnabled ? [{ id: 'delivery' as const, label: '交付' }] : []),
 ]);
 const revision = computed(() => `${task.value?.updatedAt}:${evaluation.value?.updatedAt}:${data.value?.active?.updatedAt}`);
 const reportRevision = computed(() => JSON.stringify([task.value?.optimization,task.value?.status, evaluation.value?.status, report.value]));

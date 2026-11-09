@@ -79,6 +79,8 @@ test('failed review or unfinished execution cannot be presented as deliverable; 
     let row = siteDeliveries(f.store, 80)[0]; assert.equal(row.state, 'attention'); assert.equal(row.report, null); assert.match(row.reason, /网络中断/);
     const newTask = f.store.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.site.environmentId, requirements: '' }, f.settings)[0];
     assert.equal(siteDeliveries(f.store, 80).length, 2);
+    const pending=await f.app.inject({url:`/api/automation/site-deliveries/${newTask.id}`,headers:f.headers});
+    assert.equal(pending.statusCode,200);assert.equal(pending.json().detailTaskId,newTask.id);
     const another = { ...f.site, id: randomUUID(), siteId: randomUUID() }; f.store.saveSite(another);
     assert.equal(siteDeliveries(f.store, 80).length, 3, 'the same resource or URL does not identify the same generated site');
     const filtered = (await f.app.inject({ url: '/api/automation/site-deliveries?state=queued', headers: f.headers })).json();

@@ -48,6 +48,11 @@ export function calculateUsage(observation:UsageObservation,taskId:string,price:
   if(observation.basis==='sdk-turn')note+=' SDK 轮次汇总，不能证明每次请求时刻及失败重试的用量。';
   return {...observation,taskId,tokens,price,band,cny,note:note.trim()};
 }
+export function mergeUsage(values: UsageSummary[], children: string[] = []): UsageSummary {
+  const result: UsageSummary = { requests: 0, priced: 0, input: 0, output: 0, cached: 0, knownCny: 0, missing: 0, estimated: true, children };
+  for (const value of values) for (const key of ['requests', 'priced', 'input', 'output', 'cached', 'knownCny', 'missing'] as const) result[key] += value[key];
+  return result;
+}
 export class UsageLedger {
   constructor(private db:Database){db.exec('CREATE TABLE IF NOT EXISTS auto_usage(task_id TEXT NOT NULL,source TEXT NOT NULL,event_id TEXT NOT NULL,json TEXT NOT NULL,PRIMARY KEY(task_id,source,event_id)); CREATE TABLE IF NOT EXISTS auto_prices(id TEXT PRIMARY KEY,json TEXT NOT NULL)');if(!this.prices().length)this.publish(initialPrice);}
   prices():PriceSnapshot[]{return this.db.prepare('SELECT json FROM auto_prices ORDER BY rowid').all().map(r=>JSON.parse(r.json));}
@@ -71,5 +76,25 @@ export class UsageLedger {
     const ids=[...new Set([taskId,...children])];
     const row=this.db.prepare(`SELECT COUNT(*) AS requests,COUNT(json_extract(json,'$.cny')) AS priced,COALESCE(SUM(json_extract(json,'$.tokens.input')),0) AS input,COALESCE(SUM(json_extract(json,'$.tokens.output')),0) AS output,COALESCE(SUM(json_extract(json,'$.tokens.cached')),0) AS cached,COALESCE(SUM(json_extract(json,'$.cny')),0) AS knownCny FROM auto_usage WHERE task_id IN (${ids.map(()=>'?').join(',')})${stage?" AND json_extract(json,'$.stage')=?":''}`).get(...ids,...(stage?[stage]:[]));
     return {requests:Number(row.requests),priced:Number(row.priced),input:Number(row.input),output:Number(row.output),cached:Number(row.cached),knownCny:Number(row.knownCny),missing:Number(row.requests)-Number(row.priced),estimated:true,children};
+  }
+  /** One ledger scan for an entire list, rather than one scan per task/site/stage. */
+  grouped(taskIds?: string[]) {
+    const ids = taskIds ? [...new Set(taskIds)] : undefined;
+    const result = new Map<string, Map<UsageStage, UsageSummary>>();
+    if (ids && !ids.length) return result;
+    const rows = this.db.prepare(`SELECT task_id, json_extract(json,'$.stage') AS stage,
+      COUNT(*) AS requests, COUNT(json_extract(json,'$.cny')) AS priced,
+      COALESCE(SUM(json_extract(json,'$.tokens.input')),0) AS input,
+      COALESCE(SUM(json_extract(json,'$.tokens.output')),0) AS output,
+      COALESCE(SUM(json_extract(json,'$.tokens.cached')),0) AS cached,
+      COALESCE(SUM(json_extract(json,'$.cny')),0) AS knownCny
+      FROM auto_usage ${ids ? `WHERE task_id IN (${ids.map(() => '?').join(',')})` : ''}
+      GROUP BY task_id, json_extract(json,'$.stage')`).all(...(ids || []));
+    for (const row of rows) {
+      const stages = result.get(row.task_id) || new Map<UsageStage, UsageSummary>();
+      stages.set(row.stage, { requests: Number(row.requests), priced: Number(row.priced), input: Number(row.input), output: Number(row.output), cached: Number(row.cached), knownCny: Number(row.knownCny), missing: Number(row.requests) - Number(row.priced), estimated: true, children: [] });
+      result.set(row.task_id, stages);
+    }
+    return result;
   }
 }

@@ -66,18 +66,21 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   store.db.exec('CREATE TABLE IF NOT EXISTS auto_requests(id TEXT PRIMARY KEY,hash TEXT NOT NULL,json TEXT NOT NULL)');
   function checkFiles(items:z.infer<typeof file>[]){for(const item of items){const saved=store.db.prepare('SELECT json FROM auto_files WHERE id=?').get(item.id);if(!saved||JSON.stringify(JSON.parse(saved.json))!==JSON.stringify(item))throw new Conflict('附件不存在或元数据不一致，请重新上传');}}
   app.get('/api/automation/overview',async(request)=>{
-    const {view}=z.object({view:z.enum(['compact']).optional()}).parse(request.query);
-    const tasks=store.tasks();
+    const {view,statusOnly}=z.object({view:z.enum(['compact','status']).optional(),statusOnly:z.literal('1').optional()}).parse(request.query);
+    const tasks=store.headers();
     const queue={generation:tasks.filter(t=>t.kind==='generation'&&!t.stopped&&t.status!=='following-up').length,evaluation:tasks.filter(t=>t.kind==='evaluation'&&!t.stopped&&t.status!=='following-up').length,queued:tasks.filter(t=>t.status==='queued').length};
-    return {resources:store.resources(),sites:store.sites(),queue,tasks:view==='compact'?tasks.filter(t=>!t.optimizationRootId||t.kind==='evaluation'&&store.task(t.optimizationRootId)?.evaluationTaskId===t.id).map(t=>{const value=taskSummary(t);if(t.kind==='evaluation'&&value.report)value.reportCurrent=Boolean(store.currentReport(t));return value;}):tasks,settings:vault.automation()};
+    if(view==='status'||statusOnly==='1')return {queue,settings:vault.automation()};
+    const byId=new Map(tasks.map(t=>[t.id,t]));
+    const visible=tasks.filter(t=>!t.optimizationRootId||t.kind==='evaluation'&&byId.get(t.optimizationRootId)?.evaluationTaskId===t.id);
+    return {resources:store.resources(),sites:store.sites(),queue,tasks:view==='compact'?store.summaries(visible).map(value=>{if(value.kind==='evaluation'&&value.report)value.reportCurrent=Boolean(store.currentReportHeader(byId.get(value.id)!));return value;}):store.tasks(),settings:vault.automation()};
   });
   app.get('/api/automation/notifications',async(request)=>{
     const {view,page,pageSize}=z.object({view:z.enum(['compact']).optional(),page:pageNumber.optional(),pageSize:pageSizeNumber.optional()}).parse(request.query);
     if(page!==undefined||pageSize!==undefined){
       const result=store.noticePage(page??1,pageSize??10);
-      return {...result,items:view==='compact'?result.items.map(n=>compactNotice(n,store.task(n.taskId))):result.items};
+      return {...result,items:view==='compact'?result.items.map(n=>compactNotice(n,store.header(n.taskId)?.summary)):result.items};
     }
-    return {items:view==='compact'?store.notices().map(n=>compactNotice(n,store.task(n.taskId))):store.notices()};
+    return {items:view==='compact'?store.notices().map(n=>compactNotice(n,store.header(n.taskId)?.summary)):store.notices()};
   });
   app.post('/api/automation/notifications/:id/read',async(request,reply)=>{const{id}=params.parse(request.params);const notice=store.readNotice(id);return notice?{ok:true,readAt:notice.readAt}:reply.code(404).send({error:'通知不存在或已更新'});});
   app.post('/api/automation/notifications/read',async()=>({ok:true,readAt:store.readAllNotices()}));
@@ -170,12 +173,14 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   });
   app.get('/api/automation/tasks/:id',async(request,reply)=>{const{id}=params.parse(request.params);const task=store.task(id);return task?{task,usageEntries:store.usage.entries(id),childUsageEntries:task.evaluationTaskId?store.usage.entries(task.evaluationTaskId):[],events:store.events(id),version:store.version(task.versionId),site:task.generatedSiteId?store.site(task.generatedSiteId):null}:reply.code(404).send({error:'任务不存在'});});
   app.get('/api/automation/tasks/:id/summary',async(request,reply)=>{
-    const {id}=params.parse(request.params),task=store.task(id);
+    const {id}=params.parse(request.params),task=store.header(id);
     if(!task)return reply.code(404).send({error:'任务不存在'});
-    const evaluation=task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
+    const evaluation=task.evaluationTaskId?store.header(task.evaluationTaskId):undefined;
     const latestId=task.optimization?.activeTaskId|| (task.status==='completed'&&evaluation?evaluation.id:id);
     const latest=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT 1').get(latestId);
-    return {task:taskSummary(task),evaluation:evaluation?taskSummary(evaluation):null,active:task.optimization?.activeTaskId&&task.optimization.activeTaskId!==id?taskSummary(store.task(task.optimization.activeTaskId)||task):null,currentReportId:store.currentReport(task)?.id||null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
+    const active=task.optimization?.activeTaskId&&task.optimization.activeTaskId!==id?store.header(task.optimization.activeTaskId)||task:undefined;
+    const summaries=new Map(store.summaries([...new Map([task,...(evaluation?[evaluation]:[]),...(active?[active]:[])].map(t=>[t.id,t])).values()]).map(t=>[t.id,t]));
+    return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
   });
   app.get('/api/automation/tasks/:id/usage',async(request,reply)=>{
     const {id}=params.parse(request.params),task=store.task(id);

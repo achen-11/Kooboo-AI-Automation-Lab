@@ -6,6 +6,7 @@ import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { Pending, UnconfirmedStop } from './errors.js';
 import { koobooClient } from './kooboo.js';
+import { trimGenerationBrowserCache } from './generation-cache.js';
 
 export interface GenerationObservation {
   imageInput?: boolean;
@@ -45,7 +46,9 @@ export async function generationSession(task:AutomationTask,store:AutomationStor
     throw error;
   }
   let closing:Promise<void>|undefined;
-  const close=()=>closing??=context.close().catch(()=>{throw new UnconfirmedStop('无法确认生成执行浏览器已关闭，请检查原执行再恢复');});
+  const close=()=>closing??=context.close().catch(()=>{throw new UnconfirmedStop('无法确认生成执行浏览器已关闭，请检查原执行再恢复');}).then(async()=>{
+    try{await trimGenerationBrowserCache(profile);}catch{store.event(task.id,'生成浏览器已关闭；可再生缓存未能全部清理，将在后续维护时重试。');}
+  });
   const onAbort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
   try {
     signal.throwIfAborted();

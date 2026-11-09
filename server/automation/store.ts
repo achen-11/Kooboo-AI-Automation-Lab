@@ -1,6 +1,8 @@
 import { createHash, randomUUID } from 'node:crypto';
 import type { Database } from '../runtime.js';
-import { UsageLedger } from './billing.js';
+import { UsageLedger, mergeUsage } from './billing.js';
+import { taskHeader as projectTask, type TaskHeader } from './task-index.js';
+import type { TaskSummary } from '../../shared/task-presentation.js';
 import { Conflict } from '../lib/store.js';
 import type { AutomationRule, AutomationSettings, AutomationTask, AutomationNotice, FollowupSettings, TaskInterruption, GeneratedSite, InputVersion, Resource, ResourceInput, OptimizationPolicy } from '../../shared/automation.js';
 import { defaultOptimizationPolicy, supportsAutomaticOptimization } from '../../shared/automation.js';
@@ -35,6 +37,13 @@ export class AutomationStore {
       CREATE INDEX IF NOT EXISTS auto_events_task_seq ON auto_events(task_id,seq);`);
     db.exec('CREATE TABLE IF NOT EXISTS auto_site_state(site_id TEXT PRIMARY KEY, revision TEXT NOT NULL, report_id TEXT)');
     db.exec('CREATE TABLE IF NOT EXISTS auto_migration_read_locks(site_id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
+    db.exec(`CREATE TABLE IF NOT EXISTS auto_task_index(id TEXT PRIMARY KEY,status TEXT NOT NULL,kind TEXT NOT NULL,site_key TEXT,created_at INTEGER NOT NULL,reflection_key TEXT,json TEXT NOT NULL);
+      CREATE INDEX IF NOT EXISTS auto_task_index_queue ON auto_task_index(status,kind,created_at);
+      CREATE INDEX IF NOT EXISTS auto_task_index_site ON auto_task_index(site_key,created_at DESC);`);
+    // Backfill/repair after an upgrade or rollback; preserve original insertion ordering.
+    db.transaction(() => {
+      for (const row of db.prepare("SELECT t.json FROM auto_tasks t LEFT JOIN auto_task_index h ON h.id=t.id WHERE h.id IS NULL OR t.status<>h.status OR json_extract(t.json,'$.updatedAt') IS NOT json_extract(h.json,'$.updatedAt') ORDER BY t.rowid").all()) this.indexTask(JSON.parse(row.json));
+    });
     if (!this.rules().length) {
       this.publish({ name: 'Site UI · 初始规则', kind: 'site', sop: initialSop, references: '', criteria: [
         { id: 'hero', label: 'Hero 首屏', weight: 40, instruction: '首屏构图、主体与背景、文字和 CTA 层级、留白及设计意图。', required: false, viewports: ['desktop','mobile'], scopes: ['homepage','site'] },
@@ -90,7 +99,35 @@ export class AutomationStore {
   }
   workflowIds(task: AutomationTask): string[] { return [...new Set([task.id,...(task.evaluationTaskId?[task.evaluationTaskId]:[]),...(task.optimization?.rounds.flatMap(r=>[r.generationTaskId,...(r.evaluationTaskId?[r.evaluationTaskId]:[])])||[])])]; }
   tasks() { const tasks=this.all<AutomationTask>('auto_tasks','ORDER BY created_at DESC, rowid DESC');return tasks.map(t=>({...t,usage:this.usage.summary(t.id,this.workflowIds(t).filter(id=>id!==t.id))})); }
-  task(id: string) { const task=this.all<AutomationTask>('auto_tasks','WHERE id=?',[id])[0];if(task)task.usage=this.usage.summary(id,this.workflowIds(task).filter(value=>value!==id));return task; }
+  task(id: string, includeUsage=true) { const task=this.all<AutomationTask>('auto_tasks','WHERE id=?',[id])[0];if(task&&includeUsage)task.usage=this.usage.summary(id,this.workflowIds(task).filter(value=>value!==id));return task; }
+  headers(siteId?: string) { return this.all<TaskHeader>('auto_task_index',`${siteId ? 'WHERE site_key=? ' : ''}ORDER BY created_at DESC, rowid DESC`,siteId?[siteId]:[]); }
+  header(id: string) { return this.all<TaskHeader>('auto_task_index','WHERE id=?',[id])[0]; }
+  private indexTask(task: AutomationTask) {
+    const header=projectTask(task);
+    this.db.prepare('INSERT INTO auto_task_index VALUES(?,?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,site_key=excluded.site_key,reflection_key=excluded.reflection_key,json=excluded.json').run(task.id,task.status,task.kind,task.generatedSiteId,task.createdAt,header.reflectionKey,JSON.stringify(header));
+  }
+  summaries(headers: TaskHeader[]): TaskSummary[] {
+    const ids=new Set(headers.flatMap(h=>[h.id,...(h.evaluationTaskId?[h.evaluationTaskId]:[])]));
+    // Workflow membership is persisted in the compact projection, including every repair round.
+    const children=new Map(headers.map(h=>[h.id,h.workflowIds]));
+    for(const values of children.values())for(const id of values)ids.add(id);
+    const usage=this.usage.grouped([...ids]);
+    return headers.map(header=>{
+      const members=children.get(header.id)!;
+      return {...header.summary,usage:mergeUsage(members.flatMap(id=>[...(usage.get(id)?.values()||[])]),members.filter(id=>id!==header.id))};
+    });
+  }
+  currentReportHeader(task: TaskHeader) {
+    const source=task.kind==='evaluation'?task:this.header(task.evaluationTaskId||'');
+    if(!source?.report)return undefined;
+    const state=task.generatedSiteId?this.siteState(task.generatedSiteId):undefined;
+    if(state&&(state.revision!==source.siteRevision||state.reportId!==source.id))return undefined;
+    if(task.optimization&&task.optimization.reportId!==source.id)return undefined;
+    return source;
+  }
+  reflectionCandidates() {
+    return this.db.prepare('SELECT h.id FROM auto_task_index h WHERE h.reflection_key IS NOT NULL AND NOT EXISTS(SELECT 1 FROM auto_learning_runs r WHERE r.key=h.reflection_key)').all().map(row=>row.id as string);
+  }
   root(task: AutomationTask) {
     if(task.optimizationRootId)return this.task(task.optimizationRootId);
     const parent=task.parentId?this.task(task.parentId):undefined;
@@ -121,20 +158,24 @@ export class AutomationStore {
   }
   siteReserved(task: AutomationTask) {
     if(this.migrationReadReserved(task))return true;
-    return !!task.generatedSiteId&&this.all<AutomationTask>('auto_tasks').some(t=>t.id!==task.id&&t.generatedSiteId===task.generatedSiteId&&t.optimization&&!['completed','stopped'].includes(t.optimization.state)&&task.optimizationRootId!==t.id);
+    return !!task.generatedSiteId&&this.headers(task.generatedSiteId).some(t=>t.id!==task.id&&t.optimization&&!['completed','stopped'].includes(t.optimization.state)&&task.optimizationRootId!==t.id);
   }
   migrationReadReserved(task: AutomationTask) {
     return !!task.generatedSiteId&&!!this.db.prepare('SELECT site_id FROM auto_migration_read_locks WHERE site_id=? AND expires_at>?').get(task.generatedSiteId,Date.now());
   }
   put(task: AutomationTask, resumeOptimization=false) {
-    const current=this.task(task.id);
-    // A running executor/heartbeat may hold an older object when the user stops the workflow.
-    if(!resumeOptimization&&current?.optimization?.stoppedAt&&task.optimization&&!task.optimization.stoppedAt)task.optimization=current.optimization;
-    if(current?.status==='cancelling'&&['running','following-up'].includes(task.status))task.status='cancelling';
-    task.error=this.redact(task.error);task.context=this.redact(task.context);
-    task.updatedAt = Date.now();
-    // Keep live checkpoint references stable while redacting the durable copy.
-    this.db.prepare('INSERT INTO auto_tasks VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,site_key=excluded.site_key,json=excluded.json').run(task.id,task.status,task.kind,task.generatedSiteId,task.createdAt,this.redact(JSON.stringify({...task,usage:undefined})));
+    this.db.transaction(()=>{
+      // Recheck under the write lock: the API and executor use separate connections.
+      const current=this.header(task.id);
+      if(!resumeOptimization&&current?.optimization?.stoppedAt&&task.optimization&&!task.optimization.stoppedAt)task.optimization=this.task(task.id,false)!.optimization;
+      if(current?.status==='cancelling'&&['running','following-up'].includes(task.status))task.status='cancelling';
+      task.error=this.redact(task.error);task.context=this.redact(task.context);
+      task.updatedAt = Date.now();
+      // Keep live checkpoint references stable while redacting the durable copy.
+      const json=this.redact(JSON.stringify({...task,usage:undefined}));
+      this.db.prepare('INSERT INTO auto_tasks VALUES(?,?,?,?,?,?) ON CONFLICT(id) DO UPDATE SET status=excluded.status,site_key=excluded.site_key,json=excluded.json').run(task.id,task.status,task.kind,task.generatedSiteId,task.createdAt,json);
+      this.indexTask(JSON.parse(json));
+    });
     return task;
   }
   event(id: string, message: string) { this.db.prepare('INSERT INTO auto_events(task_id,time,message) VALUES(?,?,?)').run(id,Date.now(),this.redact(message).slice(0,16000)); }
@@ -184,13 +225,15 @@ export class AutomationStore {
   }
   claim(kind: AutomationTask['kind'], limit: number, ready:(task:AutomationTask)=>boolean=()=>true) {
     return this.db.transaction(() => {
-      const tasks = this.tasks();
+      const tasks = this.headers();
       const active=tasks.filter(t=>!t.stopped);
       const reserved=tasks.filter(t=>t.status==='following-up'||t.delivery&&(t.delivery.stopped===false||['queued','running','verifying','uncertain'].includes(t.delivery.status)));
       if (active.filter(t=>t.kind===kind).length>=limit) return;
-      const candidate=tasks.toReversed().find(t=>t.kind===kind&&t.status==='queued'&&ready(t)&&!this.siteReserved(t)&&(!t.generatedSiteId||![...active,...reserved].some(a=>a.id!==t.id&&a.generatedSiteId===t.generatedSiteId)));
-      if(!candidate)return;
-      candidate.status='running';candidate.stopped=false;this.put(candidate);return candidate;
+      for(const header of tasks.toReversed().filter(t=>t.kind===kind&&t.status==='queued')){
+        const candidate=this.task(header.id,false)!;
+        if(!ready(candidate)||this.siteReserved(candidate)||candidate.generatedSiteId&&[...active,...reserved].some(a=>a.id!==candidate.id&&a.generatedSiteId===candidate.generatedSiteId))continue;
+        candidate.status='running';candidate.stopped=false;this.put(candidate);return candidate;
+      }
     });
   }
   sanitize<T>(value:T):T { return JSON.parse(this.redact(JSON.stringify(value))); }
@@ -223,10 +266,14 @@ export class AutomationStore {
   }
   claimFollowup(limit:number,ready:(task:AutomationTask)=>boolean=()=>true) {
     return this.db.transaction(()=>{
-      const tasks=this.tasks(),active=tasks.filter(t=>!t.stopped);
+      const tasks=this.headers(),active=tasks.filter(t=>!t.stopped);
       if(active.filter(t=>t.status==='following-up'&&t.followup?.state==='running').length>=limit)return;
-      const task=tasks.toReversed().find(t=>ready(t)&&!this.migrationReadReserved(t)&&t.status==='following-up'&&(t.stopped||t.followup?.state!=='running')&&t.followup&&t.followup.nextAt<=Date.now()&&!tasks.some(a=>a.id!==t.id&&(!!a.delivery&&(a.delivery.stopped===false||['queued','running','verifying','uncertain'].includes(a.delivery.status))||!a.stopped)&&t.generatedSiteId&&a.generatedSiteId===t.generatedSiteId));
-      if(!task)return;task.stopped=false;task.followup!.state='running';this.put(task);return task;
+      const candidate=tasks.toReversed().filter(t=>t.status==='following-up'&&(t.stopped||t.followup?.state!=='running')&&t.followup&&t.followup.nextAt<=Date.now()&&!tasks.some(a=>a.id!==t.id&&(!!a.delivery&&(a.delivery.stopped===false||['queued','running','verifying','uncertain'].includes(a.delivery.status))||!a.stopped)&&t.generatedSiteId&&a.generatedSiteId===t.generatedSiteId));
+      for(const header of candidate){
+        const task=this.task(header.id,false)!;
+        if(!ready(task)||this.migrationReadReserved(task))continue;
+        task.stopped=false;task.followup!.state='running';this.put(task);return task;
+      }
     });
   }
   interrupt(task:AutomationTask,value:Omit<TaskInterruption,'time'|'stage'>) {

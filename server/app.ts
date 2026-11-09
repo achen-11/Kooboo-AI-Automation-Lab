@@ -23,6 +23,7 @@ import { AutomationStore } from './automation/store.js';
 import { AutomationWorker } from './automation/worker.js';
 import { registerAutomationApi } from './automation/api.js';
 import { registerDiagnosticApi } from './diagnostics/api.js';
+import { BackgroundWorkers } from './background.js';
 
 const domainSchema = z.string().max(253).transform((value, context) => {
   try { return normalizeSiteDomain(value); }
@@ -37,7 +38,7 @@ function present(item: Evaluation) {
   return { ...item, evaluationId: item.id, jobId: item.submission.jobId, attemptId: item.submission.attemptId, status: item.run.status, scoringStatus: scoringStatus(item.run), fidelityScore: item.run.report?.fidelityScore ?? null, completionScore: item.run.report?.completionScore ?? null, ruleSetVersion: item.run.snapshot?.rule.version ?? item.submission.ruleSetVersion ?? 'visual-v1', reportUrl: `/#/evaluations/${item.id}` };
 }
 
-export async function createApp(options: { directory: string; serveWeb?: boolean; startWorker?: boolean; workerDependencies?: Partial<Dependencies> }) {
+export async function createApp(options: { directory: string; serveWeb?: boolean; startWorker?: boolean; workerDependencies?: Partial<Dependencies>; backgroundEntry?: URL }) {
   const directory = resolve(options.directory);
   const vault = new Vault(directory);
   const store = new Store(resolve(directory, 'database.sqlite'));
@@ -50,7 +51,9 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
     for(const secret of [settings.model.apiKey,...settings.environments.flatMap(e=>[e.token,e.delivery?.token||''])])if(secret)value=value.replaceAll(secret,'[已隐藏]');
     return value.replace(/Bearer\s+[^\s"',;]+/gi,'Bearer [已隐藏]');
   });
-  const automationWorker = new AutomationWorker(automationStore, vault, directory);
+  const automationWorker = options.startWorker === false || options.workerDependencies
+    ? new AutomationWorker(automationStore, vault, directory)
+    : new BackgroundWorkers(directory, automationStore, options.backgroundEntry);
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, requestTimeout: 30000 });
   let session = randomUUID() + randomUUID();
   let modelTestRunning = false;
@@ -109,7 +112,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   app.post('/api/logout', async (_request, reply) => { session = randomUUID() + randomUUID(); reply.header('Set-Cookie', 'evaluator_session=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0'); return { ok: true }; });
   app.get('/api/health', async () => {
     const settings = vault.get();
-    return { ok: true, version: '0.4.0', pipelineVersion: 1, executor: 'openai-compatible-tool-agent', paused: settings.paused, modelReady: Boolean(settings.model.endpoint && settings.model.name), browserReady: existsSync(chromium.executablePath()), storage: 'sqlite', worker: options.startWorker !== false, homeOnly: true };
+    return { ok: true, version: '0.4.0', pipelineVersion: 1, executor: 'openai-compatible-tool-agent', paused: settings.paused, modelReady: Boolean(settings.model.endpoint && settings.model.name), browserReady: existsSync(chromium.executablePath()), storage: 'sqlite', worker: options.startWorker !== false, workerReady: automationWorker instanceof BackgroundWorkers ? automationWorker.healthy : options.startWorker !== false, homeOnly: true };
   });
   app.get('/api/settings', async (_request, reply) => { reply.header('Cache-Control', 'no-store'); return vault.public(); });
   app.put('/api/settings', async (request) => vault.update(request.body));
@@ -269,6 +272,9 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   const dist = resolve(process.cwd(), 'dist');
   if (options.serveWeb !== false && existsSync(dist)) await app.register(staticFiles, { root: dist, prefix: '/' });
   app.addHook('onClose', async () => { await Promise.all([worker.stop(), automationWorker.stop()]); store.close(); });
-  if (options.startWorker !== false) { automationWorker.start(); worker.start(); }
+  if (options.startWorker !== false) {
+    try { await automationWorker.start(); if (!(automationWorker instanceof BackgroundWorkers)) worker.start(); }
+    catch (error) { await app.close(); throw error; }
+  }
   return { app, store, vault, worker, automationStore, automationWorker };
 }

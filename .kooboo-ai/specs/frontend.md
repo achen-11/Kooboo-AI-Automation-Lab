@@ -6,6 +6,8 @@ The active application is Vue 3 + Vite with an independent Node.js server. The S
 
 `npm run build` writes frontend assets into `dist/` and compiles readable Node modules into `dist-server/`. `npm start` serves the SPA and API together. Former Kooboo runtime resources have been removed; the old implementation is available in Git history.
 
+The API starts and supervises a separate background process for both task engines. Synchronous evidence hashing, HTML parsing and verification must not share the HTTP event loop. SQLite WAL and encrypted settings remain shared; IPC carries cancellation, ownership and lifecycle messages only. `/api/health` exposes `workerReady` so an exited executor is observable. Preserve durable cancellation and conservative recovery of uncertain requests when crossing process boundaries.
+
 Keep the existing page layout, task stages, execution history, screenshot comparison, and site-preview iframe. The frontend establishes the HttpOnly local session automatically through `POST /api/login` when a request receives 401, shares concurrent connection attempts and retries each request at most once. There is no manual entry screen or logout control. Local session checks and trusted-origin restrictions remain in the backend; this is not production user authentication.
 
 Settings include a single configurable image- and tool-capable Chat Completions model, Kooboo environments, review threshold, queue pause, a stage budget for each viewport capture and final scoring, and bounded capture attempts. Keep secret fields empty after saving and retain the existing secret unless explicitly replaced or cleared. Model tests submit actual pixels and validate function calls and tool result consumption.

@@ -10,8 +10,9 @@ import { collectionTargetGate, latestCollectionTargetReport } from './collection
 import { collectionTargetRepairContext } from './collection/report.js';
 import { CollectionStore } from './collection/store.js';
 import { validateRecollectionAction, validateRecollectionScope } from './collection/recollection.js';
+import type { ReadinessReport, ReadinessTask } from './task-index.js';
 
-export function targetReached(task: AutomationTask, report: AutomationReport) {
+export function targetReached(task: ReadinessTask, report: ReadinessReport) {
   const target=report.collectionTarget;
   if(task.collectionVersionId&&(!target||target.state!=='complete'||target.collectionVersionId!==task.collectionVersionId||target.inputVersionId!==task.versionId||target.generatedSiteId!==task.generatedSiteId||target.siteRevision!==(task.optimization?.currentRevision||task.siteRevision)||!target.checks.length||target.checks.some(check=>check.status!=='verified')))return false;
   if(report.migrationCheck&&report.migrationCheck.state!=='complete')return false;

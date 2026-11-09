@@ -101,7 +101,7 @@ async function submit() {
 let timer: ReturnType<typeof setInterval>;
 function dismissMore(event: MouseEvent) { if (more.value && !more.value.contains(event.target as Node)) more.value.removeAttribute('open'); }
 function escape(event: KeyboardEvent) { if (event.key === 'Escape') more.value?.removeAttribute('open'); }
-onMounted(() => { timer = setInterval(() => { if (!loading.value && !busy.value) void load().then(() => siteRefresh.value++); }, 4000); window.addEventListener('hashchange', hashChanged); document.addEventListener('click', dismissMore); document.addEventListener('keydown', escape); });
+onMounted(() => { timer = setInterval(() => { if (!document.hidden && !loading.value && !busy.value) void load().then(() => siteRefresh.value++); }, 4000); window.addEventListener('hashchange', hashChanged); document.addEventListener('click', dismissMore); document.addEventListener('keydown', escape); });
 onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange', hashChanged); document.removeEventListener('click', dismissMore); document.removeEventListener('keydown', escape); });
 </script>
 <template>

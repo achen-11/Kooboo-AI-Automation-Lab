@@ -20,6 +20,7 @@ import { assertSourceRenderedEvidenceIndex, sourceRenderedEvidencePath, sourceRe
 import type { VisibleBrowserFrame } from '../browser.js';
 import { parseFrozenAssetSource, compareAssetTargets, readTargetAsset, type AssetTargetObservation, type CollectionAssetBinding } from './asset-target.js';
 import { collectionVerificationFailureClass, summarizeCollectionTargetReport } from './verification-summary.js';
+import { CollectionTargetReports } from './report-store.js';
 export const COLLECTION_TARGET_VERIFIER_VERSION=4;
 
 /** Generation and evaluation share only the verified frozen decision, never mutable run state. */
@@ -323,8 +324,7 @@ export function collectionTargetGate(report:CollectionTargetReport|undefined,tas
   return !!report&&report.verifierVersion===COLLECTION_TARGET_VERIFIER_VERSION&&report.state==='complete'&&report.checks.length>0&&report.checks.every(check=>check.status==='verified')&&report.taskId===task.id&&report.inputVersionId===task.versionId&&report.collectionId===task.collectionId&&report.collectionVersionId===task.collectionVersionId&&report.manifestId===manifest.id&&report.manifestRevision===manifest.revision&&report.manifestHash===collectionHash(JSON.stringify(manifest))&&report.generatedSiteId===task.generatedSiteId&&!!task.siteRevision&&report.siteRevision===task.siteRevision;
 }
 export function latestCollectionTargetReport(store:AutomationStore,task:AutomationTask,manifest:RequirementManifest):CollectionTargetReport|undefined {
-  store.db.exec('CREATE TABLE IF NOT EXISTS auto_collection_target_reports(id TEXT PRIMARY KEY,task_id TEXT NOT NULL,binding TEXT NOT NULL,created_at INTEGER NOT NULL,json TEXT NOT NULL)');
-  return store.db.prepare('SELECT json FROM auto_collection_target_reports WHERE task_id=? ORDER BY created_at DESC,rowid DESC').all(task.id).map(row=>JSON.parse(row.json) as CollectionTargetReport).find(report=>report.verifierVersion===COLLECTION_TARGET_VERIFIER_VERSION&&report.inputVersionId===task.versionId&&report.collectionId===task.collectionId&&report.collectionVersionId===task.collectionVersionId&&report.manifestId===manifest.id&&report.manifestRevision===manifest.revision&&report.manifestHash===collectionHash(JSON.stringify(manifest))&&report.generatedSiteId===task.generatedSiteId&&report.siteId===store.site(task.generatedSiteId||'')?.siteId&&report.siteRevision===task.siteRevision);
+  return new CollectionTargetReports(store).latest({taskId:task.id,verifierVersion:COLLECTION_TARGET_VERIFIER_VERSION,inputVersionId:task.versionId,collectionId:task.collectionId,collectionVersionId:task.collectionVersionId,manifestId:manifest.id,manifestRevision:manifest.revision,manifestHash:collectionHash(JSON.stringify(manifest)),generatedSiteId:task.generatedSiteId??undefined,siteId:store.site(task.generatedSiteId||'')?.siteId,siteRevision:task.siteRevision});
 }
 
 /** Standard frozen collection → current target verification. Read-only and independently persisted. */
@@ -661,6 +661,9 @@ export async function verifyCollectionTarget(options:VerifyCollectionTargetOptio
   if(retryable)report.limitations.push(`本次绑定保留 ${retryable} 个失败读取检查点，仅用于推进完整扫描，不代表核验通过；完成扫描后保持未验证，宿主可显式设置 retryTransientFailures=true 仅重试这些对象，成功响应继续复用。`);
   report.issues=report.checks.filter(check=>check.status==='missing'&&check.kind!=='binding').map(check=>({severity:'major',title:bounded('B段宿主核验：'+check.id,240),detail:bounded(check.reason,3000),evidence:check.evidence.slice(0,100)}));
   report.summary=summarizeCollectionTargetReport(report);
-  report.artifacts=[...new Map(report.artifacts.map(file=>[file.name,file])).values()];write('report',{...report,artifacts:[...report.artifacts]});
-  store.db.prepare('INSERT INTO auto_collection_target_reports VALUES(?,?,?,?,?)').run(report.id,task.id,binding,report.checkedAt,JSON.stringify(report));store.event(task.id,`B段宿主核验 ${report.state}：本轮已覆盖 ${report.checkedPages}/${report.expectedPages} 个来源路径；报告 ${report.id}`);return report;
+  report.artifacts=[...new Map(report.artifacts.map(file=>[file.name,file])).values()];
+  const reports=new CollectionTargetReports(store),hash=reports.fingerprint(report),unchanged=reports.unchanged(report,hash);
+  if(unchanged){store.event(task.id,`B段核验内容未变化，复用报告 ${unchanged.id}；仍保留当前核验状态 ${unchanged.state}`);return unchanged;}
+  write('report',{...report,artifacts:[...report.artifacts]});
+  reports.save(report,hash);store.event(task.id,`B段宿主核验 ${report.state}：本轮已覆盖 ${report.checkedPages}/${report.expectedPages} 个来源路径；报告 ${report.id}`);return report;
 }

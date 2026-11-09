@@ -17,6 +17,49 @@ import { COLLECTION_TARGET_VERIFIER_VERSION, verifyCollectionTarget, collectionT
 import { acceptedAssetGapIndex } from '../server/automation/collection/accepted-gaps.js';
 import { collectionHash } from '../server/automation/collection/runtime.js';
 
+test('latest target reports hydrate one indexed record after legacy backfill, retaining tie order and historical bodies',async()=>{
+  const f=fixture();try{
+    const report=await f.verify(),sameTime=report.checkedAt;
+    const last={...report,id:randomUUID(),checkedAt:sameTime,summary:undefined,limitations:[...report.limitations,'historical-payload'.repeat(10000)]};
+    const stale={...last,id:randomUUID(),siteRevision:'another-revision'};
+    for(const item of [last,stale])f.db.prepare('INSERT INTO auto_collection_target_reports VALUES(?,?,?,?,?)').run(item.id,item.taskId,item.binding,item.checkedAt,JSON.stringify(item));
+    f.db.exec('DROP TABLE auto_collection_target_report_index');
+    const prepare=f.db.prepare.bind(f.db);let hydrated=0;
+    f.db.prepare=sql=>{
+      const statement=prepare(sql);
+      if(/^\s*SELECT json FROM auto_collection_target_reports\b/i.test(sql)){
+        assert.match(sql,/WHERE id=/,'full report queries must select one indexed identity');
+        return {...statement,all:()=>{throw new Error('bulk report hydration');},get:(...args:unknown[])=>{hydrated++;return statement.get(...args);}};
+      }
+      return statement;
+    };
+    assert.equal(latestCollectionTargetReport(f.store,f.task,f.manifest)?.id,last.id);
+    assert.equal(hydrated,1);
+    f.db.prepare=prepare;
+    assert.deepEqual(JSON.parse(f.db.prepare('SELECT json FROM auto_collection_target_reports WHERE id=?').get(last.id).json),JSON.parse(JSON.stringify(last)));
+    const key=f.db.prepare('SELECT lookup_key FROM auto_collection_target_report_index WHERE id=?').get(last.id).lookup_key;
+    const plan=f.db.prepare('EXPLAIN QUERY PLAN SELECT id FROM auto_collection_target_report_index WHERE task_id=? AND lookup_key=? ORDER BY created_at DESC,source_order DESC LIMIT 1').all(f.task.id,key);
+    assert.ok(plan.some(row=>row.detail.includes('auto_collection_target_lookup')));
+    assert.ok(plan.every(row=>!row.detail.includes('TEMP B-TREE')));
+  }finally{f.close();}
+});
+
+test('unchanged target checks reuse report bytes and identity without certifying missing or unverified results',async()=>{
+  for(const failed of [false,true]){
+    const f=fixture();try{
+      if(failed)f.options.dependencies!.readHttp=async()=>({status:503,body:'temporarily unavailable'});
+      const first=await f.verify(),count=()=>f.db.prepare('SELECT COUNT(*) AS count FROM auto_collection_target_reports').get().count;
+      const files=()=>readdirSync(resolve(f.directory,'automation-runs',f.task.id,'evidence')).filter(name=>name.startsWith('collection-target-report-'));
+      const before=files();assert.equal(count(),1);
+      const second=await f.verify();assert.equal(second.id,first.id);assert.equal(second.state,first.state);assert.equal(count(),1);assert.deepEqual(files(),before);
+      assert.equal(collectionTargetGate(second,f.task,f.manifest),!failed);
+      f.task.siteRevision=randomUUID();f.store.beginSiteChange(f.task);
+      const revised=await f.verify();assert.notEqual(revised.id,first.id);assert.equal(count(),2);
+      assert.equal(JSON.parse(f.db.prepare('SELECT json FROM auto_collection_target_reports WHERE id=?').get(first.id).json).siteRevision,first.siteRevision);
+    }finally{f.close();}
+  }
+});
+
 interface Page {path:string;title?:string;body?:string;type?:string;links?:string[]}
 function fixture(pages:Page[]=[{path:'/123.aspx?q=2'}],dynamic:string[]=[]){
   const directory=mkdtempSync(resolve(tmpdir(),'collection-target-')),db=new Database(':memory:'),store=new AutomationStore(db),vault=new Vault(directory);

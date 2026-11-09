@@ -8,7 +8,7 @@ import { scoreTone, siteLink } from '../../lib/task-list';
 import { siteReportLink } from '../../lib/site-reports';
 import { siteDeliveryStates, type SiteDeliveryPage } from '../../../../shared/site-delivery';
 import { scenarios } from '../../../../shared/automation';
-import { refresh, workspace, scopeName } from './common';
+import { refreshStatus, workspace, scopeName } from './common';
 import { useTaskSection } from './use-task-section';
 
 const query = ref(''), search = ref(''), state = ref(''), page = ref(1);
@@ -19,8 +19,8 @@ const { data, loading, error, load } = useTaskSection<SiteDeliveryPage>(() =>
 let timer: ReturnType<typeof setInterval> | undefined, debounce: ReturnType<typeof setTimeout> | undefined;
 watch(query, value => { clearTimeout(debounce); debounce = setTimeout(() => { search.value = value; page.value = 1; }, 250); });
 watch(state, () => page.value = 1);
-function reload() { void load(); void refresh(); }
-onMounted(() => { void refresh(); timer = setInterval(reload, 4000); });
+function reload() { if(!loading.value)void load(); void refreshStatus(); }
+onMounted(() => { void refreshStatus(); timer = setInterval(() => {if(!document.hidden)reload();}, 4000); });
 onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
 </script>
 

@@ -33,7 +33,7 @@ function reportContext(store: AutomationStore, siteId: string, threshold: number
     json_extract(json,'$.optimization.state') AS optimizationState,
     json_extract(json,'$.optimization.reportId') AS reportId,
     json_extract(json,'$.optimization.policy.targetScore') AS targetScore
-    FROM auto_tasks WHERE site_key=? ORDER BY created_at DESC, rowid DESC`).all(siteId).map(row => ({
+    FROM auto_task_index WHERE site_key=? ORDER BY created_at DESC, rowid DESC`).all(siteId).map(row => ({
       ...row, stopped: Boolean(row.stopped),
       optimization: row.optimizationState ? { state: row.optimizationState, reportId: row.reportId, policy: { targetScore: row.targetScore } } : undefined,
     })) as ReportIdentity[];
@@ -46,7 +46,7 @@ export function registerSiteReportApi(app: FastifyInstance, store: AutomationSto
     const { id } = params.parse(request.params);
     const query = z.object({ page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(10) }).parse(request.query);
     if (!store.site(id)) return reply.code(404).send({ error: '生成站不存在' });
-    const total = Number(store.db.prepare("SELECT COUNT(*) AS total FROM auto_tasks WHERE site_key=? AND kind='evaluation'").get(id).total);
+    const total = Number(store.db.prepare("SELECT COUNT(*) AS total FROM auto_task_index WHERE site_key=? AND kind='evaluation'").get(id).total);
     const pages = Math.max(1, Math.ceil(total / query.pageSize)), page = Math.min(query.page, pages);
     const context = reportContext(store, id, threshold());
     const items: SiteEvaluationRecord[] = store.db.prepare(`SELECT id, status, created_at AS createdAt,
@@ -54,7 +54,7 @@ export function registerSiteReportApi(app: FastifyInstance, store: AutomationSto
       json_extract(json,'$.optimizationRound') AS optimizationRound,
       CASE WHEN status='completed' AND json_extract(json,'$.stopped')=1 AND json_type(json,'$.report')='object'
         THEN json_object('quality',json_extract(json,'$.report.quality'),'scores',json_extract(json,'$.report.scores')) END AS report
-      FROM auto_tasks WHERE site_key=? AND kind='evaluation'
+      FROM auto_task_index WHERE site_key=? AND kind='evaluation'
       ORDER BY created_at DESC, rowid DESC LIMIT ? OFFSET ?`).all(id, query.pageSize, (page - 1) * query.pageSize).map(row => ({
         id: row.id, scope: row.scope, status: row.status, stopped: Boolean(row.stopped), createdAt: row.createdAt,
         optimizationRound: row.optimizationRound ?? undefined,

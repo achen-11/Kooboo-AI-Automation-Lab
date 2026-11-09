@@ -27,6 +27,10 @@ export class AutomationWorker{
   private learningReady=false;
   private lockId=randomUUID();
   private lockHeld=false;
+  onOwnershipChanged?:()=>void;
+  ownedIds(){return [...new Set([...this.running.keys(),...this.learning.keys()])];}
+  private own(id:string,item:{controller:AbortController;promise:Promise<void>}){this.running.set(id,item);this.onOwnershipChanged?.();}
+  private release(id:string,controller?:AbortController){if(!controller||this.running.get(id)?.controller===controller){this.running.delete(id);this.onOwnershipChanged?.();}}
   constructor(readonly store:AutomationStore,private vault:Vault,private directory:string,private execute:{generation:Execute;evaluation:Execute}={generation:executeGeneration,evaluation:executeEvaluation},private browserReady=()=>existsSync(chromium.executablePath()),private followupExecute:FollowupExecute=executeFollowup){}
   start(){
     if(this.timer)return;
@@ -45,34 +49,37 @@ export class AutomationWorker{
     if(this.stopping||this.ticking)return;this.ticking=true;
     try{
       const settings=this.vault.automation();if(!settings.enabled)return;
-      for(const root of this.store.tasks().filter(t=>t.optimization&&!this.running.has(t.id))){
+      for(const header of this.store.headers().filter(t=>t.optimization&&!['completed','stopped','planning'].includes(t.optimization.state)&&t.stopped&&!['following-up','pending','interrupted','cancelled','cancelling'].includes(t.status)&&!this.running.has(t.id))){
+        const root=this.store.task(header.id,false)!;
         try{advanceOptimization(root,this.store,settings);}catch(error){stopOptimization(root,this.store,'优化调度无法继续：'+(error as Error).message,['查看执行记录，核实站点、原会话与报告。']);}
       }
       // Executor-injected test workers do not start real model side effects.
       if(this.execute.generation===executeGeneration&&this.execute.evaluation===executeEvaluation){
         const experiences=new ExperienceStore(this.store);
         if(!this.learningReady){experiences.recover();this.learningReady=true;}
-        for(const task of this.store.tasks().filter(t=>t.learningPolicy?.collect&&t.stopped&&(t.report&&t.status==='completed'||t.interruption&&t.status==='interrupted')))queueReflection(task,this.store);
+        for(const id of this.store.reflectionCandidates())queueReflection(this.store.task(id,false)!,this.store);
         const limit=settings.learning?.concurrency||1;
-        while(this.learning.size<limit){const run=experiences.claim(run=>{if(this.learning.has(run.id))return false;const root=this.store.task(run.workflowId);return !!root&&(!root.optimization||['completed','stopped'].includes(root.optimization.state))&&!this.store.workflowIds(root).some(id=>{const t=this.store.task(id);return t&&(!t.stopped||['queued','following-up'].includes(t.status));});});if(!run)break;const controller=new AbortController();const promise=reflectExperience(run,this.store,this.vault,this.directory,controller.signal).catch(error=>{run.status='failed';run.reason=(error as Error).message;experiences.put(run);}).finally(()=>{this.learning.delete(run.id);if(!this.stopping)void this.tick();});this.learning.set(run.id,{controller,promise});}
+        while(this.learning.size<limit){const run=experiences.claim(run=>{if(this.learning.has(run.id))return false;const root=this.store.task(run.workflowId);return !!root&&(!root.optimization||['completed','stopped'].includes(root.optimization.state))&&!this.store.workflowIds(root).some(id=>{const t=this.store.task(id);return t&&(!t.stopped||['queued','following-up'].includes(t.status));});});if(!run)break;const controller=new AbortController();const promise=reflectExperience(run,this.store,this.vault,this.directory,controller.signal).catch(error=>{run.status='failed';run.reason=(error as Error).message;experiences.put(run);}).finally(()=>{this.learning.delete(run.id);this.onOwnershipChanged?.();if(!this.stopping)void this.tick();});this.learning.set(run.id,{controller,promise});this.onOwnershipChanged?.();}
       }
       for(const kind of ['generation','evaluation'] as const){
         const limit=kind==='generation'?settings.generationConcurrency:settings.evaluationConcurrency;
         for(let i=0;i<limit;i++){
           const task=this.store.claim(kind,limit,t=>!this.running.has(t.id)&&autonomousReady(t));if(!task)break;
           const controller=new AbortController();
-          const promise=this.run(task,controller,settings.timeoutMinutes).finally(()=>{if(this.running.get(task.id)?.controller===controller)this.running.delete(task.id);if(!this.stopping)void this.tick();});
-          this.running.set(task.id,{controller,promise});
+          const promise=this.run(task,controller,settings.timeoutMinutes).finally(()=>{this.release(task.id,controller);if(!this.stopping)void this.tick();});
+          this.own(task.id,{controller,promise});
         }
       }
       for(let i=0;i<settings.followup.concurrency;i++){
         const task=this.store.claimFollowup(settings.followup.concurrency,t=>!this.running.has(t.id)&&autonomousReady(t));if(!task)break;
-        const controller=new AbortController();const promise=this.runFollowup(task,controller).finally(()=>{if(this.running.get(task.id)?.controller===controller)this.running.delete(task.id);if(!this.stopping)void this.tick();});
-        this.running.set(task.id,{controller,promise});
+        const controller=new AbortController();const promise=this.runFollowup(task,controller).finally(()=>{this.release(task.id,controller);if(!this.stopping)void this.tick();});
+        this.own(task.id,{controller,promise});
       }
-      if(![...this.running.keys()].some(id=>{const task=this.store.task(id);return task?.delivery&&['running','verifying'].includes(task.delivery.status);})){
-        const task=this.store.tasks().toReversed().find(t=>t.delivery?.status==='queued'&&(t.delivery.nextAt||0)<=Date.now()&&!this.running.has(t.id)&&!this.store.tasks().some(other=>other.id!==t.id&&other.generatedSiteId===t.generatedSiteId&&!other.stopped));
-        if(task){const controller=new AbortController();task.delivery!.status=task.delivery!.target?'verifying':'running';task.delivery!.stopped=false;this.store.put(task);const promise=this.runDelivery(task,controller).finally(()=>{this.running.delete(task.id);if(!this.stopping)void this.tick();});this.running.set(task.id,{controller,promise});}
+      if(![...this.running.keys()].some(id=>{const task=this.store.header(id);return task?.delivery&&['running','verifying'].includes(task.delivery.status);})){
+        const headers=this.store.headers();
+        const candidate=headers.toReversed().find(t=>t.delivery?.status==='queued'&&(t.delivery.nextAt||0)<=Date.now()&&!this.running.has(t.id)&&!headers.some(other=>other.id!==t.id&&other.generatedSiteId===t.generatedSiteId&&!other.stopped));
+        const task=candidate?this.store.task(candidate.id,false):undefined;
+        if(task){const controller=new AbortController();task.delivery!.status=task.delivery!.target?'verifying':'running';task.delivery!.stopped=false;this.store.put(task);const promise=this.runDelivery(task,controller).finally(()=>{this.release(task.id);if(!this.stopping)void this.tick();});this.own(task.id,{controller,promise});}
       }
     }finally{this.ticking=false;}
   }

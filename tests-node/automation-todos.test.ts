@@ -11,7 +11,7 @@ import { initialPrice, calculateUsage, normalizeUsage, priceBand } from '../serv
 import type { UsageObservation } from '../shared/billing.js';
 import { materialPath, uniqueMaterialPaths, packageGroups } from '../shared/materials.js';
 import { usageCapture } from '../server/automation/usage-proxy.js';
-import { queueDelivery, executeDelivery, expectedDeliveryPaths } from '../server/automation/delivery.js';
+import { queueDelivery, executeDelivery, expectedDeliveryPaths, checkDeliveryAccess } from '../server/automation/delivery.js';
 import { AutomationWorker } from '../server/automation/worker.js';
 import { runInNewContext } from 'node:vm';
 import { GenerationContextStore, generationInputLimits } from '../server/automation/generation-context.js';
@@ -91,6 +91,22 @@ test('migration preserves source report, saves successful target before verifica
   await executeDelivery(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(2000),verify);assert.equal(requests,1);assert.equal(verifications,1);assert.deepEqual(t.report,report);assert.equal(t.environmentId,f.env);await executeDelivery(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(2000),verify);assert.equal(requests,1);assert.equal(verifications,2);
   delete t.delivery!.target;t.delivery!.status='uncertain';await assert.rejects(()=>executeDelivery(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(2000),verify),/禁止自动再次发送/);assert.equal(requests,1);
 }finally{await close(server);await f.close();}});
+
+test('delivery needs only the source connection; receipt access checks ignore historical target connections and send no management credentials',async()=>{
+  const f=await fixture();const requests:{url:string;authorization?:string}[]=[];
+  const server=createServer((req,res)=>{requests.push({url:req.url!,authorization:req.headers.authorization});res.setHeader('Content-Type','text/html');res.end('<html>Delivered</html>');});const origin=await listen(server);
+  try{
+    const raw=f.vault.get();f.vault.update({...raw,environments:[raw.environments[0]]});
+    const publicEnvironment=f.vault.public().environments[0];assert.equal(publicEnvironment.delivery!.enabled,true);assert.equal(publicEnvironment.delivery!.targetEnvironmentId,undefined);
+    const task=f.done();queueDelivery(task,f.automationStore,f.vault);assert.equal(task.delivery!.policy.targetEnvironmentId,undefined);assert.equal(task.delivery!.targetOrigin,undefined);
+    task.delivery!.target={siteId:randomUUID(),siteUrl:origin};task.delivery!.policy.targetEnvironmentId=randomUUID();task.delivery!.targetOrigin='https://obsolete-target.test';
+    const report=structuredClone(task.report);const paths=await checkDeliveryAccess(task,f.automationStore,f.directory,AbortSignal.timeout(2000));
+    assert.deepEqual(paths,['/']);assert.equal(task.delivery!.targetOrigin,origin);assert.equal(task.delivery!.checks[0].ok,true);assert.deepEqual(task.report,report);
+    assert.ok(requests.length);assert.ok(requests.every(req=>req.url==='/'&&!req.authorization));assert.ok(!requests.some(req=>req.url.includes('Site/List')));
+    const requestCount=requests.length;task.delivery!.target={siteId:randomUUID(),siteUrl:'https://user:password@invalid.test'};
+    await assert.rejects(()=>checkDeliveryAccess(task,f.automationStore,f.directory,AbortSignal.timeout(2000)));assert.equal(requests.length,requestCount);
+  }finally{await close(server);await f.close();}
+});
 
 test('unknown migration response remains uncertain, blocks source mutation and can adopt a receipt without another migration',async()=>{const f=await fixture();const server=createServer((req,res)=>{if(req.method==='GET'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify([{siteId:f.site.siteId,homePageLink:f.site.url}]));}else res.end('not-json');});const endpoint=await listen(server);try{
   const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:endpoint,delivery:{...e.delivery!,endpoint}}:e)});const t=f.done();queueDelivery(t,f.automationStore,f.vault);await executeDelivery(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(2000),async()=>assert.fail('must not verify without receipt'));assert.equal(t.delivery!.status,'uncertain');const g=f.create('generation');assert.equal(f.automationStore.claim('generation',1),undefined);assert.ok(g);

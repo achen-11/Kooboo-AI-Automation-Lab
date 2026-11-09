@@ -3,6 +3,8 @@ import { existsSync, mkdirSync, readFileSync, writeFileSync, chmodSync, renameSy
 import { resolve } from 'node:path';
 import type { PublicSettings, RuntimeSettings } from '../../shared/types.js';
 import { settingsSchema } from './validation.js';
+import { Conflict } from './store.js';
+import type { KoobooConnectionInput } from '../../shared/kooboo-auth.js';
 import { defaultAutomationSettings, defaultFollowupSettings, defaultOptimizationPolicy, type AutomationSettings } from '../../shared/automation.js';
 
 export class Vault {
@@ -46,7 +48,7 @@ export class Vault {
   public(): PublicSettings {
     this.refresh();
     const { model, environments, ...rest } = this.current;
-    return { ...rest, execution: this.current.execution || { timeoutSeconds: 300, captureAttempts: 2 }, model: { endpoint: model.endpoint, name: model.name, hasApiKey: Boolean(model.apiKey) }, environments: environments.map(({ token, delivery, ...env }) => ({ ...env, hasToken: Boolean(token),...(delivery?{delivery:(({token,...policy})=>({...policy,hasToken:!!token}))(delivery)}:{}) })), credentials: this.credentials };
+    return { ...rest, execution: this.current.execution || { timeoutSeconds: 300, captureAttempts: 2 }, model: { endpoint: model.endpoint, name: model.name, hasApiKey: Boolean(model.apiKey) }, environments: environments.map(({ token, delivery, ...env }) => ({ ...env, hasToken: Boolean(token),...(delivery?{delivery:(({token,targetEnvironmentId:_legacyTarget,...policy})=>({...policy,hasToken:!!token}))(delivery)}:{}) })), credentials: this.credentials };
   }
   importInitial(settings: unknown, credentials: PublicSettings['credentials']): void {
     const input = settingsSchema.parse(settings);
@@ -65,12 +67,24 @@ export class Vault {
       model: { endpoint: input.model.endpoint.replace(/\/$/, ''), name: input.model.name, apiKey: input.model.clearKey ? '' : input.model.apiKey || this.current.model.apiKey },
       environments: input.environments.map((env) => ({
         id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin,
-        ...(env.delivery?{delivery:{enabled:env.delivery.enabled,endpoint:env.delivery.endpoint,targetEnvironmentId:env.delivery.targetEnvironmentId,auto:env.delivery.auto,requirePassed:env.delivery.requirePassed,timeoutSeconds:env.delivery.timeoutSeconds,token:env.delivery.clearToken?'':env.delivery.token||this.current.environments.find(old=>old.id===env.id)?.delivery?.token||''}}:(this.current.environments.find(old=>old.id===env.id)?.delivery?{delivery:this.current.environments.find(old=>old.id===env.id)!.delivery}:{})),
+        ...(env.delivery?{delivery:{enabled:env.delivery.enabled,endpoint:env.delivery.endpoint,auto:env.delivery.auto,requirePassed:env.delivery.requirePassed,timeoutSeconds:env.delivery.timeoutSeconds,token:env.delivery.clearToken?'':env.delivery.token||this.current.environments.find(old=>old.id===env.id)?.delivery?.token||''}}:(this.current.environments.find(old=>old.id===env.id)?.delivery?{delivery:this.current.environments.find(old=>old.id===env.id)!.delivery}:{})),
         token: env.clearToken ? '' : env.token || this.current.environments.find((old) => old.id === env.id)?.token || '',
       })),
     };
     this.persist();
     return this.public();
+  }
+  connectEnvironment(connection: KoobooConnectionInput, token: string, expected: RuntimeSettings['environments'][number] | undefined): PublicSettings['environments'][number] {
+    this.refresh();
+    const previous = this.current.environments.find(env => env.id === connection.id);
+    const identity = (env: typeof previous) => env && [env.id, env.name, env.origin, env.apiOrigin, env.token];
+    if (JSON.stringify(identity(previous)) !== JSON.stringify(identity(expected))) throw new Conflict('登录期间连接配置已变更，请重新登录');
+    const connected = { ...previous, ...connection, token };
+    const environments = previous ? this.current.environments.map(env => env.id === connection.id ? connected : env) : [...this.current.environments, connected];
+    settingsSchema.parse({ ...this.current, environments });
+    this.current = { ...this.current, environments };
+    this.persist();
+    return this.public().environments.find(env => env.id === connection.id)!;
   }
   automation(): AutomationSettings {
     const saved = this.get().automation;

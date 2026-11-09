@@ -72,7 +72,7 @@ export const defaultAutomationSettings: AutomationSettings = {
   },
 };
 
-export interface DeliveryPolicy { enabled: boolean; endpoint: string; targetEnvironmentId: string; auto: boolean; requirePassed: boolean; timeoutSeconds: number }
-export interface DeliveryRun { id: string; policy: DeliveryPolicy; status: 'queued'|'running'|'uncertain'|'verifying'|'completed'|'failed'; targetOrigin:string; stopped?:boolean; attempts?:number; nextAt?:number; artifacts?:MaterialFile[]; verification?:{summary:string;verified:string[];unverified:string[];evidence:string[]}; verificationThreadId?:string; sourceEnvironmentId: string; sourceSiteId: string; sourceUrl: string; evaluationTaskId: string; target?: {siteId: string; siteUrl: string}; attemptedAt?: number; updatedAt: number; error: string; checks: {url: string; status: number|null; ok: boolean; detail: string}[]; verifiedAt?: number }
+export interface DeliveryPolicy { enabled: boolean; endpoint: string; /** Historical snapshots only; delivery destinations come from the migration receipt. */ targetEnvironmentId?: string; auto: boolean; requirePassed: boolean; timeoutSeconds: number }
+export interface DeliveryRun { id: string; policy: DeliveryPolicy; status: 'queued'|'running'|'uncertain'|'verifying'|'completed'|'failed'; targetOrigin?:string; stopped?:boolean; attempts?:number; nextAt?:number; artifacts?:MaterialFile[]; verification?:{summary:string;verified:string[];unverified:string[];evidence:string[]}; verificationThreadId?:string; sourceEnvironmentId: string; sourceSiteId: string; sourceUrl: string; evaluationTaskId: string; target?: {siteId: string; siteUrl: string}; attemptedAt?: number; updatedAt: number; error: string; checks: {url: string; status: number|null; ok: boolean; detail: string}[]; verifiedAt?: number }
 
-export const defaultDeliveryPolicy:DeliveryPolicy={enabled:false,endpoint:'https://launch.kooboo.nl/api/sitemigrate',targetEnvironmentId:'',auto:false,requirePassed:true,timeoutSeconds:180};
+export const defaultDeliveryPolicy:DeliveryPolicy={enabled:false,endpoint:'https://launch.kooboo.nl/api/sitemigrate',auto:false,requirePassed:true,timeoutSeconds:180};

@@ -1,10 +1,13 @@
 <script setup lang="ts">
 import { notify } from '../lib/notifications';
 import { computed, ref, watch } from 'vue';
-import { Save, Plus, Trash2, Copy, Eye, EyeOff, Cable, LoaderCircle, Pause, Play } from '@lucide/vue';
+import { Save, Plus, Trash2, Copy, Eye, EyeOff, Cable, LoaderCircle, Pause, Play, LogIn } from '@lucide/vue';
 import BaseSelect from '../components/BaseSelect.vue';
+import Disclosure from '../components/Disclosure.vue';
+import KoobooLoginDialog from '../components/KoobooLoginDialog.vue';
 import { defaultDeliveryPolicy } from '../../../shared/automation';
 import type { PublicSettings } from '../../../shared/types';
+import type { KoobooLoginResult } from '../../../shared/kooboo-auth';
 import { api, platform, saveSettings, message } from '../api';
 
 const props = defineProps<{ environmentsOnly: boolean }>();
@@ -23,6 +26,7 @@ const dirty = computed(() => JSON.stringify(form.value) !== baseline.value);
 const saving = ref(false), error = ref('');
 const testing = ref(''), testMessages = ref<Record<string, { ok: boolean; text: string }>>({});
 const reveal = ref<Record<string, boolean>>({});
+const loginDialog = ref<InstanceType<typeof KoobooLoginDialog>>();
 const modelTesting = ref(false);
 const modelTestResult = ref<{ ok: boolean; text: string } | null>(null);
 const modelDirty = computed(() => JSON.stringify(form.value.model) !== JSON.stringify(JSON.parse(baseline.value).model));
@@ -40,6 +44,26 @@ function updateOrigin(index: number, value: string): void {
   const env = form.value.environments[index];
   if (env.apiOrigin === env.origin || !env.apiOrigin) env.apiOrigin = value;
   env.origin = value;
+}
+function loginConnected(result: Extract<KoobooLoginResult, { status: 'connected' }>): void {
+  const saved = result.environment;
+  const draft = form.value.environments.find(env => env.id === saved.id);
+  if (!draft) return;
+  const baselineForm = JSON.parse(baseline.value) as ReturnType<typeof initialForm>;
+  let previous = baselineForm.environments.find(env => env.id === saved.id);
+  if (!previous) {
+    previous = { ...saved, token: '', clearToken: false, delivery: { ...defaultDeliveryPolicy, ...saved.delivery, hasToken: saved.delivery?.hasToken || false, token: '', clearToken: false } };
+    baselineForm.environments.push(previous);
+  }
+  const connected = { name: saved.name, origin: saved.origin, apiOrigin: saved.apiOrigin, hasToken: saved.hasToken, token: '', clearToken: false };
+  Object.assign(draft, connected); Object.assign(previous, connected);
+  baseline.value = JSON.stringify(baselineForm);
+  if (platform.settings) {
+    const existing = platform.settings.environments.findIndex(env => env.id === saved.id);
+    if (existing < 0) platform.settings.environments.push(saved); else platform.settings.environments[existing] = saved;
+  }
+  testMessages.value[saved.id] = { ok: true, text: `连接成功 · 可访问 ${result.sites} 个站点` };
+  notify.success('Kooboo 已连接，访问凭据已加密保存');
 }
 async function testConnection(id: string): Promise<void> {
   testing.value = id;
@@ -77,13 +101,14 @@ async function copy(value: string): Promise<void> {
           <label class="field"><span>Kooboo 环境地址</span><input :value="env.origin" type="url" class="input" placeholder="http://localhost:3000" required @input="updateOrigin(index, ($event.target as HTMLInputElement).value)" /></label>
           <label class="field"><span>平台访问地址</span><input v-model="env.apiOrigin" type="url" class="input" placeholder="默认与环境地址相同" required /></label>
         </div>
-        <label class="field credential-field"><span>访问令牌 <small>{{ env.hasToken ? '已保存，留空保留' : 'Bearer Token' }}</small></span><div class="input-with-action"><input v-model="env.token" :type="reveal[env.id] ? 'text' : 'password'" autocomplete="new-password" :placeholder="env.hasToken ? '输入新令牌可替换当前令牌' : '填写平台自己的 Kooboo 访问令牌'" /><button type="button" class="icon-button" :aria-label="reveal[env.id] ? '隐藏令牌' : '显示令牌'" @click="reveal[env.id] = !reveal[env.id]"><EyeOff v-if="reveal[env.id]" :size="18" /><Eye v-else :size="18" /></button></div></label>
+        <div class="connection-login"><button type="button" class="button secondary" :disabled="saving || !env.name.trim() || !env.origin || !env.apiOrigin" @click="loginDialog?.open(env)"><LogIn :size="17" />{{ env.hasToken ? '重新登录' : '登录连接' }}</button><span v-if="env.hasToken" class="text-muted small-text">访问凭据已保存</span></div>
+        <Disclosure label="手动填写访问令牌"><label class="field credential-field"><span>访问令牌 <small>{{ env.hasToken ? '已保存，留空保留' : 'Bearer Token' }}</small></span><div class="input-with-action"><input v-model="env.token" :type="reveal[env.id] ? 'text' : 'password'" autocomplete="new-password" :placeholder="env.hasToken ? '输入新令牌可替换当前令牌' : '填写 Kooboo 访问令牌'" /><button type="button" class="icon-button" :aria-label="reveal[env.id] ? '隐藏令牌' : '显示令牌'" @click="reveal[env.id] = !reveal[env.id]"><EyeOff v-if="reveal[env.id]" :size="18" /><Eye v-else :size="18" /></button></div></label></Disclosure>
         <label class="check-label"><input v-model="env.delivery.enabled" type="checkbox"/>启用跨环境交付</label>
-        <div v-if="env.delivery.enabled" class="delivery-config"><div class="form-grid"><label class="field"><span>迁移接口</span><input v-model="env.delivery.endpoint" type="url" class="input" required/></label><label class="field"><span>目标环境</span><BaseSelect v-model="env.delivery.targetEnvironmentId" required :options="[{ value: '', label: '选择交付环境', disabled: true }, ...form.environments.filter(e=>e.id!==env.id).map((target) => ({ value: target.id, label: (target.name||target.origin) }))]" /></label></div><label class="field credential-field"><span>迁移服务令牌 <small>{{env.delivery.hasToken?'已保存，留空保留':'独立于 Kooboo 访问令牌'}}</small></span><input v-model="env.delivery.token" class="input" type="password" autocomplete="new-password"/></label><div class="form-grid"><label class="field"><span>交付方式</span><BaseSelect :model-value="env.delivery.auto?'auto':'manual'" @update:model-value="v=>env.delivery.auto=v==='auto'" :options="[{ value: 'manual', label: '评测后按需发起' }, { value: 'auto', label: '迁移 / 升级的全站评测后自动交付' }]" /></label><label class="field"><span>迁移接口超时（秒）</span><input v-model.number="env.delivery.timeoutSeconds" class="input" type="number" min="30" max="900" required/></label></div><label class="check-label"><input v-model="env.delivery.requirePassed" type="checkbox"/>源站评测通过后才允许交付</label><p class="text-muted small-text">先在源环境完成评测，迁移后再核验两端站点。首版保留源站，不覆盖已有目标站；结果不确定时先核查回执。</p></div>
+        <div v-if="env.delivery.enabled" class="delivery-config"><label class="field"><span>迁移接口</span><input v-model="env.delivery.endpoint" type="url" class="input" required/></label><label class="field credential-field"><span>迁移服务令牌 <small>{{env.delivery.hasToken?'已保存，留空保留':'独立于 Kooboo 访问令牌'}}</small></span><input v-model="env.delivery.token" class="input" type="password" autocomplete="new-password"/></label><div class="form-grid"><label class="field"><span>交付方式</span><BaseSelect :model-value="env.delivery.auto?'auto':'manual'" @update:model-value="v=>env.delivery.auto=v==='auto'" :options="[{ value: 'manual', label: '评测后按需发起' }, { value: 'auto', label: '迁移 / 升级的全站评测后自动交付' }]" /></label><label class="field"><span>迁移接口超时（秒）</span><input v-model.number="env.delivery.timeoutSeconds" class="input" type="number" min="30" max="900" required/></label></div><label class="check-label"><input v-model="env.delivery.requirePassed" type="checkbox"/>源站评测通过后才允许交付</label><p class="text-muted small-text">交付去向由迁移服务决定，返回目标站后核验两端站点。保留源站；结果不确定时先核查回执。</p></div>
         <div class="inline-actions"><button type="button" class="button secondary small" :disabled="dirty || !!testing" @click="testConnection(env.id)"><LoaderCircle v-if="testing === env.id" class="spin" :size="16" /><Cable v-else :size="16" />测试连接</button><span v-if="testMessages[env.id]" :class="testMessages[env.id].ok ? 'success-text' : 'error-text'" role="status">{{ testMessages[env.id].text }}</span><span v-else-if="dirty" class="text-muted small-text">保存后可测试连接</span></div>
       </section>
       <button v-if="form.environments.length" type="button" class="button secondary" @click="addEnvironment()"><Plus :size="17" />添加环境</button>
-      <p class="page-footnote">环境地址需与插件所报地址一致。访问令牌在本机数据目录中加密保存，不读取浏览器登录态。</p>
+      <p class="page-footnote">环境地址需与插件所报地址一致。账号登录可自动获取并加密保存访问凭据，不保存密码。</p>
     </template>
 
     <template v-else-if="tab === 'runtime'">
@@ -123,9 +148,11 @@ GET /api/evaluations/{evaluationId}
 Authorization: Bearer &lt;查询令牌&gt;</pre><p class="section-note">以上接口地址与令牌可提供给外部 Admin 查询结果。</p></section>
     </template>
   </form>
+  <KoobooLoginDialog ref="loginDialog" @connected="loginConnected" />
 </template>
 
 <style scoped>
+.connection-login{display:flex;align-items:center;gap:12px;margin-top:20px;}
 .delivery-config{display:flex;flex-direction:column;gap:20px;padding:20px;margin-top:16px;background:var(--field);border-radius:12px;}
 .delivery-config>.credential-field{margin-top:0;}
 .delivery-config .input,.delivery-config :deep(.ui-select-trigger){background:var(--paper);}

@@ -66,6 +66,13 @@ export const modelResultSchema = z.object({
     .max(40),
 });
 
+export const environmentConnectionSchema = z.object({
+  id: z.string().uuid(),
+  name: z.string().trim().min(1).max(100),
+  origin: webUrl.transform((url) => new URL(url).origin),
+  apiOrigin: webUrl.transform((url) => new URL(url).origin),
+});
+
 export const settingsSchema = z
   .object({
     threshold: z.number().min(0).max(100),
@@ -79,20 +86,15 @@ export const settingsSchema = z
     execution: z.object({ timeoutSeconds: z.number().int().min(30).max(1800).default(300), captureAttempts: z.number().int().min(1).max(3).default(2) }).default({ timeoutSeconds: 300, captureAttempts: 2 }),
     environments: z
       .array(
-        z.object({
-          id: z.string().uuid(),
-          name: z.string().trim().min(1).max(100),
-          origin: webUrl.transform((url) => new URL(url).origin),
-          apiOrigin: webUrl.transform((url) => new URL(url).origin),
+        environmentConnectionSchema.extend({
           token: z.string().max(10000).optional(),
           clearToken: z.boolean().optional(),
-          delivery:z.object({enabled:z.boolean(),endpoint:webUrl,targetEnvironmentId:z.string(),auto:z.boolean(),requirePassed:z.boolean(),timeoutSeconds:z.number().int().min(30).max(900),token:z.string().max(10000).optional(),clearToken:z.boolean().optional()}).optional(),
+          delivery:z.object({enabled:z.boolean(),endpoint:webUrl,auto:z.boolean(),requirePassed:z.boolean(),timeoutSeconds:z.number().int().min(30).max(900),token:z.string().max(10000).optional(),clearToken:z.boolean().optional()}).optional(),
         })
       )
       .max(50),
   })
   .superRefine((settings, context) => {
-    for(const env of settings.environments){if(env.delivery?.enabled&&(!settings.environments.some(e=>e.id===env.delivery!.targetEnvironmentId)||env.delivery.targetEnvironmentId===env.id))context.addIssue({code:'custom',message:'交付目标必须是另一个已配置的环境'});}
     if (
       new Set(settings.environments.map((env) => env.origin)).size !==
         settings.environments.length ||

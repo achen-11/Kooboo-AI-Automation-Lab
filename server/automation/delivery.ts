@@ -18,15 +18,13 @@ export function queueDelivery(task:AutomationTask,store:AutomationStore,vault:Va
   if(task.delivery)return task;
   const env=vault.get().environments.find(e=>e.id===task.environmentId),config=env?.delivery;
   if(!config?.enabled||!config.token)throw new Conflict('当前连接未启用交付，或缺少迁移令牌');
-  const target=vault.get().environments.find(e=>e.id===config.targetEnvironmentId);
-  if(!target?.token||target.id===task.environmentId)throw new Conflict('请配置另一个可访问的交付环境');
   if(config.requirePassed&&task.report.quality!=='passed')throw new Conflict('当前交付策略要求源站评测通过');
   const site=task.generatedSiteId&&store.site(task.generatedSiteId);if(!site||!site.url)throw new Conflict('缺少生成站身份或地址');
   const related=store.tasks().filter(t=>t.generatedSiteId===site.id);
   if(related.some(t=>!t.stopped||['queued','following-up'].includes(t.status)))throw new Conflict('同一个源站还有执行任务，请等待结束');
   if(related.some(t=>t.id!==task.id&&t.delivery))throw new Conflict('这个源站已有关联交付；请查看原交付记录，首版不重复迁移或覆盖目标站');
-  const {token,...policy}=config;
-  task.delivery={id:randomUUID(),policy,status:'queued',stopped:true,sourceEnvironmentId:task.environmentId,sourceSiteId:site.siteId,sourceUrl:site.url,evaluationTaskId:task.id,targetOrigin:target.origin,updatedAt:Date.now(),error:'',checks:[]};
+  const {token,targetEnvironmentId:_legacyTarget,...policy}=config;
+  task.delivery={id:randomUUID(),policy,status:'queued',stopped:true,sourceEnvironmentId:task.environmentId,sourceSiteId:site.siteId,sourceUrl:site.url,evaluationTaskId:task.id,updatedAt:Date.now(),error:'',checks:[]};
   store.put(task);store.event(task.id,'已排队跨环境交付；源站和评测报告保留不变');return task;
 }
 export function deliveryReceipt(raw:unknown){return receiptSchema.parse(raw);}
@@ -38,20 +36,24 @@ export function expectedDeliveryPaths(task:AutomationTask,directory:string){
   return [...paths].slice(0,100);
 }
 const verificationSchema=z.object({summary:z.string().min(1),verified:z.array(z.string()),unverified:z.array(z.string()),evidence:z.array(z.string()).min(1)}).strict();
-export async function verifyDelivery(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal){
+export async function checkDeliveryAccess(task:AutomationTask,store:AutomationStore,directory:string,signal:AbortSignal){
+  signal.throwIfAborted();
   const delivery=task.delivery!;if(!delivery.target)throw new Error('缺少目标交付回执，不能核验');
-  const targetEnv=vault.get().environments.find(e=>e.id===delivery.policy.targetEnvironmentId);
-  if(targetEnv?.origin!==delivery.targetOrigin)throw new Error('交付环境地址已变更，需先恢复原目标连接后核验');
-  const {request}=koobooClient({...task,environmentId:delivery.policy.targetEnvironmentId},vault,signal);
-  const list=await request('Site/List');const actual=(Array.isArray(list)?list:[]).find(s=>siteIdentity(s).toLowerCase()===delivery.target!.siteId.toLowerCase());if(!actual)throw new Error('目标环境没有找到迁移回执中的站点，请核对目标连接和回执；不会重发迁移');
-  const confirmedUrl=actual.homePageLink||actual.HomePageLink;if(typeof confirmedUrl!=='string'||new URL(confirmedUrl).origin!==new URL(delivery.target.siteUrl).origin)throw new Error('目标回执 URL 与目标环境的实际站点不一致，需核查回执');
-  delivery.target.siteUrl=confirmedUrl;
+  delivery.target=deliveryReceipt(delivery.target);
+  // The migration service owns the destination. Historical target connections are ignored.
+  delivery.targetOrigin=new URL(delivery.target.siteUrl).origin;
   delivery.status='verifying';delivery.error='';store.put(task);
   const paths=expectedDeliveryPaths(task,directory);delivery.checks=[];
   for(const path of paths){const url=new URL(path,delivery.target.siteUrl).href;try{const result=await probeSite(url,signal);delivery.checks.push({...result,ok:true,detail:'HTTP 可访问；业务核验见下方 AI 证据'});}catch(error){delivery.checks.push({url,status:null,ok:false,detail:(error as Error).message});}store.put(task);}
+  signal.throwIfAborted();
+  return paths;
+}
+export async function verifyDelivery(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal){
+  const paths=await checkDeliveryAccess(task,store,directory,signal);
+  const delivery=task.delivery!;
   const work=resolve(directory,'automation-runs',task.id,'delivery',delivery.id);mkdirSync(resolve(work,'evidence'),{recursive:true,mode:0o700});
   const retained=(delivery.artifacts||[]).filter(f=>{try{return createHash('sha256').update(readFileSync(resolve(work,'evidence',f.name))).digest('hex')===f.sha256;}catch{return false;}});
-  const browser=await evaluationBrowser({target:delivery.target.siteUrl,reference:delivery.sourceUrl,content:''},work,signal,retained,files=>{delivery.artifacts=files;store.put(task);});
+  const browser=await evaluationBrowser({target:delivery.target!.siteUrl,reference:delivery.sourceUrl,content:''},work,signal,retained,files=>{delivery.artifacts=files;store.put(task);});
   let usage:Awaited<ReturnType<typeof usageCapture>>|undefined;const startedAt=Date.now();
   try{
     usage=await usageCapture(task.id,'delivery',store,vault,signal);

@@ -7,11 +7,12 @@ async function api(environment: RuntimeSettings['environments'][number], path: s
     body: body === undefined ? undefined : JSON.stringify(body),
     redirect: 'manual', signal: AbortSignal.any([signal, AbortSignal.timeout(20000)]),
   });
+  if (response.status === 401 || response.status === 403) throw new Error('Kooboo 登录已失效或没有访问权限，请在连接设置中重新登录');
   if (!response.ok) throw new Error(`Kooboo 读取失败（HTTP ${response.status}），请检查平台独立配置的环境凭据`);
   return response.json();
 }
-export async function testEnvironment(environment: RuntimeSettings['environments'][number]): Promise<number> {
-  const result = await api(environment, 'Site/List', AbortSignal.timeout(20000));
+export async function testEnvironment(environment: RuntimeSettings['environments'][number], signal = AbortSignal.timeout(20000)): Promise<number> {
+  const result = await api(environment, 'Site/List', signal);
   if (!Array.isArray(result)) throw new Error('环境未返回有效站点列表，请检查登录凭据');
   return result.length;
 }

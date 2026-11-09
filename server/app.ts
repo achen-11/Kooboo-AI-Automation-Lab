@@ -10,8 +10,9 @@ import { Store, Conflict } from './lib/store.js';
 import { Vault } from './lib/vault.js';
 import { listRules, parseRule } from './lib/rules.js';
 import { chromium } from 'playwright';
-import { submissionSchema, webUrl } from './lib/validation.js';
+import { submissionSchema, webUrl, environmentConnectionSchema } from './lib/validation.js';
 import { testEnvironment } from './lib/kooboo.js';
+import { loginKooboo, KoobooLoginError } from './lib/kooboo-auth.js';
 import { Artifacts } from './lib/artifacts.js';
 import { scoringStatus } from '../shared/result.js';
 import { defaultRuleVersion } from './lib/agent-rule.js';
@@ -57,6 +58,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, requestTimeout: 30000 });
   let session = randomUUID() + randomUUID();
   let modelTestRunning = false;
+  const environmentLogins = new Set<string>();
   const knownHosts = new Set(['127.0.0.1', 'localhost', '[::1]']);
   const origins = new Set(['http://127.0.0.1:4180', 'http://localhost:4180', 'http://127.0.0.1:4181', 'http://localhost:4181']);
 
@@ -116,6 +118,27 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   });
   app.get('/api/settings', async (_request, reply) => { reply.header('Cache-Control', 'no-store'); return vault.public(); });
   app.put('/api/settings', async (request) => vault.update(request.body));
+  app.post('/api/environments/login', async (request, reply) => {
+    const { username, password, code, ...connection } = environmentConnectionSchema.extend({
+      username: z.string().trim().min(1, '请填写账号').max(320),
+      password: z.string().min(1, '请填写密码').max(1000),
+      code: z.string().trim().max(100).optional(),
+    }).parse(request.body);
+    const environments = vault.get().environments;
+    const expected = environments.find(env => env.id === connection.id);
+    if (environments.some(env => env.id !== connection.id && env.origin === connection.origin)) throw new Conflict('此环境地址已配置，请在原连接中登录');
+    if (!expected && environments.length >= 50) throw new Conflict('最多配置 50 个环境');
+    if (environmentLogins.has(connection.id)) throw new Conflict('此环境正在登录，请等待结果');
+    environmentLogins.add(connection.id);
+    try {
+      const result = await loginKooboo(connection, { username, password, code });
+      if (result.status !== 'authenticated') return result;
+      return { status: 'connected', environment: vault.connectEnvironment(connection, result.token, expected), sites: result.sites };
+    } catch (error) {
+      if (error instanceof KoobooLoginError) return reply.code(422).send({ error: error.message });
+      throw error;
+    } finally { environmentLogins.delete(connection.id); }
+  });
   app.post('/api/model/test', async (_request, reply) => {
     const model = vault.get().model;
     if (!model.endpoint || !model.name) return reply.code(400).send({ error: '请先保存模型接口地址和模型名称' });

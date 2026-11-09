@@ -52,3 +52,36 @@ test('the production background entry boots and stops against the existing encry
     assert.equal(existsSync(resolve(directory,'automation-worker.lock')),false);
   }finally{rmSync(directory,{recursive:true,force:true});}
 });
+
+test('unconfirmed interruptions do not imply background ownership or restart followups and can be confirmed stopped',async()=>{
+  const directory=mkdtempSync(resolve(tmpdir(),'background-interrupted-'));
+  const f=await createApp({directory,serveWeb:false});
+  try{
+    const login=await f.app.inject({method:'POST',url:'/api/login'}),headers={cookie:String(login.headers['set-cookie']).split(';')[0]};
+    const store=f.automationStore,settings=f.vault.automation();
+    const resource=store.saveResource({name:'Interrupted review',scenario:'materials',description:'',contentUrl:'',referenceUrl:'',externalSource:'',externalId:'',files:[]});
+    const site={id:randomUUID(),resourceId:resource.id,versionId:store.versions(resource.id)[0].id,environmentId:'',siteId:randomUUID(),name:'Existing',url:'https://generated.invalid/',createdAt:Date.now()};store.saveSite(site);
+    const task=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'homepage',environmentId:'',generatedSiteId:site.id,requirements:''},settings)[0];
+    task.stopped=false;store.scheduleFollowup(task,settings.followup);
+    store.interrupt(task,{reason:'Original execution was lost',evidence:['retained-evidence'],attempted:[],nextSteps:['Confirm the original execution has stopped'],resumeFrom:'Keep the existing site and evidence'});
+    const before=store.task(task.id)!,events=store.events(task.id).length;
+    store.recover();store.recover();
+    assert.deepEqual(store.task(task.id),before,'restart must preserve explicit interruption and its evidence');
+    assert.equal(store.events(task.id).length,events);
+    assert.equal(f.automationWorker.owns(task.id),false,'an unresolved stop flag is not an executor claim');
+    const waiting=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'homepage',environmentId:'',generatedSiteId:site.id,requirements:''},settings)[0];
+    assert.equal(store.claim('evaluation',1),undefined,'unknown original execution still reserves capacity');
+    const overview=await f.app.inject({url:'/api/automation/overview?view=status',headers});
+    assert.deepEqual(overview.json().queue,{generation:0,evaluation:0,queued:1});
+    const confirmed=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/confirm-stopped`,headers});
+    assert.equal(confirmed.statusCode,200,confirmed.body);
+    assert.equal(confirmed.json().stopped,true);assert.equal(confirmed.json().followup.executionStopped,true);
+    assert.equal(confirmed.json().status,'interrupted');assert.deepEqual(confirmed.json().interruption,before.interruption);
+    assert.equal(store.claim('evaluation',1)?.id,waiting.id,'confirmation releases the reserved slot');
+    assert.equal(f.automationWorker.owns(waiting.id),true,'a committed running claim still covers the first IPC update');
+    const running=store.task(waiting.id)!;running.status='pending';store.put(running);
+    assert.equal(f.automationWorker.owns(waiting.id),false,'a pending historical claim is not owned');
+    running.status='following-up';store.scheduleFollowup(running,settings.followup);running.followup!.state='running';store.put(running);
+    assert.equal(f.automationWorker.owns(waiting.id),true,'an executing followup remains protected');
+  }finally{await f.app.close();rmSync(directory,{recursive:true,force:true});}
+});

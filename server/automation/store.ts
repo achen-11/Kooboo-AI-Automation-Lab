@@ -293,7 +293,8 @@ export class AutomationStore {
   recover() {
     for(const task of this.tasks()) {
       if(task.delivery&&['running','verifying'].includes(task.delivery.status)){task.delivery.status=task.delivery.target?'queued':'uncertain';task.delivery.stopped=true;task.delivery.error=task.delivery.target?'服务中断，保留目标回执，恢复交付核验。':'服务中断，迁移结果不确定；请核查目标环境并补录回执，不重复发送。';this.put(task);this.notice(task,'交付恢复检查',task.delivery.error);}
-      if(task.stopped)continue;
+      // An explicit interruption must survive restarts without scheduling new followups.
+      if(task.stopped||task.status==='interrupted')continue;
       if(task.autonomy&&task.kind==='generation'&&task.collectionId&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!['cancelling','cancelled'].includes(task.status)){
         task.status='queued';task.stopped=true;task.error='采集执行服务中断；保留批次、进程身份和检查点，先核对原采集操作后接续。';this.put(task);this.event(task.id,task.error);continue;
       }

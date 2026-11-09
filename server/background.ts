@@ -2,6 +2,7 @@ import { fork, type ChildProcess } from 'node:child_process';
 import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { AutomationStore } from './automation/store.js';
+import { taskExecuting } from '../shared/task-presentation.js';
 
 /** Only control messages cross IPC. Task data and secrets stay in the existing stores. */
 export class BackgroundWorkers {
@@ -59,7 +60,9 @@ export class BackgroundWorkers {
     if (this.owned.has(id)) return true;
     // A claim is committed before the executor can publish its first IPC update.
     const header = this.store.header(id);
-    if (header && (!header.stopped || header.delivery?.stopped === false)) return true;
+    if (header && (taskExecuting(header)
+      || !header.stopped && header.status === 'following-up' && header.followup?.state === 'running'
+      || header.delivery?.stopped === false && ['running', 'verifying'].includes(header.delivery.status))) return true;
     return this.store.db.prepare("SELECT id FROM auto_learning_runs WHERE id=? AND status='running'").get(id) !== undefined;
   }
   async stop() {

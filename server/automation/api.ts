@@ -11,7 +11,7 @@ import { stopOptimization } from './optimization.js';
 import { Conflict } from '../lib/store.js';
 import { queueDelivery, deliveryReceipt } from './delivery.js';
 import { probeCodex } from './probe.js';
-import { brief, compactNotice, taskSummary } from '../../shared/task-presentation.js';
+import { brief, compactNotice, taskExecuting, taskSummary } from '../../shared/task-presentation.js';
 import { registerExecutionLogApi } from './execution-log.js';
 import { completenessSettingsSchema } from './completeness.js';
 import { registerLearningApi } from './learning-api.js';
@@ -68,7 +68,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.get('/api/automation/overview',async(request)=>{
     const {view,statusOnly}=z.object({view:z.enum(['compact','status']).optional(),statusOnly:z.literal('1').optional()}).parse(request.query);
     const tasks=store.headers();
-    const queue={generation:tasks.filter(t=>t.kind==='generation'&&!t.stopped&&t.status!=='following-up').length,evaluation:tasks.filter(t=>t.kind==='evaluation'&&!t.stopped&&t.status!=='following-up').length,queued:tasks.filter(t=>t.status==='queued').length};
+    const queue={generation:tasks.filter(t=>t.kind==='generation'&&taskExecuting(t)).length,evaluation:tasks.filter(t=>t.kind==='evaluation'&&taskExecuting(t)).length,queued:tasks.filter(t=>t.status==='queued').length};
     if(view==='status'||statusOnly==='1')return {queue,settings:vault.automation()};
     const byId=new Map(tasks.map(t=>[t.id,t]));
     const visible=tasks.filter(t=>!t.optimizationRootId||t.kind==='evaluation'&&byId.get(t.optimizationRootId)?.evaluationTaskId===t.id);
@@ -235,7 +235,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       store.put(task);store.event(id,'操作者明确开启自动优化；原站、输入、规则与初评报告保留。');
     });return taskSummary(task);
   });
-  app.post('/api/automation/tasks/:id/confirm-stopped',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task||!['pending','interrupted'].includes(task.status)||owns(id))throw new Conflict('只能确认服务中断且没有本机执行器运行的待跟进任务');task.stopped=true;store.put(task);store.event(id,'操作者已确认原执行停止，允许重新排队和跟进');return task;});
+  app.post('/api/automation/tasks/:id/confirm-stopped',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task||!['pending','interrupted'].includes(task.status)||owns(id))throw new Conflict('只能确认服务中断且没有本机执行器运行的待跟进任务');task.stopped=true;if(task.followup)task.followup.executionStopped=true;store.put(task);store.event(id,'操作者已确认原执行停止，允许重新排队和跟进');return task;});
   app.post('/api/automation/tasks/:id/followup',async(request)=>{
     const{id}=params.parse(request.params);const input=z.object({requirements:z.string().trim().min(1).max(100000),kind:z.enum(['generation','evaluation']).optional()}).parse(request.body);const old=store.task(id);
     if(!old||!old.stopped||['queued','running','following-up','cancelling'].includes(old.status))throw new Conflict('请先等待原任务确认停止');

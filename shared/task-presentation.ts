@@ -22,6 +22,10 @@ export interface CompactNotice { id: string; taskId: string; resourceName: strin
 export interface NoticePage<T = CompactNotice> { items: T[]; total: number; unread: number; page: number; pages: number; pageSize: number }
 
 export const stageNames: Record<string, string> = { prepare: '资料准备', generation: '站点生成', handoff: '交接评测', evaluation: '独立评测', delivery: '交付核验', optimization: '质量优化' };
+/** Unconfirmed historical executions reserve capacity but are not running jobs. */
+export function taskExecuting(task: Pick<AutomationTask, 'status' | 'stopped'>): boolean {
+  return !task.stopped && (task.status === 'running' || task.status === 'cancelling');
+}
 export function brief(text: string, max = 160): string {
   const value = text.replace(/\s+/g, ' ').trim();
   return value.length > max ? value.slice(0, max) + '…' : value;

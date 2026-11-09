@@ -9,6 +9,7 @@ import { createTaskEvaluationLoader, scoreTone, siteLink, taskEvaluation } from 
 import { refresh, workspace, scopeName } from './common';
 import { taskStatusNames, scenarios, optimizationStateNames } from '../../../../shared/automation';
 import type { TaskSnapshot, TaskSummary } from '../../../../shared/task-presentation';
+import { taskExecuting } from '../../../../shared/task-presentation';
 const props = defineProps<{ id?: string; reports?: boolean }>();
 const query = ref(''), filter = ref(''), kind = ref(''), page = ref(1);
 const siteFilter = new URLSearchParams(window.location.hash.split('?')[1] || '').get('site');
@@ -47,7 +48,7 @@ watch(() => (props.reports ? visibleTasks.value : []).map(task => task.kind === 
   }
   if (changed) summaryResults.value = next;
 }, { immediate: true });
-const active = computed(() => workspace.tasks.filter(t => !t.stopped && t.status !== 'following-up'));
+const active = computed(() => workspace.tasks.filter(taskExecuting));
 const queued = computed(() => workspace.queue?.queued ?? workspace.tasks.filter(t => t.status === 'queued').length);
 const pending = computed(() => workspace.tasks.filter(t => !t.optimizationRootId&&needsAttention(t)).length);
 const viewportNames: Record<string, string> = { desktop: 'PC', mobile: '移动端', business: '业务' };

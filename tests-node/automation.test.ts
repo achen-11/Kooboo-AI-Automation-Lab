@@ -90,6 +90,30 @@ test('global queue limits span batches and keep a site locked until execution ac
   }finally{if(worker)await worker.stop();await f.close();}
 });
 
+test('queue execution counts exclude interrupted and unconfirmed historical jobs in every overview view',async()=>{
+  const f=await fixture();try{
+    const resource=await f.save();
+    const site={id:randomUUID(),resourceId:resource.id,versionId:f.automationStore.versions(resource.id)[0].id,environmentId:f.environmentId,siteId:randomUUID(),name:'Existing',url:'https://generated.test/',createdAt:Date.now()};f.automationStore.saveSite(site);
+    for(const kind of ['generation','evaluation'] as const){
+      const task=f.automationStore.create({resourceIds:[resource.id],kind,scope:'homepage',environmentId:f.environmentId,generatedSiteId:site.id,requirements:''},defaultAutomationSettings)[0];
+      for(const status of ['queued','running','cancelling','following-up','pending','interrupted','completed','cancelled','failed'] as const){
+        task.status='pending';f.automationStore.put(task);
+        task.status=status;task.stopped=false;f.automationStore.put(task);
+        for(const query of ['', '?view=compact', '?view=status', '?statusOnly=1']){
+          const response=await f.app.inject({url:'/api/automation/overview'+query,headers:f.headers});
+          assert.equal(response.statusCode,200);
+          const queue=response.json().queue;
+          assert.equal(queue[kind],['running','cancelling'].includes(status)?1:0,kind+' '+status+' '+query);
+          assert.equal(queue[kind==='generation'?'evaluation':'generation'],0);
+          assert.equal(queue.queued,status==='queued'?1:0);
+        }
+      }
+      task.status='running';task.stopped=true;f.automationStore.put(task);
+      assert.equal((await f.app.inject({url:'/api/automation/overview?view=status',headers:f.headers})).json().queue[kind],0);
+    }
+  }finally{await f.close();}
+});
+
 test('recovered executions remain pending and locked until explicitly confirmed; no silent redelivery',async()=>{
   const f=await fixture();try{
     const r=await f.save();const t=f.automationStore.create({resourceIds:[r.id],kind:'generation',scope:'homepage',environmentId:f.environmentId,requirements:''},defaultAutomationSettings)[0];

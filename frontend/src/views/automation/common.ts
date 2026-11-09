@@ -2,12 +2,13 @@ import { reactive } from 'vue';
 import { api, message } from '../../api';
 import type { AutomationSettings, GeneratedSite, Resource } from '../../../../shared/automation';
 import type { TaskSummary } from '../../../../shared/task-presentation';
+import type { ResourceFolder } from '../../../../shared/resource-library';
 import { defaultAutomationSettings } from '../../../../shared/automation';
-export const workspace=reactive({resources:[] as Resource[],sites:[] as GeneratedSite[],tasks:[] as TaskSummary[],queue:null as {generation:number;evaluation:number;queued:number}|null,settings:structuredClone(defaultAutomationSettings) as AutomationSettings,loaded:false,error:''});
+export const workspace=reactive({resources:[] as Resource[],resourceFolders:[] as ResourceFolder[],sites:[] as GeneratedSite[],tasks:[] as TaskSummary[],queue:null as {generation:number;evaluation:number;queued:number}|null,settings:structuredClone(defaultAutomationSettings) as AutomationSettings,loaded:false,error:''});
 let loading:Promise<void>|null=null;
 export async function refresh(){
   if(loading)return loading;
-  loading=(async()=>{try{const result=await api<{resources:Resource[];sites:GeneratedSite[];tasks:TaskSummary[];settings:AutomationSettings}>('/automation/overview?view=compact');Object.assign(workspace,result,{loaded:true,error:''});}catch(error){workspace.error=message(error);}finally{loading=null;}})();return loading;
+  loading=(async()=>{try{const result=await api<{resources:Resource[];resourceFolders:ResourceFolder[];sites:GeneratedSite[];tasks:TaskSummary[];settings:AutomationSettings}>('/automation/overview?view=compact');Object.assign(workspace,result,{loaded:true,error:''});}catch(error){workspace.error=message(error);}finally{loading=null;}})();return loading;
 }
 let statusLoading:Promise<void>|null=null;
 export async function refreshStatus(){

@@ -39,8 +39,14 @@ function onHash(): void {
   }
   route.value = window.location.hash.slice(1) || '/tasks';
 }
-onMounted(() => { window.addEventListener('hashchange', onHash); void initialize(); });
-onUnmounted(() => window.removeEventListener('hashchange', onHash));
+function onSidebarShortcut(event: KeyboardEvent) {
+  if (event.defaultPrevented || event.isComposing || event.repeat || !(event.metaKey || event.ctrlKey) || event.altKey || event.shiftKey || event.key.toLowerCase() !== 'b') return;
+  if (event.target instanceof Element && event.target.closest('input,textarea,select,[contenteditable]:not([contenteditable="false"]),[role="textbox"]')) return;
+  event.preventDefault();
+  collapsed.value = !collapsed.value;
+}
+onMounted(() => { window.addEventListener('hashchange', onHash); window.addEventListener('keydown', onSidebarShortcut); void initialize(); });
+onUnmounted(() => { window.removeEventListener('hashchange', onHash); window.removeEventListener('keydown', onSidebarShortcut); });
 </script>
 
 <template>
@@ -60,7 +66,7 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
         <AutomationNotifications v-if="platform.ready" />
         <div class="sidebar-toolbar">
           <span class="online-state" :class="{ offline: !platform.online }"><i />{{ platform.online ? '在线' : '未连接' }}</span>
-          <button class="icon-button" :title="collapsed ? '展开导航' : '收起导航'" :aria-label="collapsed ? '展开导航' : '收起导航'" :aria-expanded="!collapsed" @click="collapsed = !collapsed"><ChevronLeft :size="18" :class="{ rotated: collapsed }" /></button>
+          <button class="icon-button" :title="`${collapsed ? '展开导航' : '收起导航'}（⌘B / Ctrl+B）`" :aria-label="collapsed ? '展开导航' : '收起导航'" aria-keyshortcuts="Meta+B Control+B" :aria-expanded="!collapsed" @click="collapsed = !collapsed"><ChevronLeft :size="18" :class="{ rotated: collapsed }" /></button>
         </div>
       </div>
     </aside>
@@ -85,5 +91,5 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
 </template>
 
 <style scoped>
-.brand-version{display:flex;align-items:center;gap:5px;align-self:flex-start;padding:3px 0;border:0;background:none;color:var(--muted);font:inherit;font-size:11px;cursor:pointer}.brand-version:hover{color:var(--primary,#4f73d9)}.brand-version i,.compact-update i{width:6px;height:6px;border-radius:50%;background:#159d73}.compact-update{display:none;position:relative;align-self:center}.compact-update i{position:absolute;top:4px;right:4px}.sidebar-collapsed .compact-update{display:flex}@media(max-width:800px){.compact-update{display:flex}}
+.brand-version{display:flex;align-items:center;gap:5px;align-self:flex-start;padding:3px 0;border:0;background:none;color:var(--muted);font:inherit;font-size:11px;cursor:pointer}.brand-version:hover{color:var(--primary,#4f73d9)}.brand-version i,.compact-update i{width:6px;height:6px;border-radius:50%;background:#159d73}.compact-update{display:none;position:relative;margin-inline:auto}.compact-update i{position:absolute;top:4px;right:4px}.sidebar-collapsed .compact-update{display:flex}
 </style>

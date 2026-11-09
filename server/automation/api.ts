@@ -25,12 +25,13 @@ import { registerCollectionApi } from './collection/api.js';
 import { CollectionStore } from './collection/store.js';
 import { ManifestStore, manifestInput } from './completeness.js';
 import { preflightCollectionTarget } from './collection/target-verification.js';
+import { registerResourceFolderApi } from './resource-folders.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
 const logicalPath=z.string().min(1).max(300).refine(n=>{try{return materialPath(n)===n;}catch{return false;}},'附件路径不合法');
 const file=z.object({id:uuid,name:logicalPath,type:z.string().max(200),size:z.number().int().nonnegative(),sha256:z.string().regex(/^[a-f0-9]{64}$/)});
-const resource=z.object({name:z.string().trim().min(1).max(200),scenario:z.enum(Object.keys(scenarios) as [keyof typeof scenarios,...(keyof typeof scenarios)[]]),description:z.string().max(200000),contentUrl:url,referenceUrl:url,externalSource:z.string().max(200),externalId:z.string().max(200),files:z.array(file).max(1000)}).superRefine((r,ctx)=>{
+const resource=z.object({folderId:uuid.nullable().optional(),name:z.string().trim().min(1).max(200),scenario:z.enum(Object.keys(scenarios) as [keyof typeof scenarios,...(keyof typeof scenarios)[]]),description:z.string().max(200000),contentUrl:url,referenceUrl:url,externalSource:z.string().max(200),externalId:z.string().max(200),files:z.array(file).max(1000)}).superRefine((r,ctx)=>{
   if(['migration','upgrade','site-template'].includes(r.scenario)&&!r.contentUrl)ctx.addIssue({code:'custom',message:'当前场景需要内容站 URL',path:['contentUrl']});
   if(r.scenario==='upgrade'&&!r.referenceUrl)ctx.addIssue({code:'custom',message:'升级场景需要独立参考站',path:['referenceUrl']});
   try{uniqueMaterialPaths(r.files);}catch(error){ctx.addIssue({code:'custom',message:(error as Error).message,path:['files']});}
@@ -53,6 +54,7 @@ const pageNumber=z.coerce.number().int().min(1).max(1000000),pageSizeNumber=z.co
 const pagination=z.object({page:pageNumber.default(1),pageSize:pageSizeNumber.default(20)});
 
 export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,cancel:(id:string)=>void,owns:(id:string)=>boolean){
+  registerResourceFolderApi(app,store.resourceFolders);
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
@@ -65,6 +67,14 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   store.db.exec(`CREATE TABLE IF NOT EXISTS auto_files(id TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE INDEX IF NOT EXISTS auto_files_content ON auto_files(json_extract(json,'$.name'),json_extract(json,'$.sha256'));`);
   store.db.exec('CREATE TABLE IF NOT EXISTS auto_requests(id TEXT PRIMARY KEY,hash TEXT NOT NULL,json TEXT NOT NULL)');
   function checkFiles(items:z.infer<typeof file>[]){for(const item of items){const saved=store.db.prepare('SELECT json FROM auto_files WHERE id=?').get(item.id);if(!saved||JSON.stringify(JSON.parse(saved.json))!==JSON.stringify(item))throw new Conflict('附件不存在或元数据不一致，请重新上传');}}
+  function saveResource(input:z.infer<typeof resource>,id?:string,revision?:number){
+    return store.db.transaction(()=>{
+      const {folderId,...content}=input;
+      const saved=store.saveResource(content,id,revision);
+      if(folderId!==undefined)store.resourceFolders.move([saved.id],folderId);
+      return store.resource(saved.id)!;
+    });
+  }
   app.get('/api/automation/overview',async(request)=>{
     const {view,statusOnly}=z.object({view:z.enum(['compact','status']).optional(),statusOnly:z.literal('1').optional()}).parse(request.query);
     const tasks=store.headers();
@@ -72,7 +82,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     if(view==='status'||statusOnly==='1')return {queue,settings:vault.automation()};
     const byId=new Map(tasks.map(t=>[t.id,t]));
     const visible=tasks.filter(t=>!t.optimizationRootId||t.kind==='evaluation'&&byId.get(t.optimizationRootId)?.evaluationTaskId===t.id);
-    return {resources:store.resources(),sites:store.sites(),queue,tasks:view==='compact'?store.summaries(visible).map(value=>{if(value.kind==='evaluation'&&value.report)value.reportCurrent=Boolean(store.currentReportHeader(byId.get(value.id)!));return value;}):store.tasks(),settings:vault.automation()};
+    return {resources:store.resources(),resourceFolders:store.resourceFolders.list(),sites:store.sites(),queue,tasks:view==='compact'?store.summaries(visible).map(value=>{if(value.kind==='evaluation'&&value.report)value.reportCurrent=Boolean(store.currentReportHeader(byId.get(value.id)!));return value;}):store.tasks(),settings:vault.automation()};
   });
   app.get('/api/automation/notifications',async(request)=>{
     const {view,page,pageSize}=z.object({view:z.enum(['compact']).optional(),page:pageNumber.optional(),pageSize:pageSizeNumber.optional()}).parse(request.query);
@@ -108,8 +118,8 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   });
   app.get('/api/automation/resources',async()=>({items:store.resources()}));
   app.get('/api/automation/resources/:id',async(request,reply)=>{const {id}=params.parse(request.params);const item=store.resource(id);return item?{resource:item,versions:store.versions(id),sites:store.sites(id),tasks:store.tasks().filter(t=>t.resourceId===id)}:reply.code(404).send({error:'资源不存在'});});
-  app.post('/api/automation/resources',{bodyLimit:4*1024*1024},async(request,reply)=>{const input=resource.parse(request.body);checkFiles(input.files);const key=request.headers['idempotency-key'];if(!key)return reply.code(201).send(store.saveResource(input));const id='resource:'+z.string().min(8).max(150).parse(key),hash=createHash('sha256').update(JSON.stringify(input)).digest('hex');const result=store.db.transaction(()=>{const old=store.db.prepare('SELECT hash,json FROM auto_requests WHERE id=?').get(id);if(old){if(old.hash!==hash)throw new Conflict('同一个导入请求不能变更资料内容');return JSON.parse(old.json);}const value=store.saveResource(input);store.db.prepare('INSERT INTO auto_requests VALUES(?,?,?)').run(id,hash,JSON.stringify(value));return value;});return reply.code(201).send(result);});
-  app.put('/api/automation/resources/:id',{bodyLimit:4*1024*1024},async(request)=>{const {id}=params.parse(request.params);const {revision,...input}=z.object({revision:z.number().int().positive()}).passthrough().parse(request.body);const value=resource.parse(input);checkFiles(value.files);return store.saveResource(value,id,revision);});
+  app.post('/api/automation/resources',{bodyLimit:4*1024*1024},async(request,reply)=>{const input=resource.parse(request.body);checkFiles(input.files);const key=request.headers['idempotency-key'];if(!key)return reply.code(201).send(saveResource(input));const id='resource:'+z.string().min(8).max(150).parse(key),hash=createHash('sha256').update(JSON.stringify(input)).digest('hex');const result=store.db.transaction(()=>{const old=store.db.prepare('SELECT hash,json FROM auto_requests WHERE id=?').get(id);if(old){if(old.hash!==hash)throw new Conflict('同一个导入请求不能变更资料内容');return JSON.parse(old.json);}const value=saveResource(input);store.db.prepare('INSERT INTO auto_requests VALUES(?,?,?)').run(id,hash,JSON.stringify(value));return value;});return reply.code(201).send(result);});
+  app.put('/api/automation/resources/:id',{bodyLimit:4*1024*1024},async(request)=>{const {id}=params.parse(request.params);const {revision,...input}=z.object({revision:z.number().int().positive()}).passthrough().parse(request.body);const value=resource.parse(input);checkFiles(value.files);return saveResource(value,id,revision);});
   app.post('/api/automation/files',{bodyLimit:24*1024*1024},async(request,reply)=>{
     const input=z.object({name:logicalPath,type:z.string().max(200),content:z.string().max(23*1024*1024).regex(/^[A-Za-z0-9+/]*={0,2}$/)}).parse(request.body);
     const content=Buffer.from(input.content,'base64');if(content.length>16*1024*1024)return reply.code(413).send({error:'单个附件最多 16 MB'});
@@ -249,7 +259,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   });
   app.post('/api/v1/resources/import',async(request)=>{
     const values=z.array(resource).min(1).max(1000).parse(request.body);values.forEach(v=>checkFiles(v.files));
-    return store.db.transaction(()=>({items:values.map(v=>{const old=v.externalSource&&v.externalId?store.resources().find(r=>r.externalSource===v.externalSource&&r.externalId===v.externalId):undefined;return store.saveResource(v,old?.id,old?.revision);})}));
+    return store.db.transaction(()=>({items:values.map(v=>{const old=v.externalSource&&v.externalId?store.resources().find(r=>r.externalSource===v.externalSource&&r.externalId===v.externalId):undefined;return saveResource(v,old?.id,old?.revision);})}));
   });
   // Same persisted records are projected for local UI and external Admin consumers.
   app.get('/api/v1/automation/tasks/:id/result',async(request,reply)=>{

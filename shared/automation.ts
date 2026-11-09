@@ -22,7 +22,7 @@ export type TaskStatus = 'queued' | 'running' | 'pending' | 'cancelling' | 'canc
 export const taskStatusNames: Record<TaskStatus, string> = { queued: '排队中', running: '执行中', pending: '待跟进', cancelling: '正在停止', cancelled: '已取消', completed: '执行结束', failed: '执行失败', 'following-up': 'AI 跟进中', interrupted: '已中断' };
 export interface MaterialFile { id: string; name: string; type: string; size: number; sha256: string; role?: 'target'|'reference'|'content'; viewport?: 'desktop'|'mobile'; /** false: captured while visible images or the load event were still pending. */ settled?: boolean }
 export interface ResourceInput { name: string; scenario: Scenario; description: string; contentUrl: string; referenceUrl: string; externalSource: string; externalId: string; files: MaterialFile[] }
-export interface Resource extends ResourceInput { id: string; revision: number; createdAt: number; updatedAt: number }
+export interface Resource extends ResourceInput { id: string; folderId?: string | null; revision: number; createdAt: number; updatedAt: number }
 export interface InputVersion extends ResourceInput { id: string; resourceId: string; revision: number; createdAt: number }
 export interface GeneratedSite { id: string; resourceId: string; versionId: string; environmentId: string; siteId: string; name: string; url: string; createdAt: number }
 export interface Criterion { id: string; label: string; weight: number; instruction: string; required: boolean; viewports: ('desktop'|'mobile'|'business')[]; scopes: Scope[] }

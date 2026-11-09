@@ -3,7 +3,7 @@ import { notify } from '../../lib/notifications';
 import { siteReportLink } from '../../lib/site-reports';
 import type { SiteDeliverySummary } from '../../../../shared/site-delivery';
 import { computed, nextTick, onMounted, ref, useId, watch } from 'vue';
-import { Plus, Search, Upload, Play, FolderOpen, ArrowLeft, Pencil, ExternalLink, File, FileText, X, LoaderCircle, Link, History, ChevronLeft, ChevronRight, ChevronDown, Check } from '@lucide/vue';
+import { Plus, Search, Upload, Play, Folder, FolderOpen, FolderInput, Trash2, ArrowLeft, Pencil, ExternalLink, File, FileText, X, LoaderCircle, Link, History, ChevronLeft, ChevronRight, ChevronDown } from '@lucide/vue';
 import BaseSelect from '../../components/BaseSelect.vue';
 import MaterialUploader from '../../components/MaterialUploader.vue';
 import MaterialBrowser from '../../components/MaterialBrowser.vue';
@@ -12,8 +12,52 @@ import CreateTaskDialog from './CreateTaskDialog.vue';
 import { api, message, go, platform, formatDate } from '../../api';
 import { workspace, refresh, scopeName } from './common';
 import { scenarios, type Resource, type ResourceInput, type GeneratedSite, type InputVersion, type MaterialFile, taskStatusNames } from '../../../../shared/automation';
+import { filterResources, resourceFolderDescendants, resourceFolderTree, resourceSiteCounts, type ResourceFolder } from '../../../../shared/resource-library';
 const props=defineProps<{id?:string}>();
-const query=ref(''),scenario=ref(''),page=ref(1),selected=ref<string[]>([]),error=ref('');
+const query=ref(''),scenario=ref(''),folder=ref(''),generated=ref(''),page=ref(1),selected=ref<string[]>([]),error=ref('');
+const folderDialog=ref<HTMLDialogElement>(),folderAction=ref<'create'|'rename'|'delete'>('create'),folderEditing=ref<ResourceFolder>(),folderName=ref(''),folderError=ref(''),folderBusy=ref(false);
+const folderParent=ref(''),collapsedFolders=ref(new Set<string>());
+const moveDialog=ref<HTMLDialogElement>(),moveIds=ref<string[]>([]),moveFolder=ref(''),moveError=ref(''),moveBusy=ref(false),editFolder=ref('');
+const currentFolder=computed(()=>workspace.resourceFolders.find(item=>item.id===folder.value));
+const folderTree=computed(()=>resourceFolderTree(workspace.resourceFolders));
+const visibleFolders=computed(()=>folderTree.value.filter(item=>!item.ancestors.some(id=>collapsedFolders.value.has(id))));
+const folderOptions=computed(()=>[{value:'',label:'未分组'},...folderTree.value.map(item=>({value:item.id,label:item.path}))]);
+const folderParentOptions=computed(()=>{
+  const excluded=folderEditing.value?resourceFolderDescendants(workspace.resourceFolders,folderEditing.value.id):new Set<string>();
+  return [{value:'',label:'顶级文件夹'},...folderTree.value.filter(item=>!excluded.has(item.id)).map(item=>({value:item.id,label:item.path}))];
+});
+const folderCounts=computed(()=>{
+  const counts=new Map<string,number>(),nodes=new Map(folderTree.value.map(item=>[item.id,item]));
+  for(const item of workspace.resources){const key=item.folderId||'ungrouped';for(const id of [key,...(nodes.get(key)?.ancestors||[])])counts.set(id,(counts.get(id)||0)+1);}
+  return counts;
+});
+function folderLabel(id?:string|null){return folderTree.value.find(item=>item.id===id)?.path||'未分组';}
+function toggleFolder(id:string){if(collapsedFolders.value.has(id))collapsedFolders.value.delete(id);else collapsedFolders.value.add(id);}
+function selectFolder(id:string){folder.value=id;for(const ancestor of folderTree.value.find(item=>item.id===id)?.ancestors||[])collapsedFolders.value.delete(ancestor);}
+function openFolder(action:'create'|'rename'|'delete',parentId?:string){
+  folderAction.value=action;folderEditing.value=action==='create'?undefined:currentFolder.value;
+  folderParent.value=action==='create'?(parentId??currentFolder.value?.id??''):folderEditing.value?.parentId||'';
+  folderName.value=folderEditing.value?.name||'';folderError.value='';folderDialog.value?.showModal();
+}
+async function saveFolder(){
+  folderBusy.value=true;folderError.value='';
+  try{
+    const target=folderEditing.value;
+    if(folderAction.value==='delete')await api(`/automation/resource-folders/${target!.id}`,{method:'DELETE'});
+    else{
+      const saved=await api<ResourceFolder>(target?`/automation/resource-folders/${target.id}`:'/automation/resource-folders',{method:target?'PUT':'POST',body:JSON.stringify({name:folderName.value,parentId:folderParent.value||null})});
+      folder.value=saved.id;
+    }
+    if(folderAction.value==='delete')folder.value='';
+    folderDialog.value?.close();await load();selectFolder(folder.value);notify.success(folderAction.value==='delete'?'文件夹已删除':folderAction.value==='rename'?'文件夹已更新':'文件夹已创建');
+  }catch(reason){folderError.value=message(reason);}finally{folderBusy.value=false;}
+}
+function openMove(ids:string[]){moveIds.value=[...ids];moveFolder.value=workspace.resources.find(item=>item.id===ids[0])?.folderId||'';moveError.value='';moveDialog.value?.showModal();}
+async function saveMove(){
+  moveBusy.value=true;moveError.value='';
+  try{await api('/automation/resources/move',{method:'POST',body:JSON.stringify({resourceIds:moveIds.value,folderId:moveFolder.value||null})});moveDialog.value?.close();selected.value=[];await load();notify.success(`已移动 ${moveIds.value.length} 项资源`);}
+  catch(reason){moveError.value=message(reason);}finally{moveBusy.value=false;}
+}
 const editDialog=ref<HTMLDialogElement>(),attachDialog=ref<HTMLDialogElement>(),taskDialog=ref<InstanceType<typeof CreateTaskDialog>>();
 const batchDialog=ref<InstanceType<typeof BatchMaterialImport>>(),materialUploader=ref<InstanceType<typeof MaterialUploader>>(),editSession=ref(0),pendingUploads=ref(false);
 const busy=ref(false),uploading=ref(false),editing=ref<Resource|null>(null);const versions=ref<InputVersion[]>([]);
@@ -30,7 +74,8 @@ async function openReports(site: GeneratedSite) {
 }
 const blank=():ResourceInput=>({name:'',scenario:'materials',description:'',contentUrl:'',referenceUrl:'',externalSource:'',externalId:'',files:[]});
 const form=ref(blank());const taskResources=ref<Resource[]>([]),taskSite=ref<GeneratedSite>(),taskKind=ref<'generation'|'evaluation'>('generation');
-const filtered=computed(()=>workspace.resources.filter(r=>(!scenario.value||r.scenario===scenario.value)&&(!query.value||[r.name,r.description,r.contentUrl,r.externalId,r.externalSource].join(' ').toLowerCase().includes(query.value.toLowerCase()))));
+const siteCounts=computed(()=>resourceSiteCounts(workspace.sites));
+const filtered=computed(()=>filterResources(workspace.resources,siteCounts.value,{query:query.value,scenario:scenario.value,folder:folder.value,generated:generated.value},workspace.resourceFolders));
 const pages=computed(()=>Math.max(1,Math.ceil(filtered.value.length/20)));const rows=computed(()=>filtered.value.slice((page.value-1)*20,page.value*20));
 const checked=computed(()=>rows.value.length>0&&rows.value.every(r=>selected.value.includes(r.id)));const partial=computed(()=>!checked.value&&rows.value.some(r=>selected.value.includes(r.id)));
 const resource=computed(()=>workspace.resources.find(r=>r.id===props.id));const sites=computed(()=>workspace.sites.filter(s=>s.resourceId===props.id));const tasks=computed(()=>workspace.tasks.filter(t=>t.resourceId===props.id));
@@ -43,12 +88,12 @@ const materialSites=computed(()=>{
   return [...(item.contentUrl?[{label:'内容站',url:item.contentUrl}]:[]),...(reference?[{label:'参考站',url:reference}]:[])];
 });
 function hostname(url:string){try{return new URL(url).hostname;}catch{return url;}}
-watch([query,scenario],()=>page.value=1);watch(pages,v=>page.value=Math.min(page.value,v));
+watch([query,scenario,folder,generated],()=>{page.value=1;selected.value=[];});watch(pages,v=>page.value=Math.min(page.value,v));
 async function load(){await refresh();if(props.id)try{versions.value=(await api<{versions:InputVersion[]}>(`/automation/resources/${props.id}`)).versions;}catch(e){error.value=message(e);}}
 watch(()=>props.id,()=>{tab.value='sites';inputDetailsOpen.value=false;void load();});onMounted(load);
 function toggleAll(event:Event){const checked=(event.target as HTMLInputElement).checked;const visible=new Set(rows.value.map(r=>r.id));selected.value=checked?[...new Set([...selected.value,...visible])]:selected.value.filter(id=>!visible.has(id));}
-function edit(item?:Resource){editSession.value++;pendingUploads.value=false;editing.value=item||null;form.value=item?{name:item.name,scenario:item.scenario,description:item.description,contentUrl:item.contentUrl,referenceUrl:item.referenceUrl,externalSource:item.externalSource,externalId:item.externalId,files:item.files.map(f=>({...f}))}:blank();error.value='';editDialog.value?.showModal();}
-async function save(){busy.value=true;error.value='';try{if(pendingUploads.value&&materialUploader.value&&!await materialUploader.value.upload())throw new Error('部分资料未上传，请检查文件列表后重试');const item=await api<Resource>(editing.value?`/automation/resources/${editing.value.id}`:'/automation/resources',{method:editing.value?'PUT':'POST',body:JSON.stringify({...form.value,...(editing.value?{revision:editing.value.revision}:{})})});editDialog.value?.close();await load();go(`/resources/${item.id}`);}catch(e){error.value=message(e);}finally{busy.value=false;}}
+function edit(item?:Resource){editSession.value++;pendingUploads.value=false;editing.value=item||null;editFolder.value=item?item.folderId||'':currentFolder.value?.id||'';form.value=item?{name:item.name,scenario:item.scenario,description:item.description,contentUrl:item.contentUrl,referenceUrl:item.referenceUrl,externalSource:item.externalSource,externalId:item.externalId,files:item.files.map(f=>({...f}))}:blank();error.value='';editDialog.value?.showModal();}
+async function save(){busy.value=true;error.value='';try{if(pendingUploads.value&&materialUploader.value&&!await materialUploader.value.upload())throw new Error('部分资料未上传，请检查文件列表后重试');const item=await api<Resource>(editing.value?`/automation/resources/${editing.value.id}`:'/automation/resources',{method:editing.value?'PUT':'POST',body:JSON.stringify({...form.value,folderId:editFolder.value||null,...(editing.value?{revision:editing.value.revision}:{})})});editDialog.value?.close();await load();go(`/resources/${item.id}`);}catch(e){error.value=message(e);}finally{busy.value=false;}}
 async function importJson(event:Event){const input=event.target as HTMLInputElement;error.value='';busy.value=true;try{const file=input.files?.[0];if(!file)return;const data=JSON.parse(await file.text());const result=await api<{items:Resource[]}>('/v1/resources/import',{method:'POST',body:JSON.stringify(Array.isArray(data)?data:[data])});await load();notify.success(`已导入 ${result.items.length} 条资源`);}catch(e){error.value=message(e);}finally{busy.value=false;input.value='';}}
 async function create(items:Resource[],site?:GeneratedSite,kind:'generation'|'evaluation'='generation'){taskResources.value=items;taskSite.value=site;taskKind.value=kind;await nextTick();await taskDialog.value?.open();}
 const attach=ref({name:'',siteId:'',url:'',environmentId:''});
@@ -58,11 +103,25 @@ async function saveAttach(){busy.value=true;try{await api('/automation/sites',{m
 <template>
 <template v-if="!id"><header class="page-header"><div><h1>资源库</h1></div><div class="toolbar-actions"><button class="button secondary" @click="batchDialog?.open()"><FolderOpen :size="17"/>导入资料文件夹</button><label class="button secondary" :class="{disabled:busy}"><Upload :size="17" />导入 JSON<input class="sr-only" type="file" accept=".json" :disabled="busy" @change="importJson" /></label><button class="button primary" @click="edit()"><Plus :size="17" />新建资源</button></div></header>
 <p v-if="error" class="alert error" role="alert">{{error}}</p>
-<section class="panel"><div class="table-toolbar"><label class="search-field"><Search :size="18" /><input v-model="query" placeholder="搜索资源、站点或外部标识" aria-label="搜索资源" /></label><BaseSelect v-model="scenario" size="small" aria-label="筛选场景" :options="[{ value: '', label: '全部场景' }, ...Object.entries(scenarios).map(([key, label]) => ({ value: key, label: (label) }))]" /></div>
-<div v-if="selected.length" class="selection-bar"><span>已选 {{selected.length}} 项</span><button class="text-action" @click="selected=[]">清空选择</button><button class="button primary small" @click="create(workspace.resources.filter(r=>selected.includes(r.id)))"><Play :size="15" />批量生成</button></div>
-<div class="table-scroll"><table class="task-table resource-table"><thead><tr><th class="checkbox-cell"><input type="checkbox" aria-label="选择本页全部资源" :checked="checked" :indeterminate.prop="partial" :disabled="!rows.length" @change="toggleAll" /></th><th>资源名称</th><th>场景</th><th>内容站</th><th>生成站</th><th>更新时间</th><th /></tr></thead><tbody><tr v-for="item in rows" :key="item.id" :class="{'row-selected':selected.includes(item.id)}"><td class="checkbox-cell"><input v-model="selected" type="checkbox" :value="item.id" :aria-label="`选择 ${item.name}`" /></td><td><a class="task-title" :href="`#/resources/${item.id}`">{{item.name}}</a><span class="table-subtitle">版本 {{item.revision}}<template v-if="item.externalSource"> · {{item.externalSource}} / {{item.externalId}}</template></span></td><td>{{scenarios[item.scenario]}}</td><td><a v-if="item.contentUrl" class="site-link" :href="item.contentUrl" target="_blank" rel="noopener noreferrer">{{hostname(item.contentUrl)}}<ExternalLink :size="12" /></a><span v-else class="text-muted">—</span></td><td>{{workspace.sites.filter(s=>s.resourceId===item.id).length}}</td><td class="date-cell">{{formatDate(item.updatedAt)}}</td><td><button class="button secondary small" @click="create([item])"><Play :size="14" />生成</button></td></tr></tbody></table></div>
-<div v-if="!rows.length" class="empty-state"><span class="empty-icon"><FolderOpen :size="30" /></span><h2>{{workspace.resources.length?'没有匹配的资源':'添加第一份资源'}}</h2><p>填写说明、站点地址，或上传任意资料文件</p><button v-if="!workspace.resources.length" class="button secondary" @click="edit()"><Plus :size="16" />新建资源</button></div>
-<footer class="table-footer"><span>共 {{filtered.length}} 项</span><div class="pagination"><button class="icon-button" :disabled="page<=1" aria-label="上一页" @click="page--"><ChevronLeft :size="17" /></button><span>{{page}} / {{pages}}</span><button class="icon-button" :disabled="page>=pages" aria-label="下一页" @click="page++"><ChevronRight :size="17" /></button></div></footer></section></template>
+<div class="resource-library">
+  <aside class="resource-folders panel">
+    <div class="resource-folders-heading"><span>文件夹</span><button class="icon-button" aria-label="新建顶级文件夹" title="新建顶级文件夹" @click="openFolder('create','')"><Plus :size="17" /></button></div>
+    <nav aria-label="资源文件夹">
+      <button :class="{active:folder===''}" :aria-pressed="folder===''" @click="folder=''"><FolderOpen :size="16" /><span>全部资源</span><small>{{workspace.resources.length}}</small></button>
+      <button :class="{active:folder==='ungrouped'}" :aria-pressed="folder==='ungrouped'" @click="folder='ungrouped'"><Folder :size="16" /><span>未分组</span><small>{{folderCounts.get('ungrouped')||0}}</small></button>
+      <div v-for="item in visibleFolders" :key="item.id" class="resource-folder-row" :class="{active:folder===item.id}" :style="{'--folder-depth':item.depth}">
+        <button v-if="item.hasChildren" class="resource-folder-expander" :aria-label="`${collapsedFolders.has(item.id)?'展开':'收起'} ${item.name}`" :aria-expanded="!collapsedFolders.has(item.id)" @click="toggleFolder(item.id)"><ChevronRight :size="13" :class="{'folder-expanded':!collapsedFolders.has(item.id)}" /></button><span v-else class="resource-folder-indent" aria-hidden="true" />
+        <button class="resource-folder-select" :aria-pressed="folder===item.id" :title="item.path" @click="selectFolder(item.id)"><FolderOpen v-if="folder===item.id" :size="16" /><Folder v-else :size="16" /><span>{{item.name}}</span><small>{{folderCounts.get(item.id)||0}}</small></button>
+      </div>
+    </nav>
+    <div v-if="currentFolder" class="resource-folder-actions"><button class="icon-button" :aria-label="`在 ${currentFolder.name} 中新建子文件夹`" title="新建子文件夹" @click="openFolder('create')"><Plus :size="15" /></button><button class="icon-button" :aria-label="`编辑文件夹 ${currentFolder.name}`" title="编辑文件夹" @click="openFolder('rename')"><Pencil :size="15" /></button><button class="icon-button" :aria-label="`删除文件夹 ${currentFolder.name}`" title="删除文件夹" @click="openFolder('delete')"><Trash2 :size="15" /></button></div>
+  </aside>
+  <section class="panel resource-list"><div class="table-toolbar resource-filters"><label class="search-field"><Search :size="18" /><input v-model="query" placeholder="搜索资源、站点或外部标识" aria-label="搜索资源" /></label><BaseSelect v-model="scenario" size="small" aria-label="筛选场景" :options="[{ value: '', label: '全部场景' }, ...Object.entries(scenarios).map(([key, label]) => ({ value: key, label }))]" /><BaseSelect v-model="generated" size="small" aria-label="筛选是否有生成站" :options="[{value:'',label:'全部生成状态'},{value:'yes',label:'有生成站'},{value:'no',label:'无生成站'}]" /></div>
+  <div v-if="selected.length" class="selection-bar"><span>已选 {{selected.length}} 项</span><button class="text-action" @click="selected=[]">清空选择</button><button class="button secondary small" @click="openMove(selected)"><FolderInput :size="15" />移动到文件夹</button><button class="button primary small" @click="create(workspace.resources.filter(r=>selected.includes(r.id)))"><Play :size="15" />批量生成</button></div>
+  <div class="table-scroll"><table class="task-table resource-table"><thead><tr><th class="checkbox-cell"><input type="checkbox" aria-label="选择本页全部资源" :checked="checked" :indeterminate.prop="partial" :disabled="!rows.length" @change="toggleAll" /></th><th>资源名称</th><th>文件夹</th><th>场景</th><th>内容站</th><th>生成站</th><th>更新时间</th><th /></tr></thead><tbody><tr v-for="item in rows" :key="item.id" :class="{'row-selected':selected.includes(item.id)}"><td class="checkbox-cell"><input v-model="selected" type="checkbox" :value="item.id" :aria-label="`选择 ${item.name}`" /></td><td><a class="task-title" :href="`#/resources/${item.id}`">{{item.name}}</a><span class="table-subtitle">版本 {{item.revision}}<template v-if="item.externalSource"> · {{item.externalSource}} / {{item.externalId}}</template></span></td><td><button class="resource-folder-link" :title="folderLabel(item.folderId)" @click="selectFolder(item.folderId||'ungrouped')">{{folderLabel(item.folderId)}}</button></td><td>{{scenarios[item.scenario]}}</td><td><a v-if="item.contentUrl" class="site-link" :href="item.contentUrl" target="_blank" rel="noopener noreferrer">{{hostname(item.contentUrl)}}<ExternalLink :size="12" /></a><span v-else class="text-muted">—</span></td><td>{{siteCounts.get(item.id)||0}}</td><td class="date-cell">{{formatDate(item.updatedAt)}}</td><td><button class="button secondary small" @click="create([item])"><Play :size="14" />生成</button></td></tr></tbody></table></div>
+  <div v-if="!rows.length" class="empty-state"><span class="empty-icon"><FolderOpen :size="30" /></span><h2>{{workspace.resources.length?'没有匹配的资源':'添加第一份资源'}}</h2><p v-if="!workspace.resources.length">填写说明、站点地址，或上传任意资料文件</p><button v-if="!workspace.resources.length||currentFolder" class="button secondary" @click="edit()"><Plus :size="16" />新建资源</button></div>
+  <footer class="table-footer"><span>共 {{filtered.length}} 项</span><div class="pagination"><button class="icon-button" :disabled="page<=1" aria-label="上一页" @click="page--"><ChevronLeft :size="17" /></button><span>{{page}} / {{pages}}</span><button class="icon-button" :disabled="page>=pages" aria-label="下一页" @click="page++"><ChevronRight :size="17" /></button></div></footer></section>
+</div></template>
 <template v-else-if="resource">
 <div class="resource-detail-top">
   <header class="resource-detail-header">
@@ -91,11 +150,43 @@ async function saveAttach(){busy.value=true;try{await api('/automation/sites',{m
 <div v-else class="empty-state"><p>{{workspace.loaded?'资源不存在':'正在读取资源…'}}</p></div>
 <CreateTaskDialog ref="taskDialog" :resources="taskResources" :site="taskSite" :kind="taskKind" />
 <BatchMaterialImport ref="batchDialog" @imported="load"/>
-<dialog ref="editDialog" class="modal wide-modal" @cancel="(!busy&&!uploading)||$event.preventDefault()"><form @submit.prevent="save"><div class="modal-head"><h2>{{editing?'编辑资源':'新建资源'}}</h2><button type="button" class="icon-button" :disabled="busy||uploading" aria-label="关闭" @click="editDialog?.close()"><X :size="20" /></button></div><label class="field"><span>资源名称</span><input v-model="form.name" class="input" required maxlength="200" /></label><label class="field"><span>场景</span><BaseSelect v-model="form.scenario" :options="Object.entries(scenarios).map(([key, label]) => ({ value: key, label: (label) }))" /></label><div class="form-grid"><label class="field"><span>内容站 URL</span><input v-model="form.contentUrl" class="input" type="url" :required="['migration','upgrade','site-template'].includes(form.scenario)" placeholder="https://" /></label><label class="field"><span>参考站 URL</span><input v-model="form.referenceUrl" class="input" type="url" :required="form.scenario==='upgrade'" placeholder="留空时使用内容站" /></label></div><label class="field"><span>资料说明 / 业务需求</span><textarea v-model="form.description" class="input" rows="7" placeholder="自由填写，无需遵循固定格式或文件命名" /></label><div class="field"><span>附件资料</span><MaterialUploader :key="editSession" ref="materialUploader" v-model="form.files" :disabled="busy" @busy="uploading=$event" @pending="pendingUploads=$event"/></div><div class="form-grid"><label class="field"><span>外部来源</span><input v-model="form.externalSource" class="input" placeholder="可选，如同事的 Admin" /></label><label class="field"><span>外部记录标识</span><input v-model="form.externalId" class="input" placeholder="与外部来源一起填写" /></label></div><p v-if="error" class="alert error" role="alert">{{error}}</p><div class="modal-actions"><button type="button" class="button secondary" :disabled="busy||uploading" @click="editDialog?.close()">取消</button><button class="button primary" :disabled="busy||uploading"><LoaderCircle v-if="busy" class="spin" :size="16" />{{pendingUploads?(editing?'上传并保存版本':'上传并创建资源'):(editing?'保存新版本':'创建资源')}}</button></div></form></dialog>
+<dialog ref="folderDialog" class="modal" @cancel="!folderBusy||$event.preventDefault()">
+  <form @submit.prevent="saveFolder">
+    <div class="modal-head"><h2>{{folderAction==='delete'?'删除文件夹':folderAction==='rename'?'编辑文件夹':'新建文件夹'}}</h2><button type="button" class="icon-button" :disabled="folderBusy" aria-label="关闭" @click="folderDialog?.close()"><X :size="20" /></button></div>
+    <p v-if="folderAction==='delete'" class="resource-folder-delete">删除“{{folderEditing?.name}}”及其所有子文件夹后，其中的资源将移至“未分组”。</p>
+    <template v-else><label class="field"><span>文件夹名称</span><input v-model="folderName" class="input" required maxlength="100" autofocus /></label><label class="field"><span>父级文件夹</span><BaseSelect v-model="folderParent" :options="folderParentOptions" aria-label="父级文件夹" /></label></template>
+    <p v-if="folderError" class="alert error" role="alert">{{folderError}}</p>
+    <div class="modal-actions"><button type="button" class="button secondary" :disabled="folderBusy" @click="folderDialog?.close()">取消</button><button class="button" :class="folderAction==='delete'?'danger':'primary'" :disabled="folderBusy"><LoaderCircle v-if="folderBusy" class="spin" :size="16" />{{folderAction==='delete'?'删除文件夹':'保存'}}</button></div>
+  </form>
+</dialog>
+<dialog ref="moveDialog" class="modal" @cancel="!moveBusy||$event.preventDefault()">
+  <form @submit.prevent="saveMove">
+    <div class="modal-head"><h2>移动 {{moveIds.length}} 项资源</h2><button type="button" class="icon-button" :disabled="moveBusy" aria-label="关闭" @click="moveDialog?.close()"><X :size="20" /></button></div>
+    <label class="field"><span>目标文件夹</span><BaseSelect v-model="moveFolder" :options="folderOptions" aria-label="目标文件夹" /></label>
+    <p v-if="moveError" class="alert error" role="alert">{{moveError}}</p>
+    <div class="modal-actions"><button type="button" class="button secondary" :disabled="moveBusy" @click="moveDialog?.close()">取消</button><button class="button primary" :disabled="moveBusy"><LoaderCircle v-if="moveBusy" class="spin" :size="16" />移动</button></div>
+  </form>
+</dialog>
+<dialog ref="editDialog" class="modal wide-modal" @cancel="(!busy&&!uploading)||$event.preventDefault()"><form @submit.prevent="save"><div class="modal-head"><h2>{{editing?'编辑资源':'新建资源'}}</h2><button type="button" class="icon-button" :disabled="busy||uploading" aria-label="关闭" @click="editDialog?.close()"><X :size="20" /></button></div><label class="field"><span>资源名称</span><input v-model="form.name" class="input" required maxlength="200" /></label><label class="field"><span>文件夹</span><BaseSelect v-model="editFolder" :options="folderOptions" aria-label="资源所属文件夹" /></label><label class="field"><span>场景</span><BaseSelect v-model="form.scenario" :options="Object.entries(scenarios).map(([key, label]) => ({ value: key, label: (label) }))" /></label><div class="form-grid"><label class="field"><span>内容站 URL</span><input v-model="form.contentUrl" class="input" type="url" :required="['migration','upgrade','site-template'].includes(form.scenario)" placeholder="https://" /></label><label class="field"><span>参考站 URL</span><input v-model="form.referenceUrl" class="input" type="url" :required="form.scenario==='upgrade'" placeholder="留空时使用内容站" /></label></div><label class="field"><span>资料说明 / 业务需求</span><textarea v-model="form.description" class="input" rows="7" placeholder="自由填写，无需遵循固定格式或文件命名" /></label><div class="field"><span>附件资料</span><MaterialUploader :key="editSession" ref="materialUploader" v-model="form.files" :disabled="busy" @busy="uploading=$event" @pending="pendingUploads=$event"/></div><div class="form-grid"><label class="field"><span>外部来源</span><input v-model="form.externalSource" class="input" placeholder="可选，如同事的 Admin" /></label><label class="field"><span>外部记录标识</span><input v-model="form.externalId" class="input" placeholder="与外部来源一起填写" /></label></div><p v-if="error" class="alert error" role="alert">{{error}}</p><div class="modal-actions"><button type="button" class="button secondary" :disabled="busy||uploading" @click="editDialog?.close()">取消</button><button class="button primary" :disabled="busy||uploading"><LoaderCircle v-if="busy" class="spin" :size="16" />{{pendingUploads?(editing?'上传并保存版本':'上传并创建资源'):(editing?'保存新版本':'创建资源')}}</button></div></form></dialog>
 <dialog ref="attachDialog" class="modal"><form @submit.prevent="saveAttach"><div class="modal-head"><h2>关联已有生成站</h2><button type="button" class="icon-button" aria-label="关闭" @click="attachDialog?.close()"><X :size="20" /></button></div><label class="field"><span>环境</span><BaseSelect v-model="attach.environmentId" required :options="[{ value: '', label: '选择环境', disabled: true }, ...(platform.settings?.environments || []).map((env) => ({ value: env.id, label: (env.name) }))]" /></label><label class="field"><span>站点名称</span><input v-model="attach.name" class="input" required /></label><label class="field"><span>Kooboo Site ID</span><input v-model="attach.siteId" class="input" required /></label><label class="field"><span>公开地址</span><input v-model="attach.url" class="input" type="url" required /></label><p v-if="error" class="alert error">{{error}}</p><div class="modal-actions"><button class="button primary" :disabled="busy">保存关联</button></div></form></dialog>
 </template>
 
 <style scoped>
+.resource-library{display:grid;grid-template-columns:190px minmax(0,1fr);gap:18px;align-items:start}
+.resource-folders{padding:10px}.resource-folders-heading{display:flex;align-items:center;justify-content:space-between;padding:2px 4px 10px 10px;font-size:13px;font-weight:600}
+.resource-folders nav{display:flex;flex-direction:column;gap:3px;max-height:65dvh;overflow:auto}
+.resource-folders nav>button,.resource-folder-select{display:flex;align-items:center;gap:9px;width:100%;min-width:0;min-height:38px;padding:8px 10px;border-radius:7px;text-align:left;font-size:13px;color:var(--muted)}
+.resource-folders nav>button:hover,.resource-folder-row:hover{background:var(--field);color:var(--ink)}.resource-folders nav>button.active,.resource-folder-row.active{background:#e9effd;color:var(--blue)}
+.resource-folders nav button>span{flex:1;min-width:0;overflow:hidden;white-space:nowrap;text-overflow:ellipsis}.resource-folders nav button>svg{flex:none}.resource-folders nav small{font-size:11px;font-variant-numeric:tabular-nums}
+.resource-folder-row{display:flex;align-items:center;min-width:calc(115px + var(--folder-depth)*14px);padding-left:calc(2px + var(--folder-depth)*14px);border-radius:7px;color:var(--muted)}
+.resource-folder-row .resource-folder-select{flex:1;gap:7px;padding-left:2px;color:inherit}.resource-folder-expander,.resource-folder-indent{display:inline-flex;align-items:center;justify-content:center;flex:none;width:18px;min-height:32px;padding:0;color:inherit}.resource-folder-expander:hover{color:var(--blue)}.folder-expanded{transform:rotate(90deg)}
+.resource-folder-actions{display:flex;justify-content:flex-end;gap:4px;margin-top:8px;padding-top:8px;border-top:1px solid var(--line)}
+.resource-list{min-width:0}.resource-filters{flex-wrap:wrap;gap:10px}.resource-filters .search-field{flex:1 1 240px;min-width:160px;width:auto}.resource-filters>:deep(.ui-select){flex:0 1 145px}
+.resource-folder-link{display:block;max-width:140px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap;color:var(--muted);font-size:12px;text-align:left}.resource-folder-link:hover{color:var(--blue)}
+.resource-folder-delete{font-size:14px;line-height:1.7;overflow-wrap:anywhere}
+.button.danger{background:var(--red);color:#fff}.button.danger:hover:not(:disabled){background:#b94250}.button.danger:disabled{background:var(--field);color:var(--muted)}
+@media(max-width:1000px){.resource-library{grid-template-columns:155px minmax(0,1fr);gap:12px}}
+@media(max-width:700px){.resource-library{grid-template-columns:minmax(0,1fr)}.resource-folders nav{max-height:240px}.resource-folders-heading{padding-bottom:4px}.resource-folder-actions{margin-top:4px;padding-top:4px}.resource-filters .search-field{flex-basis:100%}.resource-filters>:deep(.ui-select){flex:1 1 130px}}
 .resource-detail-top{display:flex;flex-direction:column;gap:12px;margin-bottom:18px}
 .resource-detail-header{display:flex;align-items:center;justify-content:space-between;gap:16px;min-width:0}
 .resource-detail-identity{display:flex;align-items:center;gap:10px;min-width:0;flex:1}

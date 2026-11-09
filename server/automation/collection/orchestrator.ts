@@ -17,6 +17,7 @@ import { RequestBudget } from '../request-budget.js';
 import { planCollectionPageWindow } from './page-window.js';
 import { collectionReviewHistory } from './review-history.js';
 import { acceptedAssetGapEvidencePath, acceptedAssetGapGuidance, acceptedAssetGapLimitations, assertAcceptedAssetGapIndex, acceptedCollectionAssetEntry, acceptedCollectionAssetFinding, failedCollectionAssetEntries } from './accepted-gaps.js';
+import { captureSourceVisualBaseline, sourceVisualGuidance, sourceVisualIndexPath, sourceVisualRequired } from './source-visual.js';
 import { sourceRenderedEvidencePath, sourceRenderedGuidance, assertSourceRenderedEvidenceIndex, sourceRenderedContentFinding, assertSourceRenderedManifest, captureSourceRenderedEvidence } from './source-rendered.js';
 
 const stages:CollectionStage[]=['plan','discover','fetch','extract','assets','data','render','verify'];
@@ -226,12 +227,15 @@ export async function ensureSourceCollection(task:AutomationTask,store:Automatio
  try{
    const result=await reviewCollection(task,store,vault,directory,collections,run,signal);
    if(result.action==='ready'){
+     const input=store.version(task.versionId);
+     const visual=input&&sourceVisualRequired(input)?await captureSourceVisualBaseline(collections,run,{signal}):undefined;
+     if(visual)store.event(task.id,`来源视觉基线：${visual.templates.length} 种页面模板，${visual.templates.reduce((sum,template)=>sum+template.screens.length,0)} 张整页截图，${visual.styles.filter(row=>row.path).length} 个 CSS 原文${visual.limitations.length?`；${visual.limitations.length} 条限制见 collection/${sourceVisualIndexPath}`:''}`);
      run.summary={...run.summary as object,sourceCoverage:{status:'unknown',total:null,complete:false},scopeCoverage:{status:'complete',complete:true,basis:result.discoveryBasis},handoffReady:true,...(run.acceptedAssetGaps?.length?{acceptedAssetGaps:structuredClone(run.acceptedAssetGaps),acceptedAssetGapLimitations:acceptedAssetGapLimitations(run)}:{})};
      const manifests=new ManifestStore(store),artifacts:any[]=[],write=evidenceWriter(resolve(directory,'manifest-runs',task.id),artifacts,'content','source',file=>store.db.prepare('INSERT INTO auto_manifest_artifacts VALUES(?,?,?)').run(file.name,task.id,file.sha256));
      const evidence=write({collectionId:run.id,inputVersionId:task.versionId,checks:run.checks,review:run.review,inventory:collections.inventory(run)} as unknown) as {evidence:string};
      const previous=manifests.get(task.requirementsId),items=previous?[...previous.items.map(item=>result.manifest.items.find(next=>next.id===item.id)||item),...result.manifest.items.filter(item=>!previous.items.some(old=>old.id===item.id))]:result.manifest.items;
      const manifest=manifests.save(task,{...result.manifest,items,...(previous?.migration?{migration:previous.migration}:{}),sourceComplete:true,limitations:[...new Set([...(previous?.limitations||[]),...result.manifest.limitations,...result.limitations,...acceptedAssetGapLimitations(run),...(run.sourceRenderedEvidence?.length?[sourceRenderedGuidance(run)]:[]),'源站公开总量未知时保持未知；A段按已核验入口、分页及类型证据判定约定范围，未证明不可发现页面不存在。'])],evidence:[evidence.evidence]},'ai');
-     collections.freeze(run,task,manifest.id);task.message+='\n\nA段采集已通过并冻结。资料版本 '+run.materialVersionId+'，清单 '+manifest.id+'。先读取 collection/site/ 与 collection/data/ 索引，按需读取逐页正文和素材；保留来源URL、身份、分类、分页与关系。候选数据有截断边界，完整正文以逐页资料与证据为准。禁止把全集展开到聊天。';store.put(task);store.event(task.id,'A段通过，资料与清单已共同冻结；现在允许创建目标站');return;
+     collections.freeze(run,task,manifest.id);task.message+='\n\nA段采集已通过并冻结。资料版本 '+run.materialVersionId+'，清单 '+manifest.id+'。先读取 collection/site/ 与 collection/data/ 索引，按需读取逐页正文和素材；保留来源URL、身份、分类、分页与关系。候选数据有截断边界，完整正文以逐页资料与证据为准。禁止把全集展开到聊天。'+(visual?sourceVisualGuidance(visual):'');store.put(task);store.event(task.id,'A段通过，资料与清单已共同冻结；现在允许创建目标站');return;
    }
    if(result.action==='blocked'){run.status='blocked';run.error=result.reason;collections.put(run);throw new CollectionBlocked(result.reason,result.nextSteps);}
    const stop=recordAutonomousAttempt(task,'collection:'+result.action+('operation' in result?':'+result.operation:''),'采集复核要求定向修正',Date.now(),collectionProgress(run));store.put(task);

@@ -39,6 +39,25 @@ export async function visibleFrames(page:Page) {
   }
   return {frames,framesComplete:complete};
 }
+export interface PageSettlement { settled:boolean; loaded:boolean; networkIdle:boolean; images:number; pendingImages:number; blankImageRatio:number }
+/** Lazy images, carousels and fonts arrive after DOMContentLoaded. Scrolling is only safe right after a navigation, before any interaction state exists. */
+export async function settlePage(page:Page,scroll:boolean,quick=false):Promise<PageSettlement> {
+  const loaded=await page.waitForLoadState('load',{timeout:quick?3000:15000}).then(()=>true,()=>false);
+  const networkIdle=await page.waitForLoadState('networkidle',{timeout:quick?2000:8000}).then(()=>true,()=>false);
+  if(scroll)await page.evaluate(async()=>{
+    const start=window.scrollY,step=Math.max(200,window.innerHeight),end=Math.min(document.documentElement.scrollHeight,step*40);
+    for(let y=0;y<end;y+=step){window.scrollTo(0,y);await new Promise(resolve=>setTimeout(resolve,150));}
+    window.scrollTo(0,start);
+  }).catch(()=>{});
+  const stats=await page.evaluate(async(timeout)=>{
+    const visible=Array.from(document.images).filter(image=>{const box=image.getBoundingClientRect();return box.width>1&&box.height>1&&box.bottom>0&&box.top<window.innerHeight;});
+    await Promise.race([Promise.all(visible.map(image=>image.complete?undefined:image.decode().catch(()=>{}))),new Promise(resolve=>setTimeout(resolve,timeout))]);
+    await Promise.race([document.fonts?.ready,new Promise(resolve=>setTimeout(resolve,2000))]);
+    return {images:visible.length,pending:visible.filter(image=>!image.complete).length,blank:visible.filter(image=>image.complete&&image.naturalWidth===0).length};
+  },quick?3000:5000).catch(()=>({images:0,pending:0,blank:0}));
+  await page.waitForTimeout(1000);
+  return {settled:loaded&&stats.pending===0,loaded,networkIdle,images:stats.images,pendingImages:stats.pending,blankImageRatio:stats.images?Math.round(stats.blank/stats.images*100)/100:0};
+}
 /** A per-run browser session, kept outside the management UI and closed with the worker. */
 export async function evaluationBrowser(urls:{target:string;reference:string;content:string},directory:string,signal:AbortSignal,initial:MaterialFile[]=[],checkpoint:(files:MaterialFile[])=>void=()=>{},binding?:EvaluationBrowserBinding){
   const allowed=new Set(Object.values(urls).filter(Boolean).map(u=>new URL(u).origin));
@@ -59,15 +78,15 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
       let data='';for await(const chunk of req){data+=chunk;if(data.length>24000)throw new Error('请求过大');}
       const input=action.parse(JSON.parse(data));signal.throwIfAborted();
       if(!urls[input.role])throw new Error('没有提供此角色的站点');
-      const key=input.role+'-'+input.viewport;let page=pages.get(key);
-      if(!page){const mobile=input.viewport==='mobile';const context=await browser.newContext({viewport:{width:mobile?390:1440,height:mobile?844:1000},isMobile:mobile,hasTouch:mobile});
+      const key=input.role+'-'+input.viewport;let page=pages.get(key),navigated=false;
+      if(!page){navigated=true;const mobile=input.viewport==='mobile';const context=await browser.newContext({viewport:{width:mobile?390:1440,height:mobile?844:1000},isMobile:mobile,hasTouch:mobile});
         await context.route('**/*',route=>{
           const request=route.request();
           if(request.isNavigationRequest()&&request.frame()===page?.mainFrame()&&new URL(request.url()).origin!==new URL(urls[input.role]).origin)return route.abort();
           return route.continue();
         });
         page=await context.newPage();pages.set(key,page);await page.goto(urls[input.role],{waitUntil:'domcontentloaded',timeout:45000});}
-      if(input.action==='navigate'){if(!input.url||new URL(input.url).origin!==new URL(urls[input.role]).origin)throw new Error('只能访问当前任务的站点');await page.goto(input.url,{waitUntil:'domcontentloaded',timeout:45000});}
+      if(input.action==='navigate'){if(!input.url||new URL(input.url).origin!==new URL(urls[input.role]).origin)throw new Error('只能访问当前任务的站点');await page.goto(input.url,{waitUntil:'domcontentloaded',timeout:45000});navigated=true;}
       else if(['click','fill','select','press'].includes(input.action)){
         if(!input.element||!input.name)throw new Error('请提供可访问角色 element 和名称 name');
         const locator=page.getByRole(input.element as Parameters<Page['getByRole']>[0],{name:input.name,exact:true});
@@ -76,16 +95,19 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
         if(input.action==='select')await locator.selectOption(input.value||'',{timeout:15000});
         if(input.action==='press')await locator.press(input.value||'Enter',{timeout:15000});
       }
+      let settlement=await settlePage(page,navigated);
+      // A reference capture can drive negative repair instructions, so it gets extra time before being labelled unsettled.
+      for(let retry=0;input.role==='reference'&&!settlement.settled&&retry<2;retry++){await page.waitForTimeout(3000);settlement=await settlePage(page,false,true);}
       const file=randomUUID()+'.png';const pixels=await page.screenshot({path:resolve(directory,'evidence',file),fullPage:input.fullPage,timeout:20000});
       const snapshot=await page.locator('body').ariaSnapshot({timeout:15000});
       const text=await page.locator('body').innerText({timeout:15000});
       const frameEvidence=await visibleFrames(page);
-      const observation={action:input.action,role:input.role,viewport:input.viewport,url:page.url(),title:await page.title(),file,capturedAt:Date.now(),snapshot:snapshot.slice(0,30000),text:text.slice(0,30000),textTruncated:text.length>30000,...frameEvidence,...(trustedBinding?{binding:trustedBinding}:{})};
+      const observation={action:input.action,role:input.role,viewport:input.viewport,url:page.url(),title:await page.title(),file,capturedAt:Date.now(),snapshot:snapshot.slice(0,30000),text:text.slice(0,30000),textTruncated:text.length>30000,...frameEvidence,settlement,...(trustedBinding?{binding:trustedBinding}:{})};
       const textEvidence=Buffer.from(JSON.stringify(observation));const jsonFile=file.replace('.png','.json');
       writeFileSync(resolve(directory,'evidence',jsonFile),textEvidence,{mode:0o600});
-      artifacts.push(...[{name:file,type:'image/png',bytes:pixels},{name:jsonFile,type:'application/json',bytes:textEvidence}].map(f=>({id:randomUUID(),name:f.name,type:f.type,size:f.bytes.length,sha256:createHash('sha256').update(f.bytes).digest('hex'),role:input.role,viewport:input.viewport})));
+      artifacts.push(...[{name:file,type:'image/png',bytes:pixels},{name:jsonFile,type:'application/json',bytes:textEvidence}].map(f=>({id:randomUUID(),name:f.name,type:f.type,size:f.bytes.length,sha256:createHash('sha256').update(f.bytes).digest('hex'),role:input.role,viewport:input.viewport,settled:settlement.settled})));
       checkpoint(structuredClone(artifacts));
-      finish(200,{...observation,imagePath:resolve(directory,'evidence',file)});
+      finish(200,{...observation,imagePath:resolve(directory,'evidence',file),...(settlement.settled?{}:{warning:`页面未稳定（仍有 ${settlement.pendingImages} 张可见图片未加载${settlement.loaded?'':'，load 未完成'}）：此截图不能作为“参考站没有某区段/图片”的依据，可稍后对同一页面重新 screenshot。`})});
     }catch(error){finish(400,{error:error instanceof Error?error.message:'浏览器操作失败'});}finally{busy=false;}
   });
   try{

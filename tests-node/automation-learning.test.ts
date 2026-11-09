@@ -121,6 +121,15 @@ test('new evidence deduplicates reflection, workflow shares learning budget, fai
     const response=await f.app.inject({url:`/api/automation/tasks/${root.id}/learning?pageSize=1`,headers:f.headers});assert.equal(response.statusCode,200);assert.equal((await f.app.inject({url:'/api/automation/experiences'})).statusCode,401);
   }finally{await f.close();}
 });
+test('an evaluation interrupted before any scoring model call records a skipped reflection instead of queueing one',async()=>{
+  const f=await fixture();try{
+    const es=new ExperienceStore(f.automationStore),interrupted=()=>{const task=f.create();task.kind='evaluation';task.status='interrupted';task.stopped=true;task.interruption={reason:'B段来源与清单工具契约核对失败，尚未请求评分模型',evidence:[],attempted:[],nextSteps:['核对清单'],resumeFrom:'',stage:'evaluation',time:Date.now()};f.automationStore.put(task);return task;};
+    const observe=(task:{id:string},stage:'experience'|'evaluation')=>f.automationStore.usage.record(task.id,{id:randomUUID(),source:'codex',stage,model:'m',endpoint:'https://model.test/v1',startedAt:Date.now(),endedAt:Date.now(),status:'completed',basis:'sdk-turn',raw:null});
+    const preflight=interrupted();observe(preflight,'experience');
+    const skipped=queueReflection(preflight,f.automationStore)!;assert.equal(skipped.status,'completed');assert.match(skipped.reason,/跳过复盘/);assert.equal(queueReflection(preflight,f.automationStore)!.id,skipped.id);assert.equal(es.claim(),undefined);
+    const scored=interrupted();observe(scored,'evaluation');assert.equal(queueReflection(scored,f.automationStore)!.status,'queued');
+  }finally{await f.close();}
+});
 test('reflection seeds cited evidence, pages other captures and declares an empty library without dumping execution output',async()=>{
   const f=await fixture();try{
     const task=f.create();task.report=report();task.report.issues=[{severity:'minor',title:'阅读顺序',detail:'经独立报告发现层级问题',evidence:['image-1.png']}];

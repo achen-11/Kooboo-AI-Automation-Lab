@@ -27,8 +27,13 @@ export function queueReflection(task:AutomationTask,store:AutomationStore,manual
   if(!manual&&!task.learningPolicy?.collect)return;
   if(!task.report&&!task.interruption)throw new Error('尚无独立评测或明确中断证据，不能复盘');
   const result=task.report?JSON.stringify(task.report):JSON.stringify(task.interruption);
-  const fingerprint=createHash('sha256').update(result).digest('hex');
-  return new ExperienceStore(store).enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',`${task.id}:reflection:${fingerprint}`);
+  const fingerprint=createHash('sha256').update(result).digest('hex'),experiences=new ExperienceStore(store),key=`${task.id}:reflection:${fingerprint}`;
+  // An evaluation stopped by its contract or preflight before any scoring call has no model behaviour to learn from.
+  if(!manual&&task.kind==='evaluation'&&!task.report&&!experiences.run(key)&&!store.usage.entries(task.id).some(entry=>entry.stage!=='experience')){
+    const run=experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
+    run.status='completed';run.reason='跳过复盘：任务在请求工作模型前已因契约或预检中断，没有可复盘的模型执行。';experiences.put(run);return run;
+  }
+  return experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
 }
 export async function reflectExperience(run:LearningRun,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,decide:typeof localDecision=localDecision){
   const experiences=new ExperienceStore(store),task=store.task(run.taskId);if(!task)throw new Error('经验来源任务已不存在');

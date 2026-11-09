@@ -138,7 +138,7 @@ export class AutomationWorker{
       await this.execute[task.kind](task,this.store,this.vault,this.directory,controller.signal);
       const saved=this.store.task(task.id);if(task.optimization&&saved?.optimization?.stoppedAt)task.optimization=saved.optimization;
       task.stopped=true;
-      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){task.status='cancelled';task.error='';}
+      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){task.status='cancelled';task.error='';this.store.noteCancelledSiteChange(task);}
       else{
         task.status='completed';task.error='';
         if(task.followup)task.followup.state='resolved';
@@ -153,7 +153,7 @@ export class AutomationWorker{
       const reason=error instanceof UnconfirmedStop?error:controller.signal.reason||error;
       task.error=reason instanceof Error?reason.message:'执行失败，需要查证当前任务';this.store.event(task.id,task.error);
       if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){
-        if(task.stopped){task.status='cancelled';this.store.put(task);}
+        if(task.stopped){task.status='cancelled';this.store.noteCancelledSiteChange(task);this.store.put(task);}
         else this.interrupt(task,task.error,['检查原执行浏览器 / 会话，确认已停止后释放名额。']);
       }else if(this.retainCollectionShutdown(task)){}
       else if(this.autonomousRecovery(task,reason)){}

@@ -139,6 +139,14 @@ test('weighted scores are computed by the platform; missing evidence, null score
     assert.throws(()=>validateResult(result,task,[file],80),/证据/);
     assert.throws(()=>validateResult(result,task,artifacts,80,true),/角色/);
     const duplicate=structuredClone(result);duplicate.assessments.push(duplicate.assessments[0]);assert.throws(()=>validateResult(duplicate,task,artifacts,80),/指标与视口/);
+    const references=(settled:boolean)=>[file,mobile].map(image=>({...image,id:randomUUID(),name:randomUUID()+'.png',role:'reference' as const,settled}));
+    const withReferences=(images:ReturnType<typeof references>)=>{const value=structuredClone(result);for(const a of value.assessments)a.evidence.push(images.find(image=>image.viewport===a.viewport)!.name);return value;};
+    const loading=references(false),loaded=references(true);
+    assert.throws(()=>validateResult(withReferences(loading),task,[...artifacts,...loading],80,true),/已稳定加载的 reference/);
+    assert.equal(validateResult(withReferences(loaded),task,[...artifacts,...loaded],80,true).quality,'passed');
+    const issue={severity:'minor' as const,title:'参考站首页没有 Hero',detail:'参考截图未见轮播',evidence:[loading[0].name]},negative={...withReferences(loaded),issues:[issue]};
+    assert.throws(()=>validateResult(negative,task,[...artifacts,...loaded,...loading],80,true),/未稳定加载的参考截图/);
+    issue.evidence.push(loaded[0].name);assert.equal(validateResult(negative,task,[...artifacts,...loaded,...loading],80,true).issues.length,1);
     task.rule!.criteria[0].required=true;result.assessments[0].passed=false;assert.equal(validateResult(result,task,artifacts,80).quality,'failed');
   }finally{await f.close();}
 });

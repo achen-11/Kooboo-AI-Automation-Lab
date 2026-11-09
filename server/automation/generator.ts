@@ -1,5 +1,5 @@
 import { randomUUID } from 'node:crypto';
-import type { AutomationTask } from '../../shared/automation.js';
+import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { Pending, GenerationInputError } from './errors.js';
@@ -16,6 +16,7 @@ import { ModelBudgetExceeded } from './request-budget.js';
 import { ensureSourceCollection } from './collection/orchestrator.js';
 import { effectiveCollectionInput } from './collection/store.js';
 import { frozenCollectionAssetGapGuidance, preflightCollectionTarget } from './collection/target-verification.js';
+import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, type SourceVisualIndex } from './collection/source-visual.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
@@ -28,6 +29,8 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     if(!manifest)throw new GenerationInputError('冻结来源缺少固定交付清单，禁止创建生成站');
     const preflight=preflightCollectionTarget({task,manifest,store,directory});
     if(preflight.state==='blocked')throw new GenerationInputError('冻结来源生成预检未通过：'+preflight.checks.filter(check=>check.failureClass==='contract-tool-defect').map(check=>check.reason).join('；').slice(0,1800));
+    if(!task.generatedSiteId&&sourceVisualRequired(input)&&!input.files.some(file=>file.name===sourceVisualMaterial))
+      throw new GenerationInputError(`原站迁移新建站点需要冻结的来源视觉基线 ${sourceVisualMaterial}，资料版本 ${task.collectionVersionId} 不含该基线。先对来源发起A段修订补采视觉基线，再新建站点；继续生成已有站点不受影响。`);
   }
   const acceptedAssetGuidance=frozenCollectionAssetGapGuidance(task,store,directory);
   const {environment,origin,request}=koobooClient(task,vault,signal);const apiOrigin=new URL(environment.apiOrigin||origin).origin;
@@ -139,10 +142,12 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     if(initial&&task.generation.legacySubmitted&&!action)throw new Pending('旧任务已提交过原始委托，由 AI 核对交付并交接评测或明确继续，不能重发初始消息');
     if(initial||action?.action==='continue'||action?.action==='answer'){
       if(state.running)throw new Pending('原会话仍在执行，保留当前执行，稍后核对');
-      const images=task.repairEvidence?task.repairEvidence.files.map(name=>{
+      let images=task.repairEvidence?task.repairEvidence.files.map(name=>{
         const file=store.task(task.repairEvidence!.reportId)?.report?.artifacts.find(f=>f.name===name);if(!file)throw new Error('修复引用的原报告图片不存在');
         const image=readEvidence(directory,task.repairEvidence!.reportId,file);return {uri:'data:image/png;base64,'+image.bytes.toString('base64'),mediaType:'image/png' as const};
       }):undefined;
+      const baseline=initial&&!images&&state.imageInput?sourceVisualBaselineImages(input,directory):undefined;
+      if(baseline?.images.length)images=baseline.images;
       if(images?.length&&!state.imageInput)throw new Pending('当前 Kooboo automation bridge 不支持图片修复委托，请更新 bridge 后恢复；尚未发送修复消息。');
       // Validate images/answers before provisioning files or changing deliveryId.
       assertGenerationInput(undefined,images,action?.action==='answer'?action.answer:undefined);
@@ -152,7 +157,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       const prepared=action?.action==='answer'?undefined:await prepareGenerationContext(task,store,request,site.siteId,{
         instructions:action?.action==='continue'&&action.message!==task.message
           ?task.message+'\n\n本轮已核对的跟进要求：\n'+action.message:task.message,
-        guidance:adoptedGuidance(task,store,'generation')+collectionGuidance+acceptedAssetGuidance,
+        guidance:adoptedGuidance(task,store,'generation')+collectionGuidance+acceptedAssetGuidance+(baseline?.label||''),
         manifest,
         materials,
       });
@@ -191,6 +196,20 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   await cleanupGenerationContext(task,store,request,site.siteId,true);
   task.stage='handoff';store.put(task);
   const ready=await refreshSite(task,store,vault,signal);await probeSite(ready?.url||'',signal);
+}
+
+/** Source first screens for the initial delegate; full-page baselines stay in the material package. */
+export function sourceVisualBaselineImages(input:{files:MaterialFile[]},directory:string,limits={each:4*1024*1024,total:12*1024*1024,count:6}){
+  const files=input.files,indexFile=files.find(file=>file.name===sourceVisualMaterial);
+  if(!indexFile)return undefined;
+  const index=JSON.parse(readMaterial(directory,indexFile).toString()) as SourceVisualIndex,images:{uri:string;mediaType:'image/png'}[]=[],labels:string[]=[];let total=0;
+  for(const shot of sourceVisualFoldImages(index,limits.count)){
+    const file=files.find(item=>item.name==='collection/'+shot.path);if(!file)continue;
+    const bytes=readMaterial(directory,file);if(bytes.length>limits.each||total+bytes.length>limits.total)continue;
+    total+=bytes.length;images.push({uri:'data:image/png;base64,'+bytes.toString('base64'),mediaType:'image/png'});
+    labels.push(`${images.length}. ${shot.urlTemplate}（${shot.url}）${shot.settled===false?'：截图时仍有图片未加载，空白处不代表原站没有内容':''}`);
+  }
+  return {images,label:images.length?`\n本次附带原站桌面首屏截图 ${images.length} 张，按顺序对应：${labels.join('；')}。完整整页图和移动端截图见 collection/site/visual/。`:''};
 }
 
 export function isContextOverflow(message:string){return /context_length_exceeded|maximum context length|context.{0,35}(?:overflow|exceed)|上下文.{0,12}(?:溢出|超限|超出)/i.test(message);}

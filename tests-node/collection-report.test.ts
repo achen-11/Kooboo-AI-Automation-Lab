@@ -27,13 +27,27 @@ test('high independent scores cannot complete an absent, failed or stale B gate'
 });
 
 test('repair planner receives bounded source objects while full B evidence is retained',()=>{
-  const full=target('incomplete');full.checks=Array.from({length:120},(_,i)=>({...full.checks[0],id:String(i),expectedKeys:Array.from({length:100},(_,n)=>String(n))}));const context=collectionTargetRepairContext(full)!;assert.equal(context.checks.length,40);assert.equal(context.remaining,80);assert.equal(context.checks[0].expectedKeys?.length,30);assert.equal(context.confirmedTargetFailureCount,120);assert.equal(context.confirmedTargetFailures.length,40);assert.equal(context.confirmedTargetFailures[0].expectedKeys?.length,30);assert.equal(full.checks.length,120);
+  const full=target('incomplete');full.checks=Array.from({length:120},(_,i)=>({...full.checks[0],kind:'data' as const,id:'data:'+i,expectedKeys:Array.from({length:100},(_,n)=>String(n))}));full.checks.push({...full.checks[0],id:'relations:main',kind:'relations',expectedKeys:['a','b'],actualKeys:['b','c']});
+  const context=collectionTargetRepairContext(full)!,[records,relations]=context.confirmedTargetFailures;assert.equal(context.confirmedTargetFailureCount,121);assert.equal(context.confirmedTargetFailures.length,2);assert.equal(context.omitted.confirmedTargetFailures,0);
+  assert.deepEqual([records.id,records.count,records.sampleIds,records.expectedCount,records.expectedKeys?.length],['data:{n}',120,['data:0','data:1','data:2'],100,6]);
+  assert.deepEqual([relations.id,relations.count,relations.missingKeys,relations.unexpectedKeys],['relations:main',1,['a'],['c']]);assert.equal(full.checks.length,121);assert.equal(full.checks[0].expectedKeys?.length,100);
+});
+
+test('repeated page differences reach the planner as template groups with complete page counts',()=>{
+  const full=target('incomplete');
+  full.checks=Array.from({length:300},(_,i)=>({id:`page:/cn/show/${i}`,kind:'page' as const,status:'missing' as const,sourcePath:`/cn/show/${i}`,reason:'differs',evidence:[`diff-${i}.json`],differences:{missingTextFragments:['[ 返 回 ]',`独有正文 ${i}`,...(i<120?['官方网站']:[])],missingLinkUrls:[],textTruncated:false}}));
+  full.checks.push({id:'page:/cn/category/2',kind:'page',status:'verified',sourcePath:'/cn/category/2',reason:'ok',evidence:[]});
+  const context=collectionTargetRepairContext(full)!,[back,unique,official]=context.defectGroups;
+  assert.equal(context.targetRepairAllowed,true);assert.equal(context.defectGroupsApproximate,true);assert.equal(context.confirmedTargetFailureCount,300);assert.deepEqual(context.confirmedTargetFailures,[]);
+  assert.deepEqual([back.template,back.kind,back.key,back.pages,back.templatePages],['/cn/show/{n}','navigation','[ 返 回 ]',300,300]);assert.equal(back.samplePaths.length,3);
+  assert.deepEqual([unique.key,unique.pages,unique.uniqueFragments],['各页独有片段',300,300]);assert.deepEqual([official.key,official.pages],['官方网站',120]);
+  assert.ok(JSON.stringify(context).length<12000);
 });
 
 test('binding errors with zero checked paths remain verification gaps even when no concrete source gaps were found',()=>{
   const full=target('unverified');full.checkedPages=0;full.expectedPages=0;full.checks=[{id:'binding-error',kind:'binding',status:'unverified',reason:'冻结数据分片数量不一致',evidence:['collection-target-binding-error.json']}];
   const before=structuredClone(full),context=collectionTargetRepairContext(full)!;
-  assert.equal(context.state,'unverified');assert.equal(context.unresolved,1);assert.equal(context.checkedPages,0);assert.equal(context.targetRepairAllowed,false);assert.equal(context.confirmedTargetFailureCount,0);assert.deepEqual(context.confirmedTargetFailures,[]);assert.equal(context.verificationGapCount,1);assert.deepEqual(context.verificationGaps,context.checks);assert.equal(context.checks[0].status,'unverified');assert.equal(context.checks[0].reason,'冻结数据分片数量不一致');
+  assert.equal(context.state,'unverified');assert.equal(context.unresolved,1);assert.equal(context.checkedPages,0);assert.equal(context.targetRepairAllowed,false);assert.equal(context.confirmedTargetFailureCount,0);assert.deepEqual(context.confirmedTargetFailures,[]);assert.equal(context.verificationGapCount,1);assert.deepEqual(context.defectGroups,[]);assert.equal(context.verificationGaps[0].status,'unverified');assert.equal(context.verificationGaps[0].reason,'冻结数据分片数量不一致');
   for(const boundary of ['sourceGaps=[]','不表示来源完整','不能据此把 binding-error 转为目标修复事项','不得委托 Kooboo 修站 AI 修改冻结资料','平台代码','保持 unverified/未通过门槛'])assert.ok(context.guidance.includes(boundary));
   assert.deepEqual(full,before);const merged=report();mergeCollectionTargetReport(merged,full);assert.equal(merged.quality,'unverified');assert.equal(merged.completeness!.state,'unverified');
 });
@@ -41,7 +55,7 @@ test('binding errors with zero checked paths remain verification gaps even when 
 test('confirmed missing target content remains repairable with its original reason, keys and evidence',()=>{
   const full=target('incomplete');full.checks=[{id:'binding',kind:'binding',status:'verified',reason:'Current inputs and target revision match',evidence:[]},{id:'page:/1',kind:'page',status:'missing',sourcePath:'/1',reason:'Actual target response omits frozen body',expectedKeys:['source-one'],actualKeys:[],evidence:['target-body-difference.json']}];
   const context=collectionTargetRepairContext(full)!;
-  assert.equal(context.state,'incomplete');assert.equal(context.unresolved,1);assert.equal(context.targetRepairAllowed,true);assert.equal(context.confirmedTargetFailureCount,1);assert.deepEqual(context.confirmedTargetFailures,context.checks);assert.equal(context.verificationGapCount,0);assert.deepEqual(context.verificationGaps,[]);assert.deepEqual(context.confirmedTargetFailures[0].evidence,['target-body-difference.json']);
+  assert.equal(context.state,'incomplete');assert.equal(context.unresolved,1);assert.equal(context.targetRepairAllowed,true);assert.equal(context.confirmedTargetFailureCount,1);assert.equal(context.verificationGapCount,0);assert.deepEqual(context.verificationGaps,[]);assert.deepEqual(context.defectGroups.map(group=>[group.template,group.pages,group.evidence]),[['/{n}',1,['target-body-difference.json']]]);
 });
 
 test('non-binding unverified reads and identity declarations never become confirmed target repair work',()=>{
@@ -51,13 +65,13 @@ test('non-binding unverified reads and identity declarations never become confir
 
 test('mixed reports retain verification gaps while allowing only confirmed target failures',()=>{
   const full=target('incomplete');full.checks.push({id:'data:records',kind:'data',status:'unverified',reason:'来源全集未闭合',evidence:[]});
-  const context=collectionTargetRepairContext(full)!;assert.equal(context.targetRepairAllowed,true);assert.equal(context.confirmedTargetFailureCount,1);assert.equal(context.confirmedTargetFailures[0].id,'page:/1');assert.equal(context.verificationGapCount,1);assert.equal(context.verificationGaps[0].id,'data:records');assert.equal(context.unresolved,2);assert.match(context.guidance,/verificationGaps 继续未验证/);
+  const context=collectionTargetRepairContext(full)!;assert.equal(context.targetRepairAllowed,true);assert.equal(context.confirmedTargetFailureCount,1);assert.equal(context.defectGroups[0].samplePaths[0],'/1');assert.equal(context.verificationGapCount,1);assert.equal(context.verificationGaps[0].id,'data:records');assert.equal(context.unresolved,2);assert.match(context.guidance,/verificationGaps 继续未验证/);
 });
 
 for(const status of ['unverified','missing'] as const){
   test(`a ${status} binding gap prevents target delegation despite a missing target observation`,()=>{
     const full=target('incomplete');full.checks.push({id:'binding-changed',kind:'binding',status,reason:'目标修订或输入绑定已变化',evidence:[]});
-    const context=collectionTargetRepairContext(full)!;assert.equal(context.state,'incomplete');assert.equal(context.unresolved,2);assert.equal(context.targetRepairAllowed,false);assert.equal(context.confirmedTargetFailureCount,1);assert.equal(context.verificationGapCount,1);assert.equal(context.verificationGaps[0].kind,'binding');assert.equal(context.confirmedTargetFailures[0].kind,'page');
+    const context=collectionTargetRepairContext(full)!;assert.equal(context.state,'incomplete');assert.equal(context.unresolved,2);assert.equal(context.targetRepairAllowed,false);assert.equal(context.confirmedTargetFailureCount,1);assert.equal(context.verificationGapCount,1);assert.equal(context.verificationGaps[0].kind,'binding');assert.equal(context.defectGroups[0].pages,1);
   });
 }
 

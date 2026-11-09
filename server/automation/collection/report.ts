@@ -10,6 +10,7 @@ import type { MaterialFile } from '../../../shared/automation.js';
 import { checkpointMigrationReport, finishPendingMigrationReport } from '../migration-verification.js';
 import { collectionHash } from './runtime.js';
 import { CollectionPending } from './errors.js';
+import { collectionDefectGroups } from './defect-groups.js';
 import { COLLECTION_TARGET_VERIFIER_VERSION, collectionTargetGate, verifyCollectionTarget, type VerifyCollectionTargetOptions } from './target-verification.js';
 
 /** This capability is created by the host, never deserialized from model output. */
@@ -132,9 +133,29 @@ export function collectionTargetRepairContext(target:CollectionTargetReport|unde
   const confirmed=failed.filter(check=>check.status==='missing'&&check.kind!=='binding');
   const gaps=failed.filter(check=>check.status==='unverified'||check.kind==='binding');
   const hasBindingGap=gaps.some(check=>check.kind==='binding');
-  const bounded=(checks:typeof failed)=>checks.slice(0,40).map(check=>({...check,expectedKeys:check.expectedKeys?.slice(0,30),actualKeys:check.actualKeys?.slice(0,30)}));
+  const grouped=collectionDefectGroups(target,repairGroupLimit);
+  // Page-level differences reach the planner through template groups instead of one entry per page.
+  const confirmedGroups=repairCheckGroups(confirmed.filter(check=>!check.id.startsWith('page:'))),gapGroups=repairCheckGroups(gaps);
   const targetRepairAllowed=target.state==='incomplete'&&confirmed.length>0&&!hasBindingGap;
-  return {id:target.id,state:target.state,collectionVersionId:target.collectionVersionId,siteRevision:target.siteRevision,expectedPages:target.expectedPages,checkedPages:target.checkedPages,unresolved:failed.length,checks:bounded(failed),remaining:Math.max(0,failed.length-40),
-    confirmedTargetFailures:bounded(confirmed),confirmedTargetFailureCount:confirmed.length,verificationGaps:bounded(gaps),verificationGapCount:gaps.length,targetRepairAllowed,
-    guidance:'B段未通过门槛必须保留；unresolved/checks 中的每个未通过项并不都是目标站缺陷。confirmedTargetFailures 只收录 status=missing 且 kind 非 binding 的实际目标差异；仅 targetRepairAllowed=true 时，才可依据这些具体对象、字段和原证据委托修复当前目标站。verificationGaps 是来源、身份绑定或核验能力缺口，status=unverified 不能当作已证目标缺陷。binding-error、binding-changed、冻结原件/数据分片数量/哈希/清单/输入绑定不一致、权限或宿主读取失败，应由来源资料或平台核验环节诊断；不得委托 Kooboo 修站 AI 修改冻结资料、原件、哈希、验收范围、清单数量或平台代码，也不得用改目标站来消除这些核验错误。sourceGaps=[] 只表示没有已确认的具体来源缺件，不表示来源完整、B段已通过或目标站存在缺陷；不能据此把 binding-error 转为目标修复事项。存在绑定缺口时，即使另有 missing 记录，也先保留证据并核实当前绑定，不向目标站派发这些 B 段修复。没有已证目标缺陷或无法判断责任时，保持 unverified/未通过门槛，说明具体核验缺口；不编造目标问题，不为通过而改站。若同时存在已证目标差异和其他未验证项，只修复允许的 confirmedTargetFailures，verificationGaps 继续未验证，不因修复其他项而宣称完成。复用固定资料，以实际响应和后台数据验收；不重新全站采集，不把 HTTP 200 或数量匹配当作完成。以上计数覆盖完整报告，列表只为有界上下文；完整差异保存在原评测 evidence 文件和 report.json。'};
+  return {id:target.id,state:target.state,collectionVersionId:target.collectionVersionId,siteRevision:target.siteRevision,expectedPages:target.expectedPages,checkedPages:target.checkedPages,unresolved:failed.length,targetRepairAllowed,
+    defectGroups:grouped.defectGroups.map(group=>({...group,samplePaths:group.samplePaths.slice(0,3),examples:group.examples.slice(0,2).map(text=>text.slice(0,120)),evidence:group.evidence.slice(0,1)})),defectGroupsApproximate:grouped.approximate,
+    failingTemplates:grouped.templateCoverage.filter(row=>row.missing||row.unverified).slice(0,10),
+    confirmedTargetFailures:confirmedGroups.slice(0,repairCheckLimit),confirmedTargetFailureCount:confirmed.length,verificationGaps:gapGroups.slice(0,repairCheckLimit).map(({id,kind,status,count,sampleIds,reason})=>({id,kind,status,count,sampleIds,reason:reason.slice(0,200)})),verificationGapCount:gaps.length,
+    omitted:{confirmedTargetFailures:Math.max(0,confirmedGroups.length-repairCheckLimit),verificationGaps:Math.max(0,gapGroups.length-repairCheckLimit)},
+    guidance:'B段未通过门槛必须保留。defectGroups 把全部 page 级已证差异按“模板×差异片段”归并（pages=受影响来源路径数，samplePaths 只是示例）：按模板或公共组件修复并覆盖该模板全部路径，不要逐页修；confirmedTargetFailures 为其余已证目标差异（status=missing 且 kind 非 binding），同样按“类型×对象模式”归并，count 为该组检查数，missingKeys/unexpectedKeys 取自示例检查。仅 targetRepairAllowed=true 时，才可依据这些对象和原证据委托修复当前目标站。verificationGaps 是来源、绑定或核验能力缺口，status=unverified 不是已证目标缺陷；binding-error、binding-changed、冻结原件/哈希/清单/输入绑定不一致、权限或读取失败由来源资料或平台核验环节诊断，不得委托 Kooboo 修站 AI 修改冻结资料、原件、哈希、验收范围、清单数量或平台代码，也不得靠改目标站消除这些错误。sourceGaps=[] 不表示来源完整、B段已通过或目标站有缺陷；不能据此把 binding-error 转为目标修复事项。存在绑定缺口时不派发 B 段修复；无已证目标缺陷或责任不明时保持 unverified/未通过门槛，不编造问题。同时存在已证差异和未验证项时只修允许项，verificationGaps 继续未验证。复用固定资料，以实际响应和后台数据验收；不重新全站采集，不把 HTTP 200 或数量匹配当作完成。计数覆盖完整报告；完整差异在原评测 evidence 与 report.json。'};
+}
+const repairGroupLimit=15,repairCheckLimit=10;
+/** Checks of one kind whose ids differ only by numbers share a failure pattern; the first one stands as the sample. */
+interface RepairCheckGroup { id:string; kind:string; status:string; count:number; sampleIds:string[]; requirementId?:string; reason:string; expectedCount?:number; actualCount?:number; missingKeys?:string[]; unexpectedKeys?:string[]; expectedKeys?:string[]; differences?:{missingTextFragments:string[];missingLinkUrls:string[]}; evidence:string[] }
+function repairCheckGroups(checks:CollectionTargetReport['checks']):RepairCheckGroup[]{
+  const groups=new Map<string,{sample:CollectionTargetReport['checks'][number];ids:string[]}>();
+  for(const check of checks){const key=JSON.stringify([check.kind,check.status,check.id.replace(/\d+/g,'{n}')]),group=groups.get(key);if(group)group.ids.push(check.id);else groups.set(key,{sample:check,ids:[check.id]});}
+  return [...groups.values()].sort((a,b)=>b.ids.length-a.ids.length).map(({sample,ids})=>{
+    const expected=new Set(sample.expectedKeys||[]),actual=new Set(sample.actualKeys||[]),comparable=Array.isArray(sample.expectedKeys)&&Array.isArray(sample.actualKeys);
+    return {id:ids.length>1?sample.id.replace(/\d+/g,'{n}'):sample.id,kind:sample.kind,status:sample.status,count:ids.length,sampleIds:ids.slice(0,3),...(sample.requirementId?{requirementId:sample.requirementId}:{}),reason:sample.reason.slice(0,400),
+      ...(sample.expectedKeys?{expectedCount:sample.expectedKeys.length}:{}),...(sample.actualKeys?{actualCount:sample.actualKeys.length}:{}),
+      ...(comparable?{missingKeys:[...expected].filter(key=>!actual.has(key)).slice(0,6),unexpectedKeys:[...actual].filter(key=>!expected.has(key)).slice(0,6)}:sample.expectedKeys?{expectedKeys:sample.expectedKeys.slice(0,6)}:{}),
+      ...(sample.differences?{differences:{missingTextFragments:sample.differences.missingTextFragments.slice(0,3).map(text=>text.slice(0,200)),missingLinkUrls:sample.differences.missingLinkUrls.slice(0,3)}}:{}),
+      evidence:sample.evidence.slice(0,1)};
+  });
 }

@@ -268,3 +268,45 @@ test('quality followup sends actual pixel inputs and accepts only a host-observe
     assert.equal(decision.action,'repair');assert.equal(pixels,4);assert.equal(f.store.tasks().length,2,'the decision tool itself cannot mutate the site or schedule a repair');
   }finally{await f.close();}
 });
+
+test('cancelling a repair that already changed the site says the current version needs re-evaluation',async()=>{
+  const f=await fixture();try{
+    f.finish(f.root);f.advance();const child=f.repair();
+    f.store.noteCancelledSiteChange(child);assert.equal(child.error,'','an untouched site keeps its current report');
+    f.store.beginSiteChange(child);f.store.noteCancelledSiteChange(child);assert.match(child.error,/需要对当前版本发起复评/);
+  }finally{await f.close();}
+});
+
+test('re-evaluation adopts the newest manifest of the same input and frozen material instead of the parent copy',async()=>{
+  const f=await fixture();try{
+    const evaluation=f.finish(f.root);new ManifestStore(f.store);
+    const manifest=(taskId:string,revision:number)=>{const id=randomUUID();f.store.db.prepare('INSERT INTO auto_requirement_manifests VALUES(?,?,?,?)').run(id,taskId,revision,JSON.stringify({id,taskId,revision,items:[]}));return id;};
+    const parentManifest=manifest(f.root.id,1),reviewed=manifest(evaluation.id,2),foreign=manifest(randomUUID(),3);
+    const root=f.store.task(f.root.id)!;root.optimization=undefined;root.requirementsId=parentManifest;f.store.put(root);
+    evaluation.requirementsId=reviewed;f.store.put(evaluation);
+    const create=()=>f.store.create({resourceIds:[f.resource.id],kind:'evaluation',scope:root.scope,environmentId:root.environmentId,generatedSiteId:f.site.id,requirements:'复评',parentId:root.id,versionId:root.versionId,ruleSnapshot:root.rule!},f.settings)[0];
+    const other=create();other.status='cancelled';other.requirementsId=foreign;other.collectionVersionId='other-snapshot';f.store.put(other);
+    const recheck=create();assert.equal(recheck.requirementsId,reviewed);assert.ok(f.store.events(recheck.id).some((e:any)=>String(e.message).includes(evaluation.id)));
+    for(const task of [recheck,evaluation]){task.status='cancelled';task.collectionVersionId='other-snapshot';f.store.put(task);}assert.equal(create().requirementsId,parentManifest);
+  }finally{await f.close();}
+});
+
+test('resumed planner threads do not resend pixels and oversized requests release the thread',async()=>{
+  const f=await fixture();try{
+    const evaluation=f.finish(f.root),bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64'),folder=join(f.directory,'automation-runs',evaluation.id,'evidence');mkdirSync(folder,{recursive:true});
+    evaluation.report!.artifacts=['desktop','mobile'].flatMap(viewport=>['target','reference'].map(role=>{const name=randomUUID()+'.png';writeFileSync(join(folder,name),bytes);return {id:randomUUID(),name,type:'image/png',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),viewport:viewport as 'desktop'|'mobile',role:role as 'target'|'reference'};}));f.store.put(evaluation);const root=f.advance();
+    const runs:{mode:string;pixels:number;resentLabels:number}[]=[];
+    const attempt=(failure:string)=>executeFollowup(f.store.task(root.id)!,f.store,f.vault,f.directory,new AbortController().signal,()=>{
+      const client=(mode:string)=>({runStreamed:async(input:unknown)=>({events:(async function*(){
+        assert.ok(Array.isArray(input));runs.push({mode,pixels:input.filter(i=>i.type==='local_image').length,resentLabels:input.filter(i=>i.type==='text'&&/本次不重复发送/.test(i.text)).length});
+        if(mode==='start')yield {type:'thread.started' as const,thread_id:'thread-'+runs.length};
+        yield {type:'error' as const,message:failure};
+      })()})});return {startThread:()=>client('start'),resumeThread:()=>client('resume')};
+    });
+    await assert.rejects(attempt('stream disconnected'),/stream disconnected/);
+    await assert.rejects(attempt('unexpected status 413 Payload Too Large'),/413/);
+    assert.equal(f.store.task(root.id)!.followup!.threadId,'');
+    await assert.rejects(attempt('stream disconnected'),/stream disconnected/);
+    assert.deepEqual(runs,[{mode:'start',pixels:4,resentLabels:0},{mode:'resume',pixels:0,resentLabels:4},{mode:'start',pixels:4,resentLabels:0}]);
+  }finally{await f.close();}
+});

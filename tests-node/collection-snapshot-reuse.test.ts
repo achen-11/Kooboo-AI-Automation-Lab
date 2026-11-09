@@ -115,3 +115,12 @@ test('generation preflight rejects an unverifiable manifest before creating or c
     assert.equal(f.source.generatedSiteId,null);assert.equal(f.source.generation,undefined);assert.deepEqual(f.counts(),before);
   }finally{await f.close();}
 });
+
+test('a new migration site needs the frozen source visual baseline, while an existing site continues without it',async()=>{
+  const f=fixture();try{
+    const before=f.counts();await assert.rejects(executeGeneration(f.source,f.store,f.vault,f.directory,AbortSignal.timeout(1000)),/来源视觉基线/);
+    assert.equal(f.source.generatedSiteId,null);assert.equal(f.source.generation,undefined);assert.deepEqual(f.counts(),before);
+    f.source.generatedSiteId=randomUUID();f.store.put(f.source);
+    await assert.rejects(executeGeneration(f.source,f.store,f.vault,f.directory,AbortSignal.timeout(1000)),(error:Error)=>!/来源视觉基线/.test(error.message));
+  }finally{await f.close();}
+});

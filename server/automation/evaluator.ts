@@ -18,6 +18,7 @@ import { effectiveCollectionInput } from './collection/store.js';
 import { checkpointCollectionReport, finishPendingCollectionReport, collectionProgramEvidence, collectionProgramArtifacts, validateCollectionProgramCompleteness, checkpointCollectionProgramReview, pendingCollectionProgramReview, clearCollectionProgramReview, type CollectionProgramEvidence } from './collection/report.js';
 import { frozenCollectionAssetGapGuidance, frozenCollectionRenderedTargets, frozenCollectionPageAliases, preflightCollectionTarget, verifyCollectionTarget, type VerifyCollectionTargetOptions } from './collection/target-verification.js';
 import { summarizeCollectionTargetReport } from './collection/verification-summary.js';
+import { sourceVisualEvaluationContract } from './collection/source-visual.js';
 import { CollectionBlocked, CollectionPending } from './collection/errors.js';
 
 export const resultSchema=z.object({completeness:checksSchema.optional(),summary:z.string().min(1).max(20000),assessments:z.array(z.object({criterionId:z.string(),viewport:z.enum(['desktop','mobile','business']),score:z.number().min(0).max(100).nullable(),reason:z.string().min(1),evidence:z.array(z.string()),passed:z.boolean().nullable()}).strict()).max(90),issues:z.array(z.object({severity:z.enum(['critical','major','minor']),title:z.string(),detail:z.string(),evidence:z.array(z.string()).min(1)}).strict()).max(300),coverage:z.object({verified:z.array(z.string()),unverified:z.array(z.string()),outOfScope:z.array(z.string())}).strict()}).strict();
@@ -40,12 +41,15 @@ export function validateResult(raw:unknown,task:AutomationTask,files:MaterialFil
     if(a.evidence.some(f=>!names.has(f)))throw new Error('指标引用了不存在的证据');
     if(a.score!==null&&a.viewport!=='business'){
       const pixels=files.filter(f=>a.evidence.includes(f.name)&&f.type==='image/png'&&f.viewport===a.viewport&&(f.role!=='target'||!targetBaseUrl||(()=>{const o=observations?.[f.name];try{const url=new URL(o?.url||'');return o?.role==='target'&&o.viewport===f.viewport&&url.origin===new URL(targetBaseUrl).origin&&!url.username&&!url.password;}catch{return false;}})()));
-      const missing=['target',...(referenceRequired?['reference']:[])].filter(role=>!pixels.some(f=>f.role===role));
-      if(missing.length)missingVisual.push(`${a.criterionId} / ${a.viewport} 缺少 ${missing.join('、')} PNG`);
+      const missing=['target',...(referenceRequired?['reference']:[])].filter(role=>!pixels.some(f=>f.role===role&&(role!=='reference'||f.settled!==false)));
+      if(missing.length)missingVisual.push(`${a.criterionId} / ${a.viewport} 缺少 ${missing.map(role=>role==='reference'&&pixels.some(f=>f.role==='reference')?'已稳定加载的 reference':role).join('、')} PNG`);
     }
   }
   if(missingVisual.length)throw new Error('视觉指标缺少对应视口 / 角色的真实截图证据：'+missingVisual.join('；'));
   if(result.issues.some(i=>i.evidence.some(f=>!names.has(f))))throw new Error('问题引用了不存在的证据');
+  const unsettled=new Set(files.filter(f=>f.role==='reference'&&f.type==='image/png'&&f.settled===false).map(f=>f.name));
+  const unsupported=result.issues.filter(i=>i.evidence.some(f=>unsettled.has(f))&&!i.evidence.some(f=>files.some(file=>file.name===f&&file.role==='reference'&&file.type==='image/png'&&file.settled!==false)));
+  if(unsupported.length)throw new Error('问题只引用了未稳定加载的参考截图，不能据此判断参考站有无某区段或图片；请重新截取同一参考页面后再引用：'+unsupported.map(i=>i.title).join('；'));
   const scores=[...new Set(result.assessments.map(a=>a.viewport))].map(viewport=>{
     const rows=result.assessments.filter(a=>a.viewport===viewport);const weight=rows.reduce((s,a)=>s+criteria.find(c=>c.id===a.criterionId)!.weight,0);
     return {viewport,value:rows.some(a=>a.score===null)||!weight?null:Math.round(rows.reduce((s,a)=>s+a.score!*criteria.find(c=>c.id===a.criterionId)!.weight,0)/weight*10)/10};
@@ -181,7 +185,7 @@ export async function executeEvaluation(task:AutomationTask,store:AutomationStor
   if(task.collectionVersionId&&!manifest)throw new CollectionBlocked('B段缺少固定交付清单，尚未请求评分模型。',['核实固定来源快照与交付清单绑定，不修改目标站或缩减验收范围。']);
   let program=manifest?await prepareCollectionProgramEvaluation({task,manifest,store,vault,directory,signal,retryTransientFailures:true}):undefined;
   const acceptedAssetGuidance=frozenCollectionAssetGapGuidance(task,store,directory);
-  const renderedTargets=frozenCollectionRenderedTargets(task,store,directory),renderedGuidance=sourceRenderedEvaluationContract(renderedTargets);
+  const renderedTargets=frozenCollectionRenderedTargets(task,store,directory),renderedGuidance=sourceRenderedEvaluationContract(renderedTargets)+sourceVisualEvaluationContract(input.files);
   const pageAliases=frozenCollectionPageAliases(task,store,directory),aliasGuidance=Object.keys(pageAliases).length?'\n清单template.samples中的u0001等采集ID应通过task.json.collectionPageAliases解析为真实路径，再到目标站按原路径及查询参数逐视口取证。该映射仅解释冻结样本身份，不修改清单或减少样本；sampledPaths可保留ID或填写对应真实路径，未知/歧义ID不能证明已验证。\n':'';
   const settings=vault.automation();const runtime=vault.get();const configured=task.model?.endpoint||settings.evaluationEndpoint||runtime.model.endpoint;
   const work=resolve(directory,'automation-runs',task.id);mkdirSync(resolve(work,'evidence'),{recursive:true,mode:0o700});

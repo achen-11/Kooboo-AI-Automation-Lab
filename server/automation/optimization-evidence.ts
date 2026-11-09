@@ -10,6 +10,16 @@ export function readEvidence(directory: string, reportId: string, file: Material
   if(bytes.length!==file.size||bytes.subarray(0,8).toString('hex')!=='89504e470d0a1a0a'||createHash('sha256').update(bytes).digest('hex')!==file.sha256)throw new Error('修复图片内容或哈希校验失败');
   return {file,path,bytes,reportId};
 }
+/** A resumed planner thread already holds earlier pixels; only images new to the thread count against one request. */
+export function planningImageInput<T extends {file:MaterialFile}>(selected:readonly T[],alreadySent:ReadonlySet<string>,limit=6*1024*1024) {
+  const attached:T[]=[],previous:T[]=[];let bytes=0;
+  for(const item of selected){
+    if(alreadySent.has(item.file.name)){previous.push(item);continue;}
+    if(bytes+item.file.size>limit)continue;
+    attached.push(item);bytes+=item.file.size;
+  }
+  return {attached,previous,available:selected.filter(item=>attached.includes(item)||previous.includes(item)),bytes};
+}
 /** Send real pixels as SDK image input, with bounded context and explicit source labels. */
 export function optimizationEvidence(task: AutomationTask, store: AutomationStore, directory: string) {
   const run=task.optimization!,current=store.task(run.reportId||'');
@@ -23,7 +33,7 @@ export function optimizationEvidence(task: AutomationTask, store: AutomationStor
   for(const report of [current,previous].filter((t):t is AutomationTask=>!!t?.report)){
     const files=report.report!.artifacts.filter(f=>f.type==='image/png');
     // Always include each available role/viewport before filling the remaining issue-focused images.
-    for(const viewport of ['desktop','mobile'])for(const role of ['target','reference']){const file=files.find(f=>f.viewport===viewport&&f.role===role);if(file)add(report,file);}
+    for(const viewport of ['desktop','mobile'])for(const role of ['target','reference']){const file=files.find(f=>f.viewport===viewport&&f.role===role&&f.settled!==false)||files.find(f=>f.viewport===viewport&&f.role===role);if(file)add(report,file);}
   }
   const ordered=[...current.report.issues.toSorted((a,b)=>({critical:0,major:1,minor:2}[a.severity]-{critical:0,major:1,minor:2}[b.severity])).flatMap(i=>i.evidence),...current.report.assessments.toSorted((a,b)=>(a.score??0)-(b.score??0)).flatMap(a=>a.evidence)];
   for(const name of ordered){const file=current.report.artifacts.find(f=>f.name===name&&f.type==='image/png');if(file)add(current,file);}

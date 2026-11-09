@@ -141,6 +141,14 @@ export class AutomationStore {
     if(state?.revision!==task.siteRevision)this.db.prepare('INSERT INTO auto_site_state VALUES(?,?,NULL) ON CONFLICT(site_id) DO UPDATE SET revision=excluded.revision,report_id=NULL').run(task.generatedSiteId,task.siteRevision);
     this.put(task);
   }
+  /** A cancelled change that already advanced the site revision leaves the site without a current report. */
+  noteCancelledSiteChange(task: AutomationTask) {
+    if(task.kind!=='generation'||!task.generatedSiteId||!task.siteRevision)return;
+    const state=this.siteState(task.generatedSiteId);
+    if(state?.revision!==task.siteRevision||state.reportId)return;
+    task.error='已取消，但本次执行已开始改动站点：旧报告不再对应当前版本，需要对当前版本发起复评。';
+    this.notice(task,'取消后需要复评',task.resourceName+'：站点已被本次执行改动，请对当前版本发起独立评测。');
+  }
   publishSiteReport(task: AutomationTask) {
     if(!task.generatedSiteId||!task.report)return;
     const state=this.siteState(task.generatedSiteId);
@@ -210,6 +218,14 @@ export class AutomationStore {
       task.completenessPolicy=structuredClone(parent&&parent.scope===input.scope?parent.completenessPolicy:settings.completeness||defaultCompletenessSettings);
       task.requirementsEnabled=parent&&parent.scope===input.scope?parent.requirementsEnabled:input.scope==='site'&&(task.completenessPolicy?.enabled??true);
       task.requirementsId=parent?.scope===input.scope?parent.requirementsId:undefined;
+      let adoptedManifestFrom='';
+      if(input.kind==='evaluation'&&site&&parent?.scope===input.scope){
+        // An independent review may have revised the contract after the parent froze its manifest;
+        // the revision is bound to input and frozen material, not to the site revision that review scored.
+        const revision=(id?:string)=>{if(!id)return 0;try{return Number(this.db.prepare('SELECT revision FROM auto_requirement_manifests WHERE id=?').get(id)?.revision)||0;}catch{return 0;}};
+        const newest=this.all<AutomationTask>('auto_tasks','WHERE site_key=? AND kind=?',[site.id,'evaluation']).filter(other=>other.requirementsId&&other.versionId===task.versionId&&other.scope===input.scope&&other.collectionVersionId===task.collectionVersionId).map(other=>({task:other,revision:revision(other.requirementsId)})).sort((a,b)=>b.revision-a.revision)[0];
+        if(newest&&newest.revision>revision(task.requirementsId)){task.requirementsId=newest.task.requirementsId;adoptedManifestFrom=newest.task.id;}
+      }
       if(this.siteReserved(task))throw new Conflict('该站点正在自动优化，请先等待或停止原流程');
       if(input.kind==='evaluation')task.siteRevision=site?this.siteState(site.id)?.revision:undefined;
       if(input.optimization){
@@ -220,7 +236,9 @@ export class AutomationStore {
         task.model={name:settings.evaluationModel,endpoint:settings.evaluationEndpoint};
         task.optimization={policy:structuredClone(policy),state:'waiting-evaluation',rounds:[{number:0,revision,generationTaskId:task.id,startedAt:now}],activeTaskId:task.id,currentRevision:revision,reportId:null,noImprovement:0,reason:'',nextSteps:[],recoveryPolicy:structuredClone(settings.followup),threshold:80};
       }
-      this.put(task);this.event(task.id,'任务已入队，输入版本及评测规则已固定');return task;
+      this.put(task);this.event(task.id,'任务已入队，输入版本及评测规则已固定');
+      if(adoptedManifestFrom)this.event(task.id,`沿用站点当前报告 ${adoptedManifestFrom} 的更新交付清单（同一输入、站点与资料版本）。`);
+      return task;
     }));
   }
   claim(kind: AutomationTask['kind'], limit: number, ready:(task:AutomationTask)=>boolean=()=>true) {

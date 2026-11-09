@@ -591,7 +591,8 @@ test('missing frozen CSS bytes remain a source limitation while independent page
     assert.equal(preflightCollectionTarget(f.options).state,'limited');
     const report=await f.verify();assert.equal(report.state,'incomplete');assert.equal(f.requests.length,1);
     assert.ok(report.summary!.failures['source-limitation']>0);assert.ok(report.summary!.failures['confirmed-target-defect']>0);
-    assert.ok(report.issues.every(issue=>issue.title.includes('page:/1')));
+    assert.ok(report.issues.length&&report.issues.every(issue=>issue.title.includes('模板 /{n}')&&issue.detail.includes('/1')));
+    assert.deepEqual(report.defectGroups!.map(group=>[group.template,group.kind,group.pages]),[['/{n}','text',1]]);assert.deepEqual(report.summary!.templateCoverage,[{template:'/{n}',pages:1,verified:0,missing:1,unverified:0}]);
     const sample=report.summary!.samples.find(sample=>sample.id==='page:/1')!;
     assert.ok(sample.differences?.missingTextFragments.includes('Full original body 0'));assert.ok(sample.evidence.length);
   }finally{f.close();}

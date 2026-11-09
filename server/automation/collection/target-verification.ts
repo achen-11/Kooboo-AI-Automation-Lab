@@ -20,6 +20,7 @@ import { assertSourceRenderedEvidenceIndex, sourceRenderedEvidencePath, sourceRe
 import type { VisibleBrowserFrame } from '../browser.js';
 import { parseFrozenAssetSource, compareAssetTargets, readTargetAsset, type AssetTargetObservation, type CollectionAssetBinding } from './asset-target.js';
 import { collectionVerificationFailureClass, summarizeCollectionTargetReport } from './verification-summary.js';
+import { CollectionDefectGroups, collectionDefectGroupIssue } from './defect-groups.js';
 import { CollectionTargetReports } from './report-store.js';
 export const COLLECTION_TARGET_VERIFIER_VERSION=4;
 
@@ -358,6 +359,7 @@ export async function verifyCollectionTarget(options:VerifyCollectionTargetOptio
     return {value,evidence:file.name};
   };
   const inspect=async(spec:unknown)=>cached('implementation:'+JSON.stringify(spec),()=> (options.dependencies?.inspect||inspectImplementation)(task,store,vault,signal,spec));
+  let defectGroups:CollectionDefectGroups|undefined;
   try{
     if(!snapshot||!run||!site||!task.siteRevision||!task.collectionId||task.requirementsId!==manifest.id||snapshot.inputVersionId!==task.versionId||snapshot.collectionId!==run.id||run.inputVersionId!==task.versionId||store.task(run.taskId)?.resourceId!==task.resourceId)throw new Error('B段输入、清单、来源快照或生成站身份未完整绑定');
     assertFrozenManifestPreserved(store,snapshot,manifest);
@@ -383,18 +385,20 @@ export async function verifyCollectionTarget(options:VerifyCollectionTargetOptio
     report.expectedPages=pages.length;check({id:'binding',kind:'binding',status:'verified',reason:'原件、资料、输入、清单和目标当前修订已绑定。',evidence:[]});
     const mapLink=(value:string,base:string)=>{try{const parsed=url(value,base,true);if(parsed.origin===sourceOrigin){const mapped=new URL(targetOrigin);mapped.pathname=parsed.pathname;mapped.search=parsed.search;mapped.hash=parsed.hash;return mapped.href;}return parsed.href;}catch{return value;}};
     const targetPages=new Map<string,ReturnType<typeof html>>(),evidenceByPage=new Map<string,string>();
+    defectGroups=new CollectionDefectGroups(sourceOrigin);
     for(const page of pages){
       signal.throwIfAborted();const targetUrl=mapLink(page.url,run.sourceUrl);
       try{
         const response=await cached('http:'+targetUrl,()=> (options.dependencies?.readHttp||httpRead)(new URL(targetUrl),{signal:AbortSignal.any([signal,AbortSignal.timeout(30000)]),limit:16*1024*1024}),value=>value.status>=200&&value.status<300||[404,410].includes(value.status));
         const actual=response.value as Awaited<ReturnType<typeof httpRead>>,evidence=[response.evidence];report.checkedPages++;evidenceByPage.set(page.url,response.evidence);
-        if(actual.status>=300&&actual.status<400){check({id:'page:'+page.path,kind:'page',status:'unverified',sourcePath:page.path,reason:'目标响应为重定向；未取得目标 Location 与最终正文，不能证明承接正确。',evidence});continue;}
-        if(actual.status<200||actual.status>=300){check({id:'page:'+page.path,kind:'page',status:[404,410].includes(actual.status)?'missing':'unverified',sourcePath:page.path,reason:'目标路径响应 HTTP '+actual.status+'，尚未证明原页交付。',evidence});continue;}
+        if(actual.status>=300&&actual.status<400){defectGroups.addPage(page.path,{status:'unverified'});check({id:'page:'+page.path,kind:'page',status:'unverified',sourcePath:page.path,reason:'目标响应为重定向；未取得目标 Location 与最终正文，不能证明承接正确。',evidence});continue;}
+        if(actual.status<200||actual.status>=300){defectGroups.addPage(page.path,{status:[404,410].includes(actual.status)?'missing':'unverified',httpStatus:actual.status,evidence});check({id:'page:'+page.path,kind:'page',status:[404,410].includes(actual.status)?'missing':'unverified',sourcePath:page.path,reason:'目标路径响应 HTTP '+actual.status+'，尚未证明原页交付。',evidence});continue;}
         const target=html(actual.body,targetUrl);targetPages.set(page.url,target);
         const titleOk=target.title===page.title,missingText=missingCollectionText(page.semanticFragments.map(fragment=>fragment.linkUrl&&acceptedAssetLink(fragment.linkUrl,page.url)?{...fragment,linkUrl:undefined}:fragment),target,value=>mapLink(value,page.url),targetOrigin);
         const absentLinks=page.links.filter(link=>!target.links.some(actual=>collectionLinksEquivalent(mapLink(link.url,page.url),actual.url,targetOrigin))),acceptedMissingLinks=absentLinks.filter(link=>acceptedAssetLink(link.url,page.url)),missingLinks=absentLinks.filter(link=>!acceptedAssetLink(link.url,page.url));
         const status=target.unsupported?'unverified':!titleOk||missingText.length||missingLinks.length?'missing':'verified';
         const diff=write('page-difference',{sourceUrl:page.url,targetUrl,sourceEvidence:page.sourceEvidence,sourceTitle:page.title,actualTitle:target.title,missingText,missingLinks,acceptedMissingLinks});
+        defectGroups.addPage(page.path,{status,missingText,missingLinks:missingLinks.map(link=>link.url),titleMismatch:!titleOk,evidence:[diff.name]});
         check({id:'page:'+page.path,kind:'page',status,sourcePath:page.path,...(target.unsupported?{failureClass:'contract-tool-defect' as const}:{}),differences:{missingTextFragments:missingText.slice(0,8).map(text=>text.slice(0,600)),missingLinkUrls:missingLinks.slice(0,8).map(link=>link.url),textTruncated:missingText.length>8||missingText.some(text=>text.length>600)},reason:status==='verified'?`逐页标题、原件语义文本片段及约定必迁链接在目标实际响应中一致。${acceptedMissingLinks.length?'已按冻结的人类记录接受 '+acceptedMissingLinks.length+' 条失败素材超链接缺失，见差异证据。':''}`:target.unsupported?'目标含暂未支持的 HTML 实体，保留未验证。':'目标实际正文、标题或链接与冻结来源不一致；HTTP 200 不构成通过。',evidence:[...evidence,diff.name]});
         if(page.rendered){
           try{
@@ -409,7 +413,7 @@ export async function verifyCollectionTarget(options:VerifyCollectionTargetOptio
             check({id:'rendered:'+page.path,kind:'page',status:missingVisibleText.length?'missing':'verified',sourcePath:page.path,reason:missingVisibleText.length?'目标真实可见正文与冻结来源渲染证据不一致；脚本或未映射iframe内文本不计入可见交付。':'冻结来源渲染可见正文在绑定本任务、当前修订和精确URL的真实目标观测中一致；仅此文本核验通过，交互仍须独立实际操作。',evidence:[observed.json.name,observed.image.name,renderedDiff.name]});
           }catch(error){const failed=write('rendered-read-error',{sourceUrl:page.url,targetUrl,error:error instanceof Error?error.message:'无法读取真实渲染观测'});check({id:'rendered:'+page.path,kind:'page',status:'unverified',sourcePath:page.path,reason:'真实目标渲染证据不能核验：'+(error instanceof Error?error.message:'观测无效'),evidence:[failed.name]});}
         }
-      }catch(error){if(error instanceof WindowEnded)throw error;signal.throwIfAborted();const evidence=write('read-error',{sourceUrl:page.url,message:error instanceof Error?error.message:'只读请求失败'});check({id:'page:'+page.path,kind:'page',status:'unverified',sourcePath:page.path,reason:'无法读取当前路径的实际响应。',evidence:[evidence.name]});}
+      }catch(error){if(error instanceof WindowEnded)throw error;signal.throwIfAborted();defectGroups.addPage(page.path,{status:'unverified'});const evidence=write('read-error',{sourceUrl:page.url,message:error instanceof Error?error.message:'只读请求失败'});check({id:'page:'+page.path,kind:'page',status:'unverified',sourcePath:page.path,reason:'无法读取当前路径的实际响应。',evidence:[evidence.name]});}
     }
     const relationItems=manifest.items.filter(item=>item.required&&item.kind==='data'&&item.dataIdentity?.kind==='relations');
     const frozenScope=(ids:string[])=>{
@@ -659,7 +663,11 @@ export async function verifyCollectionTarget(options:VerifyCollectionTargetOptio
   checkpoint.scanComplete=report.state!=='pending';saveCheckpoint();
   const retryable=Object.values(checkpoint.entries).filter(entry=>entry.retryable).length;
   if(retryable)report.limitations.push(`本次绑定保留 ${retryable} 个失败读取检查点，仅用于推进完整扫描，不代表核验通过；完成扫描后保持未验证，宿主可显式设置 retryTransientFailures=true 仅重试这些对象，成功响应继续复用。`);
-  report.issues=report.checks.filter(check=>check.status==='missing'&&check.kind!=='binding').map(check=>({severity:'major',title:bounded('B段宿主核验：'+check.id,240),detail:bounded(check.reason,3000),evidence:check.evidence.slice(0,100)}));
+  const grouped=defectGroups&&report.state!=='pending'?defectGroups.result():undefined;
+  if(grouped){report.defectGroups=grouped.defectGroups;report.templateCoverage=grouped.templateCoverage;}
+  const groupIssues=(grouped?.defectGroups||[]).map(collectionDefectGroupIssue);
+  const checkIssues=report.checks.filter(check=>check.status==='missing'&&check.kind!=='binding'&&!(grouped&&check.id.startsWith('page:'))).map(check=>({severity:'major' as const,title:bounded('B段宿主核验：'+check.id,240),detail:bounded(check.reason,3000),evidence:check.evidence.slice(0,100)}));
+  report.issues=[...groupIssues.slice(0,10),...checkIssues,...groupIssues.slice(10)];
   report.summary=summarizeCollectionTargetReport(report);
   report.artifacts=[...new Map(report.artifacts.map(file=>[file.name,file])).values()];
   const reports=new CollectionTargetReports(store),hash=reports.fingerprint(report),unchanged=reports.unchanged(report,hash);

@@ -2,6 +2,8 @@
 
 统一管理资源库、生成 / 评测队列、报告、评测规则与系统设置，沿用 CPR 界面。新功能使用 `frontend/src/views/automation/`、`server/automation/` 和 `shared/automation.ts`；原有评测记录、接口和执行器保留。
 
+同事首次安装请从 [部署与交接指南](docs/DEPLOYMENT_AND_HANDOFF.md) 开始，覆盖 Windows / macOS、Kooboo 与模型配置、单任务验证、更新备份及排障。仅打包当前平台可用 `python3 scripts/package-platform.py --output /tmp/kooboo-automation-lab.zip`；构建在临时目录完成，不携带个人运行数据。首次仍需联网安装依赖和 Chromium。
+
 运行与验收边界、操作说明及新 API 见 [统一自动化说明](docs/UNIFIED_AUTOMATION.md)。新队列首次默认暂停，既有模型凭证与 Kooboo 环境配置保留。
 
 项目目录：`/Users/achen/Priv/Yardi/AI-App/Kooboo-AI-Automation-Lab`。完整讨论与决策见 [讨论记录](docs/automation-evaluation-discussion.md)。
@@ -167,3 +169,11 @@ python3 scripts/package-delivery.py --plugin /path/to/kooboo_material_site_build
 ```
 
 生成插件、平台及组合 ZIP、版本清单与 SHA-256。仅复制 Git 源码与明确的插件文件目录、构建产物，不复制 `.data/`、`.env`、node_modules 或 Git 元数据。交付前重新构建两个项目，避免同版本旧产物。
+
+## 站点迁移采集运行环境
+
+新建全站迁移/升级任务先执行 A 段（原站→冻结资料），核验通过后才创建目标站；B 段（冻结资料→实际响应及后台数据）独立影响完整性和优化达标。实现说明见 `docs/site-migration-autonomous-design-v1-2026-11-08.md`。
+
+平台内置 `engines/site-harvest` 与采集 SOP，不依赖个人 site-harvest skill。Windows/macOS 需 Node.js 24+、Python 3.12；运行 `npm run install:collection` 初始化项目数据目录中的独立 Python 环境，`npm run check:collection` 自检。安装器不安装 Python 本体、不改全局包或已有加密配置。自定义 `EVALUATOR_DATA_DIR` 时在相同环境执行安装命令。
+
+普通采集与有限规则适配提供 Windows/macOS 分支；Windows 尚未实机验收。代码修复当前仅支持 macOS Seatbelt，隔离不可用时关闭该修复能力并保留缺口，不能改用无隔离执行。平台重启保留采集检查点、固定资料、任务用量；未知建站或消息投递不会自动重发。

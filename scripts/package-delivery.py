@@ -75,13 +75,13 @@ readme = '''# Kooboo 团队交付包
 
 - 安装插件：Chrome 扩展管理页打开开发者模式，加载 plugin/dist。
 - 插件使用：plugin/docs/USER_GUIDE.md。
-- 启动评分平台：进入 evaluator，安装 Node.js 24+，依次执行 npm ci、npm run install:browser、npm run build、npm start。
+- 启动评分平台：进入 evaluator，安装 Node.js 24+，依次执行 npm ci、npm run install:browser、npm run install:collection、npm run build、npm start。
 - 评分平台使用/部署/Git 更新：evaluator/docs/HANDOFF.md。
 - Admin 查询协议：evaluator/docs/PUBLIC_API.md；可运行示例：evaluator/examples/admin-query.mjs。
 - Admin 发起建站：plugin/ADMIN_INTEGRATION.md。
 - 同事的 Codex：plugin/docs/CODEX_INTEGRATION.md 和 evaluator/docs/CODEX_INTEGRATION.md。
 
-源码和构建产物已提供，仍需自行安装依赖和 Chromium、配置模型与 Kooboo 环境。包内没有交付者的运行数据库、模型 Key、Chrome 登录或目录授权；Launch 定制凭证属于插件实现，仅限授权团队内部分享。迁移不会自动改变评分平台的站点身份。
+源码和构建产物已提供，仍需自行安装依赖、Chromium 和 Python 3.12，配置模型与 Kooboo 环境；内置采集引擎与 SOP 不依赖个人 skill，Python 本体未打包，代码隔离修复当前仅支持 macOS。包内没有交付者的运行数据库、模型 Key、Chrome 登录或目录授权；Launch 定制凭证属于插件实现，仅限授权团队内部分享。迁移不会自动改变评分平台的站点身份。
 
 ZIP 不带 Git 元数据。远程仓库建立后优先 clone；已有 ZIP 安装的数据按 HANDOFF.md 停机转移，之后 git pull --ff-only、npm ci、安装浏览器、构建并重启。插件更新仍需重新加载扩展。
 
@@ -90,7 +90,8 @@ ZIP 不带 Git 元数据。远程仓库建立后优先 clone；已有 ZIP 安装
 all_files = {**platform_files, **plugin_files, 'READ_FIRST.md': readme.encode()}
 validate(all_files)
 inventory = {'schemaVersion': 1, 'evaluatorVersion': version, 'evaluatorCommit': commit, 'pluginVersion': plugin_version,
-             'extensionId': extension_id, 'runtime': 'Node.js >=24; install dependencies and Playwright Chromium on destination',
+             'extensionId': extension_id, 'runtime': 'Node.js >=24; Python 3.12; install dependencies, Playwright Chromium and project collection runtime on destination',
+             'collectionComponents': ['engines/site-harvest', 'sop/automation-collection-v1', 'scripts/install-collection.mjs'],
              'files': {name: hashlib.sha256(data).hexdigest() for name, data in sorted(all_files.items())}}
 def metadata(files):
     return (json.dumps({**inventory, 'files': {name: hashlib.sha256(data).hexdigest() for name, data in sorted(files.items())}}, ensure_ascii=False, indent=2) + '\n').encode()

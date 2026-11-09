@@ -17,6 +17,9 @@ import { executeGeneration } from '../server/automation/generator.js';
 import { codexClient, recoverEvaluationSession, reviewWithValidation } from '../server/automation/evaluator.js';
 import { applyGenerationObservation, type GenerationObservation } from '../server/automation/generation-session.js';
 import { FollowupRuntimeError, UnconfirmedStop } from '../server/automation/errors.js';
+import { createAutonomousExecution } from '../shared/autonomy.js';
+import { followupRequestPolicy } from '../server/automation/autonomy.js';
+import { ModelBudgetExceeded, RequestBudget } from '../server/automation/request-budget.js';
 
 const input={name:'Sample',scenario:'site-template' as const,description:'Build homepage',contentUrl:'https://content.test',referenceUrl:'',externalSource:'',externalId:'',files:[]};
 const decision=(action:FollowupAction['action'],extra:Partial<FollowupAction>={}):FollowupAction=>({action,reason:'已依据实际证据决定下一步',evidence:['observed'],...extra});
@@ -253,6 +256,70 @@ test('followup harness executes the generated helper, validates real observation
     assert.ok(!JSON.stringify(f.automationStore.events(t.id)).includes(env.FOLLOWUP_TOOLS_TOKEN));
     await assert.rejects(()=>fetch(env.FOLLOWUP_TOOLS_URL,{signal:AbortSignal.timeout(1000)}));
   }finally{await f.close();}
+});
+
+test('accepted actions survive relay disconnects while cancellation, timeout and model budgets still stop dispatch',async()=>{
+  for(const mode of ['disconnect','disconnect-stream-failed','cleanup-disconnect','no-action','cancel-before','cancel-after','timeout-after','persisted-cancel-after','persisted-cancelled-after','budget-before','budget-after','thrown-budget'] as const){
+    const f=await fixture(),controller=new AbortController();let env:Record<string,string>={},chosen:FollowupAction|undefined;
+    const disconnect=['disconnect','disconnect-stream-failed','cleanup-disconnect','no-action'].includes(mode);
+    const upstream=createServer(async(req,res)=>{
+      for await(const _chunk of req){};
+      res.writeHead(200,{'Content-Type':'text/event-stream'});
+      if(disconnect)res.write('data: '+JSON.stringify({type:'response.created',response:{id:'incomplete'}})+'\n\n');
+      else res.end('data: '+JSON.stringify({type:'response.completed',response:{usage:{input_tokens:20,output_tokens:5}}})+'\n\n');
+    });
+    await new Promise<void>(r=>upstream.listen(0,'127.0.0.1',r));
+    try{
+      f.vault.updateAutomation({...f.settings,evaluationEndpoint:`http://127.0.0.1:${(upstream.address() as {port:number}).port}`});
+      const task=f.create();task.autonomy=createAutonomousExecution('Synthetic followup');f.automationStore.put(task);
+      f.automationStore.scheduleFollowup(task,{...f.settings.followup,maxRequests:1});
+      const run=async(payload:unknown)=>{
+        try{return JSON.parse((await promisify(execFile)(process.execPath,[join(f.directory,'followup-runs',task.id,'tools.mjs'),JSON.stringify(payload)],{env:{...process.env,...env}})).stdout);}
+        catch(error){const stdout=(error as {stdout?:string}).stdout;if(stdout)throw new Error(JSON.parse(stdout).error);throw error;}
+      };
+      const request=()=>fetch(env.AUTOMATION_RESPONSES_URL+'/responses',{method:'POST',headers:{Authorization:'Bearer '+env.EVALUATOR_MODEL_KEY,'Content-Type':'application/json'},body:JSON.stringify({model:'test',input:'Synthetic followup request'})});
+      const stream=async function*():AsyncGenerator<ThreadEvent>{
+        const response=await request();assert.equal(response.status,200);
+        const reader=disconnect?response.body!.getReader():undefined;
+        if(reader)await reader.read();else await response.text();
+        const seen=await run({tool:'get_task'});
+        chosen=decision('interrupt',{evidence:[seen.evidenceId],nextSteps:['Inspect synthetic result']});
+        if(mode==='cancel-before')controller.abort(new Error('任务已请求取消'));
+        if(mode==='budget-before'){const denied=await request();assert.equal(denied.status,429);await denied.text();}
+        if(['cancel-before','budget-before'].includes(mode)){
+          await assert.rejects(()=>run({tool:'act',decision:chosen}),/取消|请求次数上限/);
+        }else if(mode!=='no-action')assert.equal((await run({tool:'act',decision:chosen})).accepted,true);
+        if(mode==='cancel-after')controller.abort(new Error('任务已请求取消'));
+        if(mode==='timeout-after')controller.abort(new Error('AI 跟进达到本轮时间预算'));
+        if(mode==='persisted-cancel-after'){const current=f.automationStore.task(task.id)!;current.status='cancelling';f.automationStore.put(current);}
+        if(mode==='persisted-cancelled-after'){const current=f.automationStore.task(task.id)!;current.status='cancelled';f.automationStore.put(current);return;}
+        if(mode==='budget-after'){
+          const denied=await request();assert.equal(denied.status,429);await denied.text();
+          await assert.rejects(()=>run({tool:'act',decision:chosen}),/请求次数上限/);
+        }
+        if(reader&&mode!=='cleanup-disconnect'){
+          await reader.cancel();await until(()=>f.automationStore.usage.entries(task.id)[0]?.status==='failed');
+        }
+        if(mode==='disconnect-stream-failed')throw new Error('SDK stream ended after accepting action');
+        if(mode==='thrown-budget')throw new ModelBudgetExceeded('Synthetic model budget stop');
+        yield {type:'turn.completed',usage:{input_tokens:999,cached_input_tokens:0,cache_write_input_tokens:0,reasoning_output_tokens:0,output_tokens:999}};
+      };
+      const thread={runStreamed:async()=>({events:stream()})};
+      const result=executeFollowup(task,f.automationStore,f.vault,f.directory,controller.signal,(_v,_d,extra)=>{env=extra;return {startThread:()=>thread,resumeThread:()=>thread};});
+      if(['disconnect','disconnect-stream-failed','cleanup-disconnect'].includes(mode))assert.deepEqual(await result,chosen,mode);
+      else if(mode==='no-action')await assert.rejects(()=>result,/SDK 已关闭模型连接/);
+      else if(mode.startsWith('budget')||mode==='thrown-budget')await assert.rejects(()=>result,ModelBudgetExceeded);
+      else await assert.rejects(()=>result,/取消|时间预算/);
+      assert.deepEqual(f.automationStore.task(task.id)!.followup!.lastAction,['cancel-before','budget-before','no-action'].includes(mode)?undefined:chosen,mode);
+      if(mode==='persisted-cancelled-after')assert.equal(f.automationStore.task(task.id)!.status,'cancelled');
+      const entries=f.automationStore.usage.entries(task.id);assert.equal(entries.length,1,'SDK totals must not replace relay accounting');
+      if(disconnect){
+        assert.equal(entries[0].tokens,null);assert.equal(task.followup!.tokens,0);assert.match(entries[0].note,/预占保留/);
+        const budget=new RequestBudget(f.automationStore.db,followupRequestPolicy(task));assert.ok(budget.state().spent>0);
+        assert.equal(f.automationStore.db.prepare('SELECT state FROM auto_model_requests WHERE account_id=?').get(budget.policy.key)!.state,'retained');
+      }else assert.equal(task.followup!.tokens,25);
+    }finally{upstream.closeAllConnections();await new Promise<void>(r=>upstream.close(()=>r()));await f.close();}
+  }
 });
 
 test('loopback permission denial is a runtime failure and never spends the remaining followup attempts',async()=>{

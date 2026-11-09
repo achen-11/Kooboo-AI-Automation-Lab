@@ -20,8 +20,22 @@ import { codexClient } from '../server/automation/codex-client.js';
 import { targetReached } from '../server/automation/optimization.js';
 import type { Requirement, RequirementCheck } from '../shared/completeness.js';
 import { inspectionTools } from '../server/automation/inspection-tools.js';
+import { createAutonomousExecution } from '../shared/autonomy.js';
 
 const experience:ExperienceInput={title:'先查交付记录',scenarios:['site-template'],stages:['generation','followup','evaluation'],conditions:'续建前不确定原会话状态',exclusions:'没有原会话',guidance:'查询实际交付回执后再决定，不重复发送。'};
+test('a stopped collection decision retains only its own unknown reservation and preserves historical blockers and charges',async()=>{
+  const f=await fixture();try{
+    const task=f.create();task.autonomy=createAutonomousExecution('Complete collection');
+    const policy={key:'collection-review',runKey:'one',maxTokens:100000,maxRequests:4},budget=new RequestBudget(f.automationStore.db,policy);
+    budget.reserve('historical',Buffer.from('{}'));budget.complete('historical',null);const before=budget.state().spent;
+    const createClient=(()=>({startThread:()=>({runStreamed:async()=>({events:(async function*(){
+      f.automationStore.db.prepare('INSERT INTO auto_model_requests(id,account_id,run_key,state,charged) VALUES(?,?,?,?,?)').run('this-window',policy.key,policy.runKey,'unknown',1234);
+      throw new Error('test connection timeout');
+    })()})})})) as unknown as typeof codexClient;
+    await assert.rejects(localDecision({task,store:f.automationStore,vault:f.vault,directory:f.directory,id:randomUUID(),stage:'planning',sop:'test',context:{},policy,minutes:1,signal:new AbortController().signal,createClient,retainStoppedReservations:true,submit:()=>true}),/connection timeout/);
+    assert.equal(f.automationStore.db.prepare('SELECT state FROM auto_model_requests WHERE id=?').get('this-window').state,'retained');assert.equal(f.automationStore.db.prepare('SELECT state FROM auto_model_requests WHERE id=?').get('historical').state,'unknown');assert.equal(budget.state().unknown,1);assert.equal(budget.state().spent,before+1234);
+  }finally{await f.close();}
+});
 const report=():AutomationReport=>({summary:'独立评测',assessments:[],scores:[],issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},quality:'unverified',artifacts:[]});
 async function fixture(){
   const directory=mkdtempSync(join(tmpdir(),'learning-test-')),f=await createApp({directory,serveWeb:false,startWorker:false}),login=await f.app.inject({method:'POST',url:'/api/login'}),headers={cookie:String(login.headers['set-cookie']).split(';')[0]};
@@ -198,6 +212,22 @@ test('manual unknown-usage acknowledgement retains the reservation and missing b
     const result=await f.app.inject({method:'POST',url:endpoint,headers:f.headers,payload});assert.equal(result.statusCode,200);assert.equal(result.json().retainedTokens,spent);assert.equal(budget.state().spent,spent);assert.equal(budget.state().unknown,0);assert.equal(f.automationStore.task(t.id)!.usage!.missing,1);
   }finally{await f.close();}
 });
+test('explicit read aliases preserve host validation and cannot submit a decision',async()=>{
+  const f=await fixture();try{
+    const task=f.create(),reads:unknown[]=[];let committed=false;
+    const createClient=((_v:Parameters<typeof codexClient>[0],_d:string,env:Record<string,string>)=>({startThread:()=>({runStreamed:async()=>({events:(async function*(){
+      const call=(payload:unknown)=>fetch(env.DECISION_TOOLS_URL,{method:'POST',headers:{authorization:'Bearer '+env.DECISION_TOOLS_TOKEN,'content-type':'application/json'},body:JSON.stringify(payload)});
+      assert.equal((await call({tool:'diagnose',url:'https://known.example/asset'})).status,200);
+      assert.equal((await call({tool:'diagnose',input:{url:'https://known.example/asset',kind:'submit'}})).status,200);
+      assert.equal((await call({tool:'diagnose',url:'https://unknown.example/asset'})).status,400);
+      assert.equal((await call({tool:'network',url:'https://known.example/asset'})).status,400);
+      assert.equal(committed,false);assert.equal((await call({tool:'submit',result:{ok:true}})).status,200);
+      yield {type:'turn.completed',usage:{input_tokens:0,output_tokens:0}};
+    })()})})})) as unknown as typeof codexClient;
+    const result=await localDecision({task,store:f.automationStore,vault:f.vault,directory:f.directory,id:randomUUID(),stage:'planning',sop:'test',context:{},policy:{key:'read-alias',runKey:'one',maxTokens:10000,maxRequests:2},minutes:1,signal:new AbortController().signal,createClient,readAliases:['diagnose'],read:async raw=>{assert.deepEqual(raw,{url:'https://known.example/asset',kind:'diagnose'});reads.push(raw);return {saved:true};},submit:raw=>{assert.deepEqual(raw,{ok:true});committed=true;return true;}});
+    assert.equal(result,true);assert.equal(committed,true);assert.equal(reads.length,2);
+  }finally{await f.close();}
+});
 test('a reflection draft without a tool envelope is host-validated and can be replayed after the model request limit without a new request',async()=>{
   const f=await fixture();try{
     const task=f.create(),policy={key:'exhausted-draft',runKey:'same',maxTokens:10000,maxRequests:1},budget=new RequestBudget(f.automationStore.db,policy);budget.reserve('used',Buffer.from('{}'));budget.complete('used',{input_tokens:100,output_tokens:10});
@@ -220,6 +250,24 @@ test('independent source review can extend a manifest but cannot remove old requ
     const extended=await call({tool:'extend_manifest',input:next});assert.equal(extended.status,200);const revision=(await extended.json()).manifest;assert.equal(revision.revision,2);assert.notEqual(revision.id,original.id);
     assert.equal((await call({tool:'extend_manifest',input:{...next,items:next.items.slice(1)}})).status,400);assert.equal(ms.get(task.requirementsId)!.id,revision.id);
     const url=`/api/automation/tasks/${task.id}/manifest/evidence/${evidence}`;assert.equal((await f.app.inject({url,headers:f.headers})).statusCode,200);writeFileSync(join(f.directory,'manifest-runs',task.id,'evidence',evidence),'changed');assert.equal((await f.app.inject({url,headers:f.headers})).statusCode,409);
+  }finally{await tools?.close();await close(server);await f.close();}
+});
+test('exhausted evidence reads still allow bounded manifest queries and gap-preserving updates',async()=>{
+  const f=await fixture();let sourceReads=0;const server=createServer((_req,res)=>{sourceReads++;res.end('<html>Source</html>');});let tools:Awaited<ReturnType<typeof inspectionTools>>|undefined;
+  try{
+    const endpoint=await listen(server);f.automationStore.saveResource({...f.resource,contentUrl:endpoint},f.resource.id,f.resource.revision);const task=f.create('site'),ms=new ManifestStore(f.automationStore);
+    ms.save(task,{sourceComplete:false,limitations:['范围尚未完整'],items:[dataItem],evidence:[]},'human');
+    tools=await inspectionTools(task,f.automationStore,f.vault,f.directory,join(f.directory,'automation-runs',task.id),[],new AbortController().signal);
+    const call=(value:unknown)=>fetch(tools!.env.INSPECTION_URL,{method:'POST',headers:{authorization:'Bearer '+tools!.env.INSPECTION_TOKEN,'content-type':'application/json'},body:JSON.stringify(value)});
+    const source=await call({tool:'source',input:{kind:'source',role:'content'}});assert.equal(source.status,200);const evidence=(await source.json()).evidence;
+    for(let i=1;i<300;i++){const r=await call({tool:'unsupported'});assert.equal(r.status,400);await r.text();}
+    const exhausted=await call({tool:'source',input:{kind:'source',role:'content'}});assert.equal(exhausted.status,400);assert.match((await exhausted.json()).error,/只读取证达到/);assert.equal(sourceReads,1);
+    const manifest=await call({tool:'manifest'});assert.equal(manifest.status,200);assert.equal((await manifest.json()).manifest.sourceComplete,false);
+    const next={sourceComplete:false,limitations:['来源取证已耗尽，未覆盖部分仍待核验'],items:[dataItem],evidence:[evidence]};
+    const extended=await call({tool:'extend_manifest',input:next});assert.equal(extended.status,200);const revision=(await extended.json()).manifest;assert.equal(revision.revision,2);assert.equal(revision.sourceComplete,false);assert.deepEqual(revision.limitations,next.limitations);
+    assert.equal((await call({tool:'extend_manifest',input:{...next,items:[{...dataItem,required:false}]}})).status,400);
+    for(let i=3;i<20;i++){const r=await call({tool:'manifest'});assert.equal(r.status,200);await r.json();}
+    const controlLimit=await call({tool:'manifest'});assert.equal(controlLimit.status,400);assert.match((await controlLimit.json()).error,/清单查询与补充达到/);assert.equal(ms.get(task.requirementsId)!.id,revision.id);assert.equal(sourceReads,1);
   }finally{await tools?.close();await close(server);await f.close();}
 });
 test('source material reads retain binary originals and do not decode images as fabricated text',async()=>{

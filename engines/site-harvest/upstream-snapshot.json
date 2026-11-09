@@ -1,0 +1,20 @@
+{
+  "snapshotDate": "2026-11-08",
+  "origin": "site-harvest core imported into platform; personal skill no longer a runtime dependency",
+  "files": {
+    "harvest.py": "ceb31f0b9b12485131c58201236cf9cda239e81b1e444df45baa87111593a138",
+    "siteharvest/__init__.py": "4b17049d5038abbd394eb30156ea57c864d31234d673dc97d92f1d2421a2ac34",
+    "siteharvest/assets.py": "01135cbfd24d9edafae6d98488fbcbd01ead01a377bf0eb4534b51a6f12e7ff1",
+    "siteharvest/cli.py": "202db1d14c5bb02cbdb163deb82c2e130ea1276c1b6745b3dce2331feb53437f",
+    "siteharvest/completeness.py": "45f22f6b8894ef2f2a8603d5a7fb45aa04944c8b6915f7ee7ad18c7ce219e121",
+    "siteharvest/dataset.py": "c0e59eb5f128c6e460e9ba7be36a410bceb9fd953a0330a8e95883cd62bddabb",
+    "siteharvest/discover.py": "1edbb4b6dbe3934bc3b77329c1ac070ffb56df059809a2e074a5963be41f208f",
+    "siteharvest/extract.py": "25638d5f5deed0140ba483ff882a2f729b0e51e7c23394a806c192a1e03adb66",
+    "siteharvest/fetch.py": "ae3aa37a97f70d3e5c2a0b91fddab8bd7fc3a83545e6b25d63610a305ff047fb",
+    "siteharvest/naming.py": "3b4b0b341e729cb4b916ab8f8dc8f760fc6f8dd794ede328c6021d94c3e4c40a",
+    "siteharvest/net.py": "6212d06373e62441f1882775cc1de8e1e314c05891af4b8388a10cd35c454fa3",
+    "siteharvest/render.py": "8e28927011106c123bec846244f3f0af60084993b8df8b08201d924970c302de",
+    "siteharvest/util.py": "ae7a982ca58239a5451bd395ebde0a1550752427fd52f807bcf7d5c09a410c80",
+    "siteharvest/verify.py": "7d983d45e9a3df95821db335c39dde7c306f843486076056b5b93a840206ed1d"
+  }
+}

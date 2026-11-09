@@ -1,0 +1,956 @@
+{
+  "generator": "siteharvest.extract.extract_page and discover.extract_links, offline Python 3.12/lxml 6.1.1",
+  "pages": [
+    {
+      "path": "/archive/list.aspx?page=2",
+      "raw": "<html lang=\"en\"><head><title>Archive listings</title><base href=\"https://source.invalid/archive/\"></head><body><div class=\"breadcrumb\"><a href=\"101.aspx\">Navigation 101</a></div><main><h1>Archive listings</h1><ul><li><a href=\"101.aspx\">Record 101</a></li><li><a href=\"102.aspx\">Record 102</a></li><li><a href=\"103.aspx\">Record 103</a></li><li><a href=\"104.aspx\">Record 104</a></li><li><a href=\"105.aspx\">Record 105</a></li><li><a href=\"106.aspx\">Record 106</a></li><li><a href=\"107.aspx\">Record 107</a></li><li><a href=\"108.aspx\">Record 108</a></li><li><a href=\"109.aspx\">Record 109</a></li><li><a href=\"110.aspx\">Record 110</a></li><li><a href=\"111.aspx\">Record 111</a></li><li><a href=\"112.aspx\">Record 112</a></li></ul></main><footer><a href=\"/privacy\">Privacy</a></footer></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/list.aspx?page=2",
+        "fullText": "Archive listings\nNavigation 101\nArchive listings\nRecord 101\nRecord 102\nRecord 103\nRecord 104\nRecord 105\nRecord 106\nRecord 107\nRecord 108\nRecord 109\nRecord 110\nRecord 111\nRecord 112\nPrivacy",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/",
+        "pageType": "list",
+        "title": "Archive listings",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "en",
+        "hreflang": [],
+        "og": {},
+        "h1": "Archive listings",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Archive listings"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Archive listings",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Archive listings",
+            "hidden": false
+          },
+          {
+            "kind": "list",
+            "ordered": false,
+            "items": [
+              "Record 101",
+              "Record 102",
+              "Record 103",
+              "Record 104",
+              "Record 105",
+              "Record 106",
+              "Record 107",
+              "Record 108",
+              "Record 109",
+              "Record 110",
+              "Record 111",
+              "Record 112"
+            ],
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [
+          {
+            "url": "https://source.invalid/archive/101.aspx",
+            "text": "Navigation 101",
+            "where": "footer"
+          },
+          {
+            "url": "https://source.invalid/archive/101.aspx",
+            "text": "Record 101",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/102.aspx",
+            "text": "Record 102",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/103.aspx",
+            "text": "Record 103",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/104.aspx",
+            "text": "Record 104",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/105.aspx",
+            "text": "Record 105",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/106.aspx",
+            "text": "Record 106",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/107.aspx",
+            "text": "Record 107",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/108.aspx",
+            "text": "Record 108",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/109.aspx",
+            "text": "Record 109",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/110.aspx",
+            "text": "Record 110",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/111.aspx",
+            "text": "Record 111",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/archive/112.aspx",
+            "text": "Record 112",
+            "where": "content"
+          },
+          {
+            "url": "https://source.invalid/privacy",
+            "text": "Privacy",
+            "where": "footer"
+          }
+        ],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 138,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": [
+        {
+          "url": "https://source.invalid/archive/101.aspx",
+          "text": "Navigation 101",
+          "where": "nav",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/101.aspx",
+          "text": "Record 101",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/102.aspx",
+          "text": "Record 102",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/103.aspx",
+          "text": "Record 103",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/104.aspx",
+          "text": "Record 104",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/105.aspx",
+          "text": "Record 105",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/106.aspx",
+          "text": "Record 106",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/107.aspx",
+          "text": "Record 107",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/108.aspx",
+          "text": "Record 108",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/109.aspx",
+          "text": "Record 109",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/110.aspx",
+          "text": "Record 110",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/111.aspx",
+          "text": "Record 111",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/archive/112.aspx",
+          "text": "Record 112",
+          "where": "body",
+          "lang": "",
+          "kind": "a"
+        },
+        {
+          "url": "https://source.invalid/privacy",
+          "text": "Privacy",
+          "where": "footer",
+          "lang": "",
+          "kind": "a"
+        }
+      ]
+    },
+    {
+      "path": "/archive/101.aspx",
+      "raw": "<html><head><title>Detail 101</title></head><body><main><h1>Record 101</h1><p>Full body 101 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/101.aspx",
+        "fullText": "Detail 101\nRecord 101\nFull body 101 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/101.aspx",
+        "pageType": "unknown",
+        "title": "Detail 101",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 101",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 101"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 101",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 101",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 101 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/102.aspx",
+      "raw": "<html><head><title>Detail 102</title></head><body><main><h1>Record 102</h1><p>Full body 102 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/102.aspx",
+        "fullText": "Detail 102\nRecord 102\nFull body 102 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/102.aspx",
+        "pageType": "unknown",
+        "title": "Detail 102",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 102",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 102"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 102",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 102",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 102 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/103.aspx",
+      "raw": "<html><head><title>Detail 103</title></head><body><main><h1>Record 103</h1><p>Full body 103 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/103.aspx",
+        "fullText": "Detail 103\nRecord 103\nFull body 103 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/103.aspx",
+        "pageType": "unknown",
+        "title": "Detail 103",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 103",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 103"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 103",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 103",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 103 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/104.aspx",
+      "raw": "<html><head><title>Detail 104</title></head><body><main><h1>Record 104</h1><p>Full body 104 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/104.aspx",
+        "fullText": "Detail 104\nRecord 104\nFull body 104 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/104.aspx",
+        "pageType": "unknown",
+        "title": "Detail 104",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 104",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 104"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 104",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 104",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 104 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/105.aspx",
+      "raw": "<html><head><title>Detail 105</title></head><body><main><h1>Record 105</h1><p>Full body 105 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/105.aspx",
+        "fullText": "Detail 105\nRecord 105\nFull body 105 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/105.aspx",
+        "pageType": "unknown",
+        "title": "Detail 105",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 105",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 105"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 105",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 105",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 105 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/106.aspx",
+      "raw": "<html><head><title>Detail 106</title></head><body><main><h1>Record 106</h1><p>Full body 106 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/106.aspx",
+        "fullText": "Detail 106\nRecord 106\nFull body 106 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/106.aspx",
+        "pageType": "unknown",
+        "title": "Detail 106",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 106",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 106"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 106",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 106",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 106 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/107.aspx",
+      "raw": "<html><head><title>Detail 107</title></head><body><main><h1>Record 107</h1><p>Full body 107 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/107.aspx",
+        "fullText": "Detail 107\nRecord 107\nFull body 107 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/107.aspx",
+        "pageType": "unknown",
+        "title": "Detail 107",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 107",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 107"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 107",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 107",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 107 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/108.aspx",
+      "raw": "<html><head><title>Detail 108</title></head><body><main><h1>Record 108</h1><p>Full body 108 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/108.aspx",
+        "fullText": "Detail 108\nRecord 108\nFull body 108 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/108.aspx",
+        "pageType": "unknown",
+        "title": "Detail 108",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 108",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 108"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 108",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 108",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 108 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/109.aspx",
+      "raw": "<html><head><title>Detail 109</title></head><body><main><h1>Record 109</h1><p>Full body 109 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/109.aspx",
+        "fullText": "Detail 109\nRecord 109\nFull body 109 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/109.aspx",
+        "pageType": "unknown",
+        "title": "Detail 109",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 109",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 109"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 109",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 109",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 109 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/110.aspx",
+      "raw": "<html><head><title>Detail 110</title></head><body><main><h1>Record 110</h1><p>Full body 110 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/110.aspx",
+        "fullText": "Detail 110\nRecord 110\nFull body 110 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/110.aspx",
+        "pageType": "unknown",
+        "title": "Detail 110",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 110",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 110"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 110",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 110",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 110 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/111.aspx",
+      "raw": "<html><head><title>Detail 111</title></head><body><main><h1>Record 111</h1><p>Full body 111 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/111.aspx",
+        "fullText": "Detail 111\nRecord 111\nFull body 111 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/111.aspx",
+        "pageType": "unknown",
+        "title": "Detail 111",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 111",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 111"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Detail 111",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 111",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 111 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 67,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    },
+    {
+      "path": "/archive/112.aspx",
+      "raw": "<html><head><title>Complete original title Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment </title></head><body><main><h1>Record 112</h1><p>Full body 112 with <strong>inline emphasis</strong> and trailing text.</p></main></body></html>",
+      "extracted": {
+        "url": "https://source.invalid/archive/112.aspx",
+        "fullText": "Complete original title Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment\nRecord 112\nFull body 112 with\ninline emphasis\nand trailing text.",
+        "contactLinks": [],
+        "inlineGraphics": [],
+        "dataImages": [],
+        "stylesheets": [],
+        "interactionHints": [],
+        "base": "https://source.invalid/archive/112.aspx",
+        "pageType": "page",
+        "title": "Complete original title Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long titl…",
+        "description": "",
+        "canonical": "",
+        "robots": "",
+        "lang": "",
+        "hreflang": [],
+        "og": {},
+        "h1": "Record 112",
+        "headings": [
+          {
+            "level": 1,
+            "text": "Record 112"
+          }
+        ],
+        "blocks": [
+          {
+            "kind": "p",
+            "text": "Complete original title Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment Long title segment",
+            "hidden": false
+          },
+          {
+            "kind": "heading",
+            "level": 1,
+            "text": "Record 112",
+            "hidden": false
+          },
+          {
+            "kind": "p",
+            "text": "Full body 112 with **inline emphasis** and trailing text.",
+            "hidden": false
+          }
+        ],
+        "images": [],
+        "links": [],
+        "forms": [],
+        "tables": [],
+        "embeds": [],
+        "jsonld": [],
+        "jsonldRaw": [],
+        "words": 399,
+        "hiddenBlocks": 0,
+        "emails": [],
+        "phones": []
+      },
+      "discovered": []
+    }
+  ]
+}

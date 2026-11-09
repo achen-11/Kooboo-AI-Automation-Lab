@@ -1,15 +1,18 @@
 # 评分平台交付与维护
 
+当前统一自动化平台的安装、打包与交接请先读 [部署与交接指南](DEPLOYMENT_AND_HANDOFF.md)。下文保留旧 Site Evaluator / Chrome 插件组合交付和历史集成维护流程，不是当前平台的首次安装入口；统一平台无需强制安装旧插件。
+
 适用：Site Evaluator 0.4.0；配套 Kooboo 建站插件 0.13.2。源代码、构建产物和文档交付；依赖、浏览器和个人数据由接收者本机安装/配置。
 
 ## 第一次启动
 
-1. 安装 Node.js 24 或以上版本（含 npm）；将平台目录放在可长期保留的位置。不要直接在 ZIP 临时预览目录里运行。
+1. 安装 Node.js 24 或以上版本（含 npm）；全站迁移另需 Python 3.12（含 venv），由 `install:collection` 初始化项目独立环境；将平台目录放在可长期保留的位置。不要直接在 ZIP 临时预览目录里运行。
 2. 在平台根目录执行：
 
 ```sh
 npm ci
 npm run install:browser
+npm run install:collection
 npm run build
 npm start
 ```
@@ -80,6 +83,7 @@ git clone --branch codex/initial <仓库地址> site-evaluator
 cd site-evaluator
 npm ci
 npm run install:browser
+npm run install:collection
 npm run build
 npm start
 ```
@@ -90,6 +94,7 @@ npm start
 git pull --ff-only
 npm ci
 npm run install:browser
+npm run install:collection
 npm run build
 npm start
 ```
@@ -104,3 +109,9 @@ npm start
 - 同事的 Codex：先读 `docs/CODEX_INTEGRATION.md`。
 - 401：检查令牌是否属于同一个平台实例、读写类型是否正确；403：检查 Host/Origin 和代理；排队不运行：检查是否暂停、Worker 是否启动；采集失败：查看阶段和 PNG 证据；只有完成度：核对参考站与图像能力。
 - Launch 迁移与评分分别运行。迁移后返回的 Launch siteUrl/siteId 保存在插件中，平台当前仍评测投递时的生成站，不会自动把评测身份换成 Launch 域名。定制 Launch 仅为授权团队分发。
+
+## 全站迁移采集组件
+
+交付必须包含 `engines/site-harvest/`、`scripts/install-collection.mjs` 和 `sop/automation-collection-v1/`，不需要个人 Codex skill。Python 本体未打包；Windows/macOS 先安装 Python 3.12，再执行 `npm run install:collection`，用 `npm run check:collection` 验证。该环境位于当前数据目录的 `collection-runtime/`；使用自定义数据目录时传入相同 `EVALUATOR_DATA_DIR`。无需复制交付者的环境、模型 Key 或站点登录。
+
+Windows 普通采集/规则有实现分支但尚未实机验收。代码修复仅有 macOS Seatbelt 隔离实现，Windows 或受管理宿主禁止该隔离时拒绝执行候选代码，继续保留原件和明确缺口。安装/离线测试通过不代表真实源站完整或双平台验收。

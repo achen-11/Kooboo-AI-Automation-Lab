@@ -13,6 +13,8 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   optimization?: OptimizationSummary;
   optimizationRootId?: string;
   optimizationRound?: number;
+  completionFirst?: boolean;
+  hardMaxRounds?: number;
   delivery?: Pick<NonNullable<AutomationTask['delivery']>, 'status'>;
 };
 export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; latest: { seq: number; time: number; message: string; taskId: string } | null }
@@ -28,7 +30,7 @@ export function taskSummary(task: AutomationTask): TaskSummary {
   const { id, kind, resourceId, resourceName, scenario, scope, environmentId, generatedSiteId, parentId, evaluationTaskId, stage, status, stopped, createdAt, updatedAt, siteUrl, usage } = task;
   return { id, kind, resourceId, resourceName, scenario, scope, environmentId, generatedSiteId, parentId, evaluationTaskId, stage, status, stopped, createdAt, updatedAt, siteUrl, usage,
     optimization: task.optimization ? {state:task.optimization.state,policy:{targetScore:task.optimization.policy.targetScore,maxRounds:task.optimization.policy.maxRounds,maxCostCny:task.optimization.policy.maxCostCny},round:task.optimization.rounds.at(-1)!.number,activeTaskId:task.optimization.activeTaskId,reportId:task.optimization.reportId,reason:brief(task.optimization.reason),nextStep:brief(task.optimization.nextSteps[0]||'')} : undefined,
-    optimizationRootId: task.optimizationRootId, optimizationRound: task.optimizationRound,
+    optimizationRootId: task.optimizationRootId, optimizationRound: task.optimizationRound,completionFirst:!!task.autonomy,hardMaxRounds:task.autonomy?.policy.hardMaxRounds,
     report: task.report ? { quality: task.report.quality, scores: task.report.scores, issueCount: task.report.issues.length, unverifiedCount: task.report.coverage.unverified.length } : null,
     attention: ['pending', 'failed', 'interrupted'].includes(status) ? brief(task.interruption?.reason || task.error || '当前阶段未完成，请查看执行记录。') : '',
     nextStep: brief(task.interruption?.nextSteps[0] || ''), deliveryStatus: task.delivery?.status, delivery: task.delivery ? { status: task.delivery.status } : undefined };

@@ -2,14 +2,47 @@ import { createServer } from 'node:http';
 import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import { chromium, type Page } from 'playwright';
+import { chromium, type Frame, type Page } from 'playwright';
 import { z } from 'zod';
 import type { MaterialFile } from '../../shared/automation.js';
 
 const action=z.object({action:z.enum(['snapshot','screenshot','navigate','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),fullPage:z.boolean().default(false)});
+export interface EvaluationBrowserBinding { taskId:string; siteRevision:string }
+export interface VisibleBrowserFrame { url:string; text:string }
+
+/** Runs in the containing frame, including ancestors outside a shadow root. */
+export function visibleFrameElement(element:Element) {
+  for(let current:Element|null=element;current;current=current.parentElement||(current.getRootNode() as ShadowRoot).host||null){
+    const style=getComputedStyle(current);
+    if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||Number(style.opacity)===0)return false;
+  }
+  return true;
+}
+
+/** Frame contents remain separately attributed; hidden frames cannot supply visible proof. */
+export async function visibleFrames(page:Page) {
+  const frames:VisibleBrowserFrame[]=[];let complete=true,remaining=30000;
+  for(const frame of page.frames()){
+    if(frame===page.mainFrame())continue;
+    try{
+      let visible=true;
+      for(let current:Frame|null=frame;current&&current!==page.mainFrame();current=current.parentFrame()){
+        const element=await current.frameElement();
+        try{if(!await element.isVisible()||!await element.evaluate(visibleFrameElement)){visible=false;break;}}finally{await element.dispose();}
+      }
+      if(!visible)continue;
+      if(frames.length>=50){complete=false;break;}
+      const text=await frame.locator('body').innerText({timeout:5000});
+      if(text.length>remaining)complete=false;
+      frames.push({url:frame.url(),text:text.slice(0,remaining)});remaining=Math.max(0,remaining-text.length);
+    }catch{complete=false;}
+  }
+  return {frames,framesComplete:complete};
+}
 /** A per-run browser session, kept outside the management UI and closed with the worker. */
-export async function evaluationBrowser(urls:{target:string;reference:string;content:string},directory:string,signal:AbortSignal,initial:MaterialFile[]=[],checkpoint:(files:MaterialFile[])=>void=()=>{}){
+export async function evaluationBrowser(urls:{target:string;reference:string;content:string},directory:string,signal:AbortSignal,initial:MaterialFile[]=[],checkpoint:(files:MaterialFile[])=>void=()=>{},binding?:EvaluationBrowserBinding){
   const allowed=new Set(Object.values(urls).filter(Boolean).map(u=>new URL(u).origin));
+  const trustedBinding=binding?{taskId:binding.taskId,siteRevision:binding.siteRevision}:undefined;
   signal.throwIfAborted();
   const browser=await chromium.launch({headless:true});
   const pages=new Map<string,Page>();
@@ -46,7 +79,8 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
       const file=randomUUID()+'.png';const pixels=await page.screenshot({path:resolve(directory,'evidence',file),fullPage:input.fullPage,timeout:20000});
       const snapshot=await page.locator('body').ariaSnapshot({timeout:15000});
       const text=await page.locator('body').innerText({timeout:15000});
-      const observation={action:input.action,role:input.role,viewport:input.viewport,url:page.url(),title:await page.title(),file,capturedAt:Date.now(),snapshot:snapshot.slice(0,30000),text:text.slice(0,30000)};
+      const frameEvidence=await visibleFrames(page);
+      const observation={action:input.action,role:input.role,viewport:input.viewport,url:page.url(),title:await page.title(),file,capturedAt:Date.now(),snapshot:snapshot.slice(0,30000),text:text.slice(0,30000),textTruncated:text.length>30000,...frameEvidence,...(trustedBinding?{binding:trustedBinding}:{})};
       const textEvidence=Buffer.from(JSON.stringify(observation));const jsonFile=file.replace('.png','.json');
       writeFileSync(resolve(directory,'evidence',jsonFile),textEvidence,{mode:0o600});
       artifacts.push(...[{name:file,type:'image/png',bytes:pixels},{name:jsonFile,type:'application/json',bytes:textEvidence}].map(f=>({id:randomUUID(),name:f.name,type:f.type,size:f.bytes.length,sha256:createHash('sha256').update(f.bytes).digest('hex'),role:input.role,viewport:input.viewport})));

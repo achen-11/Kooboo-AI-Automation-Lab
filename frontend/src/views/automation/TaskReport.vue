@@ -43,6 +43,11 @@ function openGallery(name: string) {
   <section v-if="data && !data.report" class="panel empty-state"><FileText :size="30" /><h2>尚未生成有效报告</h2><p>任务仍在执行或尚未发起评测时，不显示零分。</p></section>
   <template v-if="data?.report">
     <CompletenessReport v-if="data.report.completeness && data.taskId" :key="data.taskId" :task-id="data.taskId" />
+    <section v-if="data.report.collectionTarget" class="panel settings-panel">
+      <div class="section-heading"><h2>资料 → 站点核验</h2><span>{{ {complete:'通过',incomplete:'有缺失',unverified:'未验证',pending:'取证中'}[data.report.collectionTarget.state] }}</span></div>
+      <p>已核对 {{ data.report.collectionTarget.checkedPages }} / {{ data.report.collectionTarget.expectedPages }} 个来源路径。</p>
+      <Disclosure label="程序检查明细"><ul class="task-text-list"><li v-for="check in data.report.collectionTarget.checks" :key="check.id">{{ check.sourcePath || check.requirementId || check.id }}：{{ {verified:'通过',missing:'有缺失',unverified:'未验证'}[check.status] }} · {{ check.reason }}</li></ul></Disclosure>
+    </section>
     <div class="report-score-grid"><section class="panel report-verdict"><span>质量结论</span><h2 :class="data.report.quality === 'passed' ? 'success-text' : 'warning-text'">{{ qualities[data.report.quality] }}</h2></section><section v-for="item in data.report.scores" :key="item.viewport" class="panel report-score"><span>{{ names[item.viewport] || item.viewport }}</span><strong>{{ item.value ?? '—' }}</strong><small>{{ item.value === null ? '未验证' : '按本轮规则计算' }}</small></section></div>
     <section class="panel settings-panel">
       <h2>评测结论</h2><p class="report-summary">{{ data.report.summary }}</p>

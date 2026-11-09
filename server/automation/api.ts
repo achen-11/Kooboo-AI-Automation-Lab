@@ -18,7 +18,13 @@ import { registerLearningApi } from './learning-api.js';
 import { learningSettingsSchema } from './experience-store.js';
 import { executionTaskIds } from '../../shared/execution-log.js';
 import { registerSiteDeliveryApi } from './site-delivery.js';
+import { registerMigrationApi } from './migration-api.js';
 import { retainStoppedFollowupReservations } from './budget-recovery.js';
+import { registerGenerationContextApi } from './generation-context-api.js';
+import { registerCollectionApi } from './collection/api.js';
+import { CollectionStore } from './collection/store.js';
+import { ManifestStore, manifestInput } from './completeness.js';
+import { preflightCollectionTarget } from './collection/target-verification.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -38,7 +44,10 @@ const prompt=z.string().min(1).max(30000);
 const followupInput=z.object({enabled:z.boolean(),concurrency:z.number().int().min(1).max(3),maxAttempts:z.number().int().min(1).max(20),maxMinutes:z.number().int().min(1).max(120),maxTokens:z.number().int().min(1000).max(1000000000),maxRequests:z.number().int().min(1).max(1000).optional(),sop:z.string().trim().min(1).max(50000)});
 const optimizationInput=z.object({targetScore:z.number().min(1).max(100),maxRounds:z.number().int().min(1).max(10),maxCostCny:z.number().positive().max(1000000).nullable()});
 const settingsInput=z.object({showExecutionBrowser:z.boolean().optional(),completeness:completenessSettingsSchema.optional(),learning:learningSettingsSchema.optional(),optimization:optimizationInput.extend({sop:z.string().trim().min(1).max(50000)}).optional(),followup:followupInput.default(defaultFollowupSettings),enabled:z.boolean(),autoEvaluate:z.boolean().default(true),generationConcurrency:z.number().int().min(1).max(10),evaluationConcurrency:z.number().int().min(1).max(5),timeoutMinutes:z.number().int().min(1).max(240),evaluationModel:z.string().trim().min(1).max(100),evaluationEndpoint:url,prompts:z.object({materials:prompt,migration:prompt,upgrade:prompt,'site-template':prompt,'app-template':prompt})});
-const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),optimization:optimizationInput.optional()});
+const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
+  if(input.collectionManifestId&&!input.collectionSnapshotId)ctx.addIssue({code:'custom',message:'选择来源清单必须同时指定冻结采集快照'});
+  if(input.collectionSnapshotId&&(input.kind!=='generation'||input.scope!=='site'||input.resourceIds.length!==1||input.generatedSiteId||input.parentId))ctx.addIssue({code:'custom',message:'冻结快照复用仅支持单资源全站的新建生成任务，不可关联已有站点或父任务'});
+});
 const params=z.object({id:uuid});
 const pageNumber=z.coerce.number().int().min(1).max(1000000),pageSizeNumber=z.coerce.number().int().min(1).max(100);
 const pagination=z.object({page:pageNumber.default(1),pageSize:pageSizeNumber.default(20)});
@@ -47,6 +56,9 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
+  registerMigrationApi(app,store,vault,directory,owns);
+  registerGenerationContextApi(app,store,vault,owns);
+  registerCollectionApi(app,store,directory,owns);
   let probing=false;
   const executionSettings=()=>({...vault.automation(),evaluationEndpoint:vault.automation().evaluationEndpoint||vault.get().model.endpoint});
   const files=resolve(directory,'materials');mkdirSync(files,{recursive:true,mode:0o700});
@@ -77,12 +89,15 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const root=store.root(task);
       if(root?.optimization?.state==='completed')throw new Conflict('优化目标已达成');
       retainStoppedFollowupReservations(task,store,owns);
+      if(task.autonomy){delete task.autonomy.stopReason;delete task.autonomy.checkpoint.nextAt;}
+      const preCreateCollection=Boolean(task.autonomy&&!task.generatedSiteId&&task.collectionId);
       if(root?.optimization){
         const run=root.optimization;
-        run.state=task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';
+        run.state=preCreateCollection?'waiting-evaluation':task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';
         run.reason='';run.nextSteps=[];delete run.stoppedAt;store.put(root,true);
         if(task.id===root.id)task.optimization=run;
       }
+      if(preCreateCollection){task.status='queued';store.put(task);store.event(task.id,'按原输入和采集检查点恢复A段');return task;}
       if(task.followup)task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);
       store.scheduleFollowup(task,root?.optimization?.recoveryPolicy||vault.automation().followup);
       return task;
@@ -123,7 +138,34 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const result=store.db.transaction(()=>{
       const old=store.db.prepare('SELECT hash,json FROM auto_requests WHERE id=?').get(key);
       if(old){if(old.hash!==hash)throw new Conflict('同一个请求标识不能用于不同任务');return JSON.parse(old.json);}
-      const value={items:store.create(input,executionSettings())};for(const task of value.items)if(task.optimization){task.optimization.threshold=vault.get().threshold;store.put(task);}store.db.prepare('INSERT INTO auto_requests VALUES(?,?,?)').run(key,hash,JSON.stringify(value));return value;
+      const collections=input.collectionSnapshotId?new CollectionStore(store,directory):undefined;
+      const snapshot=collections?.reusableSnapshot(input.collectionSnapshotId!,input.resourceIds[0]);
+      const manifests=snapshot?new ManifestStore(store):undefined;
+      const sourceManifest=snapshot?manifests!.get(input.collectionManifestId||snapshot.manifestId):undefined;
+      const baseline=snapshot?manifests!.get(snapshot.manifestId):undefined;
+      if(snapshot){
+        const owner=sourceManifest&&store.task(sourceManifest.taskId);
+        if(!sourceManifest||!baseline||baseline.taskId!==snapshot.taskId||!owner||owner.resourceId!==input.resourceIds[0]||owner.versionId!==snapshot.inputVersionId||sourceManifest.id!==snapshot.manifestId&&(owner.collectionId!==snapshot.collectionId||owner.collectionVersionId!==snapshot.id))throw new Conflict('来源清单不属于所选冻结快照及固定输入');
+      }
+      const value={items:store.create({...input,...(snapshot?{versionId:snapshot.inputVersionId}:{})},executionSettings())};
+      for(const task of value.items){
+        if(snapshot&&sourceManifest&&baseline){
+          task.collectionId=snapshot.collectionId;task.collectionVersionId=snapshot.id;task.requirementsEnabled=true;
+          // Retain source evidence ownership. A new generation owns only its new manifest revision.
+          const {sourceComplete,limitations,items,evidence,migration}=sourceManifest;
+          const content=manifestInput.parse({sourceComplete,limitations,items,evidence,...(migration?{migration}:{})});
+          const cloned={...content,id:randomUUID(),taskId:task.id,revision:Math.max(baseline.revision,sourceManifest.revision)+1,createdAt:Date.now(),actor:sourceManifest.actor,...(sourceManifest.sourceEvidence?{sourceEvidence:structuredClone(sourceManifest.sourceEvidence)}:{})};
+          manifests!.store.db.prepare('INSERT INTO auto_requirement_manifests VALUES(?,?,?,?)').run(cloned.id,task.id,cloned.revision,JSON.stringify(cloned));
+          task.requirementsId=cloned.id;store.put(task);
+          const preflight=preflightCollectionTarget({task,manifest:cloned,store,directory});
+          if(preflight.state==='blocked')throw new Conflict('冻结来源生成预检未通过：'+preflight.checks.filter(check=>check.failureClass==='contract-tool-defect').map(check=>check.reason).join('；').slice(0,1800));
+          task.message+='\n\n复用固定采集快照 '+snapshot.id+'，沿用来源清单 '+sourceManifest.id+' 的完整范围；本任务独立创建新站，禁止重新全站采集。优先按 collection/site/ 与 collection/data/ 索引分批读取，禁止把全量正文或记录展开到聊天。';
+          store.event(task.id,'已复用冻结来源快照及独立交付清单；生成前预检：'+preflight.state);
+        }
+        if(task.optimization)task.optimization.threshold=vault.get().threshold;
+        store.put(task);
+      }
+      store.db.prepare('INSERT INTO auto_requests VALUES(?,?,?)').run(key,hash,JSON.stringify(value));return value;
     });return reply.code(201).send(result);
   });
   app.get('/api/automation/tasks/:id',async(request,reply)=>{const{id}=params.parse(request.params);const task=store.task(id);return task?{task,usageEntries:store.usage.entries(id),childUsageEntries:task.evaluationTaskId?store.usage.entries(task.evaluationTaskId):[],events:store.events(id),version:store.version(task.versionId),site:task.generatedSiteId?store.site(task.generatedSiteId):null}:reply.code(404).send({error:'任务不存在'});});
@@ -182,6 +224,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     store.db.transaction(()=>{
       evaluation.siteRevision ||= randomUUID();store.publishSiteReport(evaluation);store.put(evaluation);task.siteRevision=evaluation.siteRevision;
       task.rule=structuredClone(evaluation.rule);
+      if(task.autonomy){task.autonomy.policy.hardMaxRounds=policy.maxRounds;if(policy.maxCostCny!==null)task.autonomy.policy.hardCostCny=policy.maxCostCny;}
       task.model=evaluation.model||{name:vault.automation().evaluationModel,endpoint:executionSettings().evaluationEndpoint};
       task.optimization={policy:{...(vault.automation().optimization||defaultOptimizationPolicy),...policy},state:'waiting-evaluation',rounds:[{number:0,revision:task.siteRevision,generationTaskId:task.id,evaluationTaskId:evaluation.id,startedAt:Date.now()}],activeTaskId:evaluation.id,currentRevision:task.siteRevision,reportId:evaluation.id,noImprovement:0,reason:'',nextSteps:[],recoveryPolicy:structuredClone(vault.automation().followup),threshold:vault.get().threshold};
       store.put(task);store.event(id,'操作者明确开启自动优化；原站、输入、规则与初评报告保留。');

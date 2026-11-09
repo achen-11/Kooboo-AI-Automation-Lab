@@ -10,6 +10,7 @@ import { advanceOptimization, applyOptimizationAction, optimizationBudgetReason,
 import { optimizationEvidence } from '../server/automation/optimization-evidence.js';
 import { executeFollowup, validateFollowupAction } from '../server/automation/followup.js';
 import { AutomationWorker, type Execute } from '../server/automation/worker.js';
+import { ManifestStore } from '../server/automation/completeness.js';
 
 async function fixture(maxRounds=3, scenario:Scenario='site-template', scope:Scope='homepage') {
   const directory=mkdtempSync(join(tmpdir(),'optimization-'));
@@ -53,6 +54,36 @@ test('each viewport and required evidence matter; scope-excluded uncertainty doe
     report.issues.push({severity:'major',title:'Broken CTA',detail:'证据',evidence:['x']});assert.equal(targetReached(f.root,report),false);report.issues=[];
     f.root.rule!.criteria[0].required=true;report.assessments[0].passed=null;assert.equal(targetReached(f.root,report),false);report.assessments[0].passed=true;
     report.assessments[0].score=null;assert.equal(targetReached(f.root,report),false);
+  }finally{await f.close();}
+});
+
+test('repair inherits the independently expanded manifest instead of the stale root contract',async()=>{
+  const f=await fixture(3,'migration','site');try{
+    const manifests=new ManifestStore(f.store);
+    const item={id:'records',kind:'data',title:'Source records',required:true,source:'fixed source',expectation:'Preserve all records',paths:[],viewports:['business'],expectedCount:null,expectedKeys:[]};
+    const baseline=manifests.save(f.root,{sourceComplete:false,limitations:['Unknown source total'],evidence:[],items:[item]},'human');
+    const evaluation=f.finish(f.root);
+    const reviewed=manifests.save(evaluation,{sourceComplete:false,limitations:['Unknown source total'],evidence:[],items:[{...item,expectedCount:2,expectedKeys:['https://reference.test/a','https://reference.test/b'],dataIdentity:{kind:'page'}}]},'ai');
+    f.advance();const child=f.repair(),adopted=manifests.get(child.requirementsId)!;
+    assert.deepEqual(adopted.items,reviewed.items);
+    assert.equal(adopted.taskId,child.id);
+    assert.equal(f.store.task(f.root.id)!.requirementsId,adopted.id);
+    assert.equal(manifests.get(baseline.id)!.items[0].expectedCount,null);
+    assert.equal(f.store.task(evaluation.id)!.requirementsId,reviewed.id);
+  }finally{await f.close();}
+});
+
+test('repair rejects a manifest owned by another workflow and rolls back the child task',async()=>{
+  const f=await fixture(3,'migration','site');try{
+    const manifests=new ManifestStore(f.store);
+    const input={sourceComplete:false,limitations:['Unknown source total'],evidence:[],items:[{id:'records',kind:'data',title:'Source records',required:true,source:'fixed source',expectation:'Preserve all records',paths:[],viewports:['business'],expectedCount:null,expectedKeys:[]}]};
+    manifests.save(f.root,input,'human');
+    const evaluation=f.finish(f.root);
+    const unrelated=f.store.create({resourceIds:[f.resource.id],kind:'generation',scope:'site',environmentId:f.site.environmentId,requirements:''},f.settings)[0];
+    evaluation.requirementsId=manifests.save(unrelated,input,'human').id;f.store.put(evaluation);
+    f.advance();const count=f.store.tasks().length;
+    assert.throws(()=>f.repair(),/独立评测的交付清单来源无效/);
+    assert.equal(f.store.tasks().length,count);assert.equal(f.store.task(f.root.id)!.optimization!.state,'planning');
   }finally{await f.close();}
 });
 
@@ -224,6 +255,8 @@ test('quality followup sends actual pixel inputs and accepts only a host-observe
       const client={runStreamed:async(input:unknown)=>({events:(async function*(){
         assert.ok(Array.isArray(input));pixels=input.filter(i=>i.type==='local_image').length;assert.equal(pixels,4);
         assert.match(input[0].text,/"tool":"act","decision":/);
+        assert.match(input[0].text,/acceptedAssetGaps 中逐项精确匹配的 URL \/ 路径才可豁免/);
+        assert.match(input[0].text,/source limitations、sourceGaps、源站缺原件、请求失败或已有豁免数量均不代表新增豁免/);
         const schema=JSON.parse(readFileSync(join(f.directory,'followup-runs',root.id,'tools-schema.json'),'utf8'));
         assert.ok(schema.properties.tool.enum.includes('get_report'));assert.ok(schema.properties.decision.properties.progress);
         const call=async(value:unknown)=>{const response=await fetch(env.FOLLOWUP_TOOLS_URL,{method:'POST',headers:{authorization:'Bearer '+env.FOLLOWUP_TOOLS_TOKEN,'content-type':'application/json'},body:JSON.stringify(value)});assert.equal(response.status,200);return response.json();};

@@ -14,12 +14,16 @@
     "build": "vite build --config frontend/vite.config.ts && tsc -p tsconfig.server.build.json",
     "start": "node dist-server/server/main.js",
     "install:browser": "playwright install chromium",
-    "migrate:kooboo": "tsx scripts/migrate-kooboo.ts"
+    "install:collection": "node scripts/install-collection.mjs",
+    "check:collection": "node scripts/install-collection.mjs --check",
+    "migrate:kooboo": "tsx scripts/migrate-kooboo.ts",
+    "audit:migration": "node --import tsx scripts/audit-migration.ts"
   },
   "dependencies": {
     "@fastify/static": "10.1.10",
     "@lucide/vue": "1.68.0",
     "@openai/codex-sdk": "0.167.0",
+    "entities": "7.0.1",
     "fastify": "5.12.8",
     "markdown-it": "15.0.3",
     "openai": "7.51.0",

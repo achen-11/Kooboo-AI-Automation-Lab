@@ -2,13 +2,16 @@
 
 先读仓库根 `AGENTS.md`、`README.md`，再读本文件和 `docs/PUBLIC_API.md`。改 runtime、构建或部署前另读 `.kooboo-ai/specs/frontend.md`。
 
+接收压缩包先读 `docs/DEPLOYMENT_AND_HANDOFF.md` 和 `DELIVERY_MANIFEST.json`，区分正式提交与工作区测试快照。包内不含个人数据和凭据，先按指南在网页配置；不要从维护者电脑复制全局 Codex 配置或个人 `.data/` 来完成安装。
+
 ## 项目与入口
 
 - Vue UI：`frontend/src/`；独立 Node API：`server/app.ts`；入口：`server/main.ts`。
+- 统一自动化：`frontend/src/views/automation/`、`server/automation/`、`shared/automation.ts`；Worker 为 `server/automation/worker.ts`，外部导入与报告契约见 `docs/UNIFIED_AUTOMATION.md`。下列旧评分接口继续兼容，但不是主流程。
 - Admin v1 查询：`server/public-api.ts`，共享业务类型：`shared/types.ts`，分数状态：`shared/result.ts`。
 - 队列及持久化：`server/lib/store.ts`；Worker：`server/worker.ts`；实际采集/模型行为在 `server/lib/`。
 - SOP：`sop/agent-site-ui-v1/`；不要恢复历史 Kooboo API/CodeBlock/Job，不运行 `kb push`。
-- 快速验证：`npm test`、`npm run check`、`npm run build`。普通测试不执行真实浏览器或付费模型调用。
+- 按改动范围运行针对性测试、服务端类型检查和 `npm run build`，不默认执行全量 vue-tsc / lint。普通测试不执行真实浏览器或付费模型调用，构建通过不等于全站完整性、AI App 或 Windows 实机验收。
 
 ## 在 Admin 仓库接入
 

@@ -1,0 +1,513 @@
+{
+  "artifactVersion": "task-board-requirements-v1.0-review",
+  "kind": "business-scenario-not-an-import-api",
+  "referenceT0Utc": "2026-11-10T12:00:00Z",
+  "executionNotes": [
+    "执行时以真实服务端 T0 统一平移截止相对时间，不修改生产时钟。",
+    "历史时间是场景说明；业务动作产生实际事件时间，不伪造日志。",
+    "账号仅符号映射，不包含凭据；真实提及需通过成员选择建立关联。",
+    "图片先上传再替换本地路径；现有应用记录实际编号映射，不重置计数。"
+  ],
+  "users": [
+    {
+      "userKey": "lin",
+      "displayName": "林",
+      "displayTimeZone": "Asia/Shanghai"
+    },
+    {
+      "userKey": "chen",
+      "displayName": "陈",
+      "displayTimeZone": "America/New_York"
+    },
+    {
+      "userKey": "jordan",
+      "displayName": "Jordan",
+      "displayTimeZone": "Europe/London"
+    },
+    {
+      "userKey": "sam",
+      "displayName": "Sam",
+      "displayTimeZone": "Asia/Tokyo"
+    },
+    {
+      "userKey": "lee",
+      "displayName": "Lee",
+      "displayTimeZone": "Europe/Paris"
+    },
+    {
+      "userKey": "outsider",
+      "displayName": "Alex",
+      "displayTimeZone": "UTC"
+    }
+  ],
+  "projects": [
+    {
+      "projectKey": "A",
+      "name": "产品协作",
+      "creatorUserKey": "lin",
+      "archived": false,
+      "members": [
+        {
+          "userKey": "lin",
+          "role": "administrator"
+        },
+        {
+          "userKey": "sam",
+          "role": "administrator"
+        },
+        {
+          "userKey": "chen",
+          "role": "member"
+        },
+        {
+          "userKey": "jordan",
+          "role": "member"
+        }
+      ],
+      "departedUserKeys": [
+        "lee"
+      ],
+      "columns": [
+        {
+          "columnKey": "A-todo",
+          "name": "待办",
+          "color": "#64748b",
+          "isDefault": true,
+          "isCompleted": false
+        },
+        {
+          "columnKey": "A-doing",
+          "name": "进行中",
+          "color": "#2296f3",
+          "isDefault": false,
+          "isCompleted": false
+        },
+        {
+          "columnKey": "A-done",
+          "name": "已完成",
+          "color": "#16a34a",
+          "isDefault": false,
+          "isCompleted": true
+        }
+      ],
+      "labels": [
+        {
+          "labelKey": "A-requirement",
+          "name": "需求",
+          "color": "#7c3aed"
+        },
+        {
+          "labelKey": "A-ui",
+          "name": "界面",
+          "color": "#2296f3"
+        },
+        {
+          "labelKey": "A-bug",
+          "name": "缺陷",
+          "color": "#dc2626"
+        }
+      ]
+    },
+    {
+      "projectKey": "B",
+      "name": "发布准备",
+      "creatorUserKey": "chen",
+      "archived": false,
+      "members": [
+        {
+          "userKey": "chen",
+          "role": "administrator"
+        },
+        {
+          "userKey": "lin",
+          "role": "member"
+        }
+      ],
+      "departedUserKeys": [],
+      "columns": [
+        {
+          "columnKey": "B-todo",
+          "name": "待办",
+          "color": "#64748b",
+          "isDefault": true,
+          "isCompleted": false
+        },
+        {
+          "columnKey": "B-doing",
+          "name": "进行中",
+          "color": "#2296f3",
+          "isDefault": false,
+          "isCompleted": false
+        },
+        {
+          "columnKey": "B-done",
+          "name": "已完成",
+          "color": "#16a34a",
+          "isDefault": false,
+          "isCompleted": true
+        }
+      ],
+      "labels": [
+        {
+          "labelKey": "B-release",
+          "name": "发布",
+          "color": "#16a34a"
+        },
+        {
+          "labelKey": "B-doc",
+          "name": "文档",
+          "color": "#64748b"
+        }
+      ]
+    }
+  ],
+  "tasks": [
+    {
+      "taskKey": "t01",
+      "creationOrder": 1,
+      "expectedNumberInEmptyApp": "#0001",
+      "projectKey": "A",
+      "title": "确认需求范围",
+      "creatorUserKey": "lin",
+      "assigneeUserKey": "chen",
+      "columnKey": "A-done",
+      "priority": "normal",
+      "labelKeys": [
+        "A-requirement"
+      ],
+      "archived": false,
+      "dueOffsetHoursFromT0": -48,
+      "referenceDueAtUtc": "2026-11-08T12:00:00Z",
+      "targetCreatedOffsetHoursFromT0": -143,
+      "targetCompletedOffsetHoursFromT0": -72,
+      "targetArchivedOffsetHoursFromT0": null,
+      "descriptionText": "虚构测试任务，用于需求验收。",
+      "mentionUserKeys": []
+    },
+    {
+      "taskKey": "t02",
+      "creationOrder": 2,
+      "expectedNumberInEmptyApp": "#0002",
+      "projectKey": "A",
+      "title": "登录流程联调",
+      "creatorUserKey": "lin",
+      "assigneeUserKey": "chen",
+      "columnKey": "A-doing",
+      "priority": "high",
+      "labelKeys": [
+        "A-ui",
+        "A-bug"
+      ],
+      "archived": false,
+      "dueOffsetHoursFromT0": -2,
+      "referenceDueAtUtc": "2026-11-10T10:00:00Z",
+      "targetCreatedOffsetHoursFromT0": -142,
+      "targetCompletedOffsetHoursFromT0": null,
+      "targetArchivedOffsetHoursFromT0": null,
+      "mentionUserKeys": [
+        "jordan"
+      ],
+      "descriptionMarkdownFile": "task-description.md"
+    },
+    {
+      "taskKey": "t03",
+      "creationOrder": 3,
+      "expectedNumberInEmptyApp": "#0003",
+      "projectKey": "A",
+      "title": "整理帮助文档",
+      "creatorUserKey": "chen",
+      "assigneeUserKey": "jordan",
+      "columnKey": "A-todo",
+      "priority": "normal",
+      "labelKeys": [
+        "A-requirement"
+      ],
+      "archived": false,
+      "dueOffsetHoursFromT0": 24,
+      "referenceDueAtUtc": "2026-11-11T12:00:00Z",
+      "targetCreatedOffsetHoursFromT0": -141,
+      "targetCompletedOffsetHoursFromT0": null,
+      "targetArchivedOffsetHoursFromT0": null,
+      "descriptionText": "虚构测试任务，用于需求验收。",
+      "mentionUserKeys": []
+    },
+    {
+      "taskKey": "t04",
+      "creationOrder": 4,
+      "expectedNumberInEmptyApp": "#0004",
+      "projectKey": "A",
+      "title": "补充空状态",
+      "creatorUserKey": "jordan",
+      "assigneeUserKey": null,
+      "columnKey": "A-todo",
+      "priority": "low",
+      "labelKeys": [
+        "A-ui"
+      ],
+      "archived": false,
+      "dueOffsetHoursFromT0": null,
+      "referenceDueAtUtc": null,
+      "targetCreatedOffsetHoursFromT0": -140,
+      "targetCompletedOffsetHoursFromT0": null,
+      "targetArchivedOffsetHoursFromT0": null,
+      "descriptionText": "虚构测试任务，用于需求验收。",
+      "mentionUserKeys": []
+    },
+    {
+      "taskKey": "t05",
+      "creationOrder": 5,
+      "expectedNumberInEmptyApp": "#0005",
+      "projectKey": "A",
+      "title": "历史方案验证",
+      "creatorUserKey": "lin",
+      "assigneeUserKey": "jordan",
+      "columnKey": "A-doing",
+      "priority": "normal",
+      "labelKeys": [
+        "A-bug"
+      ],
+      "archived": true,
+      "dueOffsetHoursFromT0": -24,
+      "referenceDueAtUtc": "2026-11-09T12:00:00Z",
+      "targetCreatedOffsetHoursFromT0": -139,
+      "targetCompletedOffsetHoursFromT0": null,
+      "targetArchivedOffsetHoursFromT0": -20,
+      "descriptionText": "虚构测试任务，用于需求验收。",
+      "mentionUserKeys": []
+    },
+    {
+      "taskKey": "t06",
+      "creationOrder": 6,
+      "expectedNumberInEmptyApp": "#0006",
+      "projectKey": "A",
+      "title": "整理交接清单",
+      "creatorUserKey": "lee",
+      "assigneeUserKey": "lee",
+      "columnKey": "A-done",
+      "priority": "normal",
+      "labelKeys": [
+        "A-requirement"
+      ],
+      "archived": false,
+      "dueOffsetHoursFromT0": -12,
+      "referenceDueAtUtc": "2026-11-10T00:00:00Z",
+      "targetCreatedOffsetHoursFromT0": -138,
+      "targetCompletedOffsetHoursFromT0": -24,
+      "targetArchivedOffsetHoursFromT0": null,
+      "descriptionText": "虚构测试任务，用于需求验收。",
+      "mentionUserKeys": []
+    },
+    {
+      "taskKey": "t07",
+      "creationOrder": 7,
+      "expectedNumberInEmptyApp": "#0007",
+      "projectKey": "B",
+      "title": "回归测试",
+      "creatorUserKey": "chen",
+      "assigneeUserKey": "chen",
+      "columnKey": "B-doing",
+      "priority": "urgent",
+      "labelKeys": [
+        "B-release"
+      ],
+      "archived": false,
+      "dueOffsetHoursFromT0": 8,
+      "referenceDueAtUtc": "2026-11-10T20:00:00Z",
+      "targetCreatedOffsetHoursFromT0": -137,
+      "targetCompletedOffsetHoursFromT0": null,
+      "targetArchivedOffsetHoursFromT0": null,
+      "descriptionText": "虚构测试任务，用于需求验收。",
+      "mentionUserKeys": []
+    },
+    {
+      "taskKey": "t08",
+      "creationOrder": 8,
+      "expectedNumberInEmptyApp": "#0008",
+      "projectKey": "B",
+      "title": "准备发布说明",
+      "creatorUserKey": "chen",
+      "assigneeUserKey": "lin",
+      "columnKey": "B-todo",
+      "priority": "normal",
+      "labelKeys": [
+        "B-doc"
+      ],
+      "archived": false,
+      "dueOffsetHoursFromT0": null,
+      "referenceDueAtUtc": null,
+      "targetCreatedOffsetHoursFromT0": -136,
+      "targetCompletedOffsetHoursFromT0": null,
+      "targetArchivedOffsetHoursFromT0": null,
+      "descriptionText": "虚构测试任务，用于需求验收。",
+      "mentionUserKeys": []
+    },
+    {
+      "taskKey": "t09",
+      "creationOrder": 9,
+      "expectedNumberInEmptyApp": "#0009",
+      "projectKey": "B",
+      "title": "登录流程联调",
+      "creatorUserKey": "chen",
+      "assigneeUserKey": "lin",
+      "columnKey": "B-todo",
+      "priority": "high",
+      "labelKeys": [
+        "B-release"
+      ],
+      "archived": false,
+      "dueOffsetHoursFromT0": 48,
+      "referenceDueAtUtc": "2026-11-12T12:00:00Z",
+      "targetCreatedOffsetHoursFromT0": -135,
+      "targetCompletedOffsetHoursFromT0": null,
+      "targetArchivedOffsetHoursFromT0": null,
+      "descriptionText": "虚构测试任务，用于需求验收。",
+      "mentionUserKeys": []
+    },
+    {
+      "taskKey": "t10",
+      "creationOrder": 10,
+      "expectedNumberInEmptyApp": "#0010",
+      "projectKey": "A",
+      "title": "登录流程联调",
+      "creatorUserKey": "jordan",
+      "assigneeUserKey": null,
+      "columnKey": "A-todo",
+      "priority": "high",
+      "labelKeys": [
+        "A-ui"
+      ],
+      "archived": false,
+      "dueOffsetHoursFromT0": 48,
+      "referenceDueAtUtc": "2026-11-12T12:00:00Z",
+      "targetCreatedOffsetHoursFromT0": -134,
+      "targetCompletedOffsetHoursFromT0": null,
+      "targetArchivedOffsetHoursFromT0": null,
+      "descriptionText": "虚构测试任务，用于需求验收。",
+      "mentionUserKeys": []
+    }
+  ],
+  "comments": [
+    {
+      "commentKey": "c01",
+      "taskKey": "t02",
+      "authorUserKey": "chen",
+      "markdownFile": "comment.md",
+      "mentionUserKeys": [
+        "jordan"
+      ]
+    },
+    {
+      "commentKey": "c02",
+      "taskKey": "t03",
+      "authorUserKey": "jordan",
+      "markdownFile": "image-only-comment.md",
+      "mentionUserKeys": []
+    }
+  ],
+  "requiredLifecycleEvents": [
+    {
+      "event": "join",
+      "projectKey": "A",
+      "userKey": "lee",
+      "beforeTaskCreation": true
+    },
+    {
+      "event": "complete",
+      "taskKey": "t06",
+      "beforeMemberRemoval": true
+    },
+    {
+      "event": "removeMember",
+      "projectKey": "A",
+      "userKey": "lee",
+      "targetOffsetHoursFromT0": -12
+    }
+  ],
+  "boardOrderIncludingArchived": {
+    "A-todo": [
+      "t03",
+      "t04",
+      "t10"
+    ],
+    "A-doing": [
+      "t02",
+      "t05"
+    ],
+    "A-done": [
+      "t01",
+      "t06"
+    ],
+    "B-todo": [
+      "t08",
+      "t09"
+    ],
+    "B-doing": [
+      "t07"
+    ],
+    "B-done": []
+  },
+  "initialManualListOrder": {
+    "A": [
+      "t01",
+      "t02",
+      "t03",
+      "t04",
+      "t05",
+      "t06",
+      "t10"
+    ],
+    "B": [
+      "t07",
+      "t08",
+      "t09"
+    ]
+  },
+  "expectedQueriesAtT0": {
+    "A-visible": [
+      "t01",
+      "t02",
+      "t03",
+      "t04",
+      "t06",
+      "t10"
+    ],
+    "A-archived": [
+      "t05"
+    ],
+    "B-visible": [
+      "t07",
+      "t08",
+      "t09"
+    ],
+    "A-mine-chen": [
+      "t01",
+      "t02"
+    ],
+    "A-overdue-visible": [
+      "t02"
+    ],
+    "A-unassigned-visible": [
+      "t04",
+      "t10"
+    ],
+    "A-no-deadline-visible": [
+      "t04"
+    ],
+    "A-search-login": [
+      "t02",
+      "t10"
+    ],
+    "A-high-ui-or-bug": [
+      "t02",
+      "t10"
+    ],
+    "A-default-list": [
+      "t10",
+      "t06",
+      "t04",
+      "t03",
+      "t02",
+      "t01"
+    ]
+  }
+}

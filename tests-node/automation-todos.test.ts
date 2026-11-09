@@ -13,6 +13,9 @@ import { materialPath, uniqueMaterialPaths, packageGroups } from '../shared/mate
 import { usageCapture } from '../server/automation/usage-proxy.js';
 import { queueDelivery, executeDelivery, expectedDeliveryPaths } from '../server/automation/delivery.js';
 import { AutomationWorker } from '../server/automation/worker.js';
+import { runInNewContext } from 'node:vm';
+import { GenerationContextStore, generationInputLimits } from '../server/automation/generation-context.js';
+import { GenerationInputError } from '../server/automation/errors.js';
 
 const time=(s:string)=>Date.parse(s+'+08:00');
 const obs=(patch:Partial<UsageObservation>={}):UsageObservation=>({id:'request',source:'codex',stage:'evaluation',model:'deepseek-flash-1017',endpoint:'https://api.deepseek.com',startedAt:time('2026-11-09T09:30:00'),endedAt:time('2026-11-09T09:31:00'),status:'completed',basis:'request',raw:{input_tokens:1000000,output_tokens:100000,input_tokens_details:{cached_tokens:200000},output_tokens_details:{reasoning_tokens:50000}},...patch});
@@ -121,7 +124,9 @@ test('material preparation accepts Kooboo v2 null receipts only with matching pe
     const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
     const files=[{name:'README.md',text:'![hero](images/hero banner.svg)',type:'text/markdown'},{name:'images/hero banner.svg',text:'<svg/>',type:'image/svg+xml'}].map(x=>{const bytes=Buffer.from(x.text),file={id:randomUUID(),name:x.name,type:x.type,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};mkdirSync(join(f.directory,'materials'),{recursive:true});writeFileSync(join(f.directory,'materials',file.id),bytes);return file;});
     f.automationStore.saveResource({...f.resource,files},f.resource.id,f.resource.revision);const t=f.create('generation');t.generation={deliveryState:'completed'};
-    await executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000));assert.equal(uploads.length,1);assert.ok(uploads[0].includes('filename="'+files[1].id+'.svg"'));assert.ok(uploads[0].includes(`materials/${f.resource.id}/${t.versionId}/images`));assert.equal(scripts.length,2);assert.ok(scripts[1].includes('_automation-manifests/'));assert.ok(t.message.includes(materialDestination(f.resource.id,t.versionId,files[1]).path));assert.equal(t.generation.prepared,true);assert.equal(t.stage,'handoff');
+    await executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000));assert.equal(uploads.length,1);assert.ok(uploads[0].includes('filename="'+files[1].id+'.svg"'));assert.ok(uploads[0].includes(`materials/${f.resource.id}/${t.versionId}/images`));assert.equal(scripts.length,2);
+    let manifestPath='',manifest:any[]=[];runInNewContext('(function(){'+scripts[1]+'})()',{k:{file:{write:(path:string,value:string)=>{manifestPath=path;manifest=JSON.parse(value);}}}});
+    assert.equal(manifestPath,`_automation-manifests/${t.id}.json`);assert.equal(manifest.find(item=>item.id===files[1].id)?.destination,materialDestination(f.resource.id,t.versionId,files[1]).path);assert.ok(t.message.includes('kfile:'+manifestPath));assert.ok(!t.message.includes(files[1].name+' → '),'the prompt points to the persisted index without expanding every material');assert.equal(t.generation.prepared,true);assert.equal(t.stage,'handoff');
   }finally{await close(server);await f.close();}
 });
 
@@ -148,7 +153,9 @@ test('material preparation resumes confirmed files and rejects HTTP success with
     }
     confirmation='match';for(const invalid of [false,{success:false},'true']){receipt=invalid;await assert.rejects(executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000)),/回执异常/);}
     receipt=true;await executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000));
-    assert.equal(scripts.length,2,'confirmed README is not rewritten; only the final manifest is added');assert.equal(uploads.length,7);assert.equal(task.generation?.prepared,true);assert.ok(task.message.includes('README.md → kfile:'));assert.ok(task.message.includes(materialDestination(task.resourceId,task.versionId,files[1]).path));
+    assert.equal(scripts.length,2,'confirmed README is not rewritten; only the final manifest is added');assert.equal(uploads.length,7);assert.equal(task.generation?.prepared,true);
+    let manifest:any[]=[];runInNewContext('(function(){'+scripts[1]+'})()',{k:{file:{write:(_path:string,value:string)=>{manifest=JSON.parse(value);}}}});
+    assert.equal(manifest.find(item=>item.id===files[0].id)?.destination,materialDestination(task.resourceId,task.versionId,files[0]).path);assert.equal(manifest.find(item=>item.id===files[1].id)?.destination,materialDestination(task.resourceId,task.versionId,files[1]).path);assert.ok(task.message.includes(`kfile:_automation-manifests/${task.id}.json`));assert.ok(!task.message.includes('README.md → kfile:'));
     assert.equal(task.generation?.importedMaterials?.[files[1].id],files[1].sha256);assert.equal(task.stage,'handoff');
   }finally{await close(server);await f.close();}
 });
@@ -170,6 +177,30 @@ test('a completed generation receipt still allows an explicit continuation in th
     await executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000),async()=>{throw new Error('A retry without an explicit continuation must not redeliver');});
     assert.equal(closed,1);
   }finally{await close(server);await f.close();}
+});
+
+test('real generation transport packages oversized combined inputs before delivery and cleans only after closing the execution',async()=>{
+  const {executeGeneration}=await import('../server/automation/generator.js');const f=await fixture();let origin='',closed=false;const remote=new Map<string,string>();
+  const server=createServer(async(req,res)=>{res.setHeader('Content-Type','application/json');if(req.url?.startsWith('/_api/v2/AI/CallFunction')){const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const input=JSON.parse(Buffer.concat(chunks).toString('utf8'));const result=runInNewContext('(function(){'+input.arguments.code+'})()', {k:{file:{read:(path:string)=>remote.get(path)??null,write:(path:string,text:string)=>remote.set(path,text),delete:(path:string)=>{assert.equal(closed,true);remote.delete(path);}}}});res.end(JSON.stringify({contents:[{result}]}));}else res.end(req.url?.startsWith('/_api/v2/Site/List')?JSON.stringify([{siteId:f.site.siteId,homePageLink:origin+'/'}]):'true');});
+  origin=await listen(server);try{
+    const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
+    const task=f.create('generation'),conversationId=randomUUID(),message='完整保留来源与全部正文、分页关系。'.repeat(2500);task.message=message;task.generation={prepared:true,conversationId,next:{action:'continue',reason:'repair',message,evidence:['observed']}};
+    let delivery:any;
+    const openSession:typeof import('../server/automation/generation-session.js').generationSession=async()=>({snapshot:async()=>({version:1,taskId:task.id,siteId:f.site.siteId,conversationId,runId:'run',ready:true,running:false,state:'completed',observedAt:Date.now(),pending:null,context:[],outcome:{conversationId,runId:'run',status:'completed',time:Date.now()},delivery:delivery?{id:delivery.id,state:'accepted',conversationId}:undefined}),deliver:async input=>{delivery=input;assert.ok(remote.size>1);assert.ok(Buffer.byteLength(input.text!)<=generationInputLimits.textBytes);return {id:input.id,state:'accepted',conversationId};},close:async()=>{closed=true;}});
+    await executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(10000),openSession);
+    assert.match(delivery.text,/索引/);assert.equal(task.generation.deliveryState,'completed');assert.equal(remote.size,0);const pkg=new GenerationContextStore(f.automationStore).packages(task.id)[0];assert.equal(pkg.state,'cleaned');assert.equal(JSON.parse(pkg.original).instructions,message);
+    const metadata=await f.app.inject({url:`/api/automation/tasks/${task.id}/generation-context`,headers:f.headers});assert.equal(metadata.statusCode,200);assert.equal(metadata.json().packages[0].original,undefined);assert.equal(metadata.json().packages[0].files[0].text,undefined);
+  }finally{await close(server);await f.close();}
+});
+
+test('deterministic generation input failure stops without spending AI recovery attempts',async()=>{
+  const f=await fixture();try{
+    f.vault.updateAutomation({...defaultAutomationSettings,enabled:true});const task=f.create('generation');let attempts=0;
+    const worker=new AutomationWorker(f.automationStore,f.vault,f.directory,{generation:async()=>{throw new GenerationInputError('最终委托超限');},evaluation:async()=>{}},()=>true,async()=>{attempts++;return {action:'retry',reason:'retry',evidence:['x']};});
+    await worker.tick();for(let i=0;i<100&&f.automationStore.task(task.id)?.status!=='interrupted';i++)await new Promise(r=>setTimeout(r,10));
+    assert.equal(f.automationStore.task(task.id)!.status,'interrupted');assert.equal(attempts,0);assert.match(f.automationStore.task(task.id)!.interruption!.reason,/超限/);
+    await worker.stop();
+  }finally{await f.close();}
 });
 
 test('relay retains failed request usage, missing retries and /responses/compact without adding the SDK aggregate again',async()=>{const f=await fixture();let count=0;const upstream=createServer((req,res)=>{count++;if(count===1){res.writeHead(200,{'Content-Type':'text/event-stream'});res.end('data: '+JSON.stringify({type:'response.failed',response:{status:'failed',usage:{input_tokens:20,output_tokens:5,cached_input_tokens:0}}})+'\n\n');}else if(req.url==='/responses/compact'){res.setHeader('Content-Type','application/json');res.end(JSON.stringify({usage:{input_tokens:10,output_tokens:3,cached_input_tokens:0}}));}else{res.writeHead(429,{'Content-Type':'application/json'});res.end('{"error":"rate limit"}');}});const origin=await listen(upstream);let capture:Awaited<ReturnType<typeof usageCapture>>|undefined;try{

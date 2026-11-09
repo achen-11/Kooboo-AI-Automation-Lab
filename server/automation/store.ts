@@ -7,6 +7,7 @@ import { defaultOptimizationPolicy, supportsAutomaticOptimization } from '../../
 import type { NoticePage } from '../../shared/task-presentation.js';
 import { defaultCompletenessSettings } from '../../shared/completeness.js';
 import { defaultLearningSettings } from '../../shared/experience.js';
+import { createAutonomousExecution } from '../../shared/autonomy.js';
 
 const initialSop = `你是独立评测员，只做审查与取证，不修改目标站。
 先读取任务范围、资料和规则，形成应检查清单。PC 与移动端分别采集、查看截图并实际检查交互。
@@ -33,6 +34,7 @@ export class AutomationStore {
       CREATE TABLE IF NOT EXISTS auto_events(task_id TEXT NOT NULL, seq INTEGER PRIMARY KEY AUTOINCREMENT, time INTEGER NOT NULL, message TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS auto_events_task_seq ON auto_events(task_id,seq);`);
     db.exec('CREATE TABLE IF NOT EXISTS auto_site_state(site_id TEXT PRIMARY KEY, revision TEXT NOT NULL, report_id TEXT)');
+    db.exec('CREATE TABLE IF NOT EXISTS auto_migration_read_locks(site_id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
     if (!this.rules().length) {
       this.publish({ name: 'Site UI · 初始规则', kind: 'site', sop: initialSop, references: '', criteria: [
         { id: 'hero', label: 'Hero 首屏', weight: 40, instruction: '首屏构图、主体与背景、文字和 CTA 层级、留白及设计意图。', required: false, viewports: ['desktop','mobile'], scopes: ['homepage','site'] },
@@ -118,7 +120,11 @@ export class AutomationStore {
     return source;
   }
   siteReserved(task: AutomationTask) {
+    if(this.migrationReadReserved(task))return true;
     return !!task.generatedSiteId&&this.all<AutomationTask>('auto_tasks').some(t=>t.id!==task.id&&t.generatedSiteId===task.generatedSiteId&&t.optimization&&!['completed','stopped'].includes(t.optimization.state)&&task.optimizationRootId!==t.id);
+  }
+  migrationReadReserved(task: AutomationTask) {
+    return !!task.generatedSiteId&&!!this.db.prepare('SELECT site_id FROM auto_migration_read_locks WHERE site_id=? AND expires_at>?').get(task.generatedSiteId,Date.now());
   }
   put(task: AutomationTask, resumeOptimization=false) {
     const current=this.task(task.id);
@@ -151,6 +157,14 @@ export class AutomationStore {
       const task: AutomationTask = { id:randomUUID(),kind:input.kind,resourceId:id,versionId:version.id,resourceName:version.name,scenario:version.scenario,scope:input.scope,environmentId:site?.environmentId||input.environmentId,generatedSiteId:site?.id||null,parentId:input.parentId||null,message,status:'queued',stopped:true,createdAt:now,updatedAt:now,error:'',context:'',threadId:'',rule:rule||null,stage:input.kind==='generation'?'prepare':'evaluation',report:null,siteUrl:site?.url||'',model:null };
       task.optimizationRootId=input.optimizationRootId;task.optimizationRound=input.optimizationRound;
       const parent=input.parentId?this.task(input.parentId):undefined;
+      if(parent?.autonomy){
+        task.autonomy=createAutonomousExecution(task.message);
+        task.autonomy.policy=structuredClone(parent.autonomy.policy);
+        task.autonomy.objective.id=parent.autonomy.objective.id;
+        task.collectionId=parent.collectionId;task.collectionVersionId=parent.collectionVersionId;
+      }else if(!parent&&!site&&input.kind==='generation'&&input.scope==='site'&&['migration','upgrade'].includes(version.scenario)){
+        task.autonomy=createAutonomousExecution(task.message,{hardMaxRounds:input.optimization?.maxRounds,hardCostCny:input.optimization?.maxCostCny??undefined});
+      }
       task.learningPolicy=structuredClone(parent?parent.learningPolicy:settings.learning||defaultLearningSettings);
       task.completenessPolicy=structuredClone(parent&&parent.scope===input.scope?parent.completenessPolicy:settings.completeness||defaultCompletenessSettings);
       task.requirementsEnabled=parent&&parent.scope===input.scope?parent.requirementsEnabled:input.scope==='site'&&(task.completenessPolicy?.enabled??true);
@@ -211,7 +225,7 @@ export class AutomationStore {
     return this.db.transaction(()=>{
       const tasks=this.tasks(),active=tasks.filter(t=>!t.stopped);
       if(active.filter(t=>t.status==='following-up'&&t.followup?.state==='running').length>=limit)return;
-      const task=tasks.toReversed().find(t=>ready(t)&&t.status==='following-up'&&(t.stopped||t.followup?.state!=='running')&&t.followup&&t.followup.nextAt<=Date.now()&&!tasks.some(a=>a.id!==t.id&&(!!a.delivery&&(a.delivery.stopped===false||['queued','running','verifying','uncertain'].includes(a.delivery.status))||!a.stopped)&&t.generatedSiteId&&a.generatedSiteId===t.generatedSiteId));
+      const task=tasks.toReversed().find(t=>ready(t)&&!this.migrationReadReserved(t)&&t.status==='following-up'&&(t.stopped||t.followup?.state!=='running')&&t.followup&&t.followup.nextAt<=Date.now()&&!tasks.some(a=>a.id!==t.id&&(!!a.delivery&&(a.delivery.stopped===false||['queued','running','verifying','uncertain'].includes(a.delivery.status))||!a.stopped)&&t.generatedSiteId&&a.generatedSiteId===t.generatedSiteId));
       if(!task)return;task.stopped=false;task.followup!.state='running';this.put(task);return task;
     });
   }
@@ -233,6 +247,9 @@ export class AutomationStore {
     for(const task of this.tasks()) {
       if(task.delivery&&['running','verifying'].includes(task.delivery.status)){task.delivery.status=task.delivery.target?'queued':'uncertain';task.delivery.stopped=true;task.delivery.error=task.delivery.target?'服务中断，保留目标回执，恢复交付核验。':'服务中断，迁移结果不确定；请核查目标环境并补录回执，不重复发送。';this.put(task);this.notice(task,'交付恢复检查',task.delivery.error);}
       if(task.stopped)continue;
+      if(task.autonomy&&task.kind==='generation'&&task.collectionId&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!['cancelling','cancelled'].includes(task.status)){
+        task.status='queued';task.stopped=true;task.error='采集执行服务中断；保留批次、进程身份和检查点，先核对原采集操作后接续。';this.put(task);this.event(task.id,task.error);continue;
+      }
       if(task.followup?.activeStartedAt){task.followup.elapsedMs=(task.followup.elapsedMs||0)+Math.max(0,task.followup.activeElapsedMs??((task.followup.activeHeartbeatAt||task.followup.activeStartedAt)-task.followup.activeStartedAt));delete task.followup.activeStartedAt;delete task.followup.activeHeartbeatAt;delete task.followup.activeElapsedMs;}
       task.status='pending';task.stopped=false;task.error='执行服务中断；需检查原会话 / 站点并确认执行已停止后再跟进，未自动重发委托。';this.put(task);this.event(task.id,task.error);
     }

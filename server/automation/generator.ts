@@ -2,7 +2,8 @@ import { randomUUID } from 'node:crypto';
 import type { AutomationTask } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
-import { Pending } from './errors.js';
+import { Pending, GenerationInputError } from './errors.js';
+import { prepareGenerationContext, assertGenerationInput, cleanupGenerationContext } from './generation-context.js';
 
 import { koobooClient, siteIdentity, refreshSite, probeSite } from './kooboo.js';
 import { materialDestination, readMaterial } from './materials.js';
@@ -12,12 +13,23 @@ import { ensureManifest, ManifestStore } from './completeness.js';
 import { selectExperience, adoptedGuidance } from './experience.js';
 import { optimizationBudgetReason } from './optimization.js';
 import { ModelBudgetExceeded } from './request-budget.js';
+import { ensureSourceCollection } from './collection/orchestrator.js';
+import { effectiveCollectionInput } from './collection/store.js';
+import { frozenCollectionAssetGapGuidance, preflightCollectionTarget } from './collection/target-verification.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
 /** Existing Kooboo APIs + the existing frontend stream/function loop. No server generation API is introduced. */
 export async function executeGeneration(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,openSession:typeof generationSession=generationSession){
-  const input=store.version(task.versionId);if(!input)throw new Error('缺少固定的输入版本');
+  await ensureSourceCollection(task,store,vault,directory,signal);
+  const input=effectiveCollectionInput(task,store,directory);if(!input)throw new Error('缺少固定的输入版本');
+  if(task.collectionVersionId){
+    const manifest=new ManifestStore(store).get(task.requirementsId);
+    if(!manifest)throw new GenerationInputError('冻结来源缺少固定交付清单，禁止创建生成站');
+    const preflight=preflightCollectionTarget({task,manifest,store,directory});
+    if(preflight.state==='blocked')throw new GenerationInputError('冻结来源生成预检未通过：'+preflight.checks.filter(check=>check.failureClass==='contract-tool-defect').map(check=>check.reason).join('；').slice(0,1800));
+  }
+  const acceptedAssetGuidance=frozenCollectionAssetGapGuidance(task,store,directory);
   const {environment,origin,request}=koobooClient(task,vault,signal);const apiOrigin=new URL(environment.apiOrigin||origin).origin;
   // Older executions already submitted a prompt without durable delivery receipts.
   // Retain their conversation and require explicit AI evidence before another message.
@@ -66,6 +78,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       store.event(task.id,'内容站克隆完成；参考站由 Kooboo AI 使用 Sandbox tools 准备');
   }
   // Materials are copied into the chosen target; no mandatory README or naming convention.
+  const materials=input.files.map(file=>{const destination=materialDestination(task.resourceId,task.versionId,file);return {name:file.name,id:file.id,destination:destination.path,type:file.type,size:file.size,sha256:file.sha256,storage:destination.text?'kfile':'file'};});
   const uploaded:string[]=[];
   for(const file of task.generation.prepared?[]:input.files){
     signal.throwIfAborted();const bytes=readMaterial(directory,file);
@@ -100,10 +113,10 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   }
   if(uploaded.length){
     const manifestPath=`_automation-manifests/${task.id}.json`;
-    const mappings=input.files.map(file=>({name:file.name,id:file.id,destination:materialDestination(task.resourceId,task.versionId,file).path}));
+    const mappings=materials.map(({name,id,destination})=>({name,id,destination}));
     const result=await request('AI/CallFunction',{name:'run_kscript',callId:randomUUID(),arguments:{code:`k.file.write(${JSON.stringify(manifestPath)}, ${JSON.stringify(JSON.stringify(mappings))}); return true;`}},site.siteId);
     const content=result?.contents?.[0];if(!content||content.isError||content.result===false||content.result?.error)throw new Error('资料映射清单写入未确认');
-    task.message+='\n资料映射清单：kfile:'+manifestPath;task.message+='\n\n已导入资料位置：\n'+uploaded.join('\n');store.put(task);}
+    task.message+='\n资料映射清单：kfile:'+manifestPath+'；共 '+uploaded.length+' 份资料。按需从清单定位文件，每次只返回必要摘要，禁止把全清单展开到聊天。';store.put(task);}
   task.generation.prepared=true;store.put(task);
   if((!task.generation.deliveryId||task.generation.next)&&!task.generation.legacySubmitted&&(task.generation.deliveryState!=='completed'||task.generation.next)){
     await ensureManifest(task,store,vault,directory,signal);
@@ -113,6 +126,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   // continuation must reach the pinned conversation even after that receipt.
   const continuation=task.generation.next?.action==='continue'||task.generation.next?.action==='answer';
   if(task.generation.deliveryState==='completed'&&!continuation){
+    await cleanupGenerationContext(task,store,request,site.siteId,true);
     task.stage='handoff';store.put(task);const ready=await refreshSite(task,store,vault,signal);await probeSite(ready?.url||'',signal);return;
   }
   task.stage='generation';store.put(task);
@@ -130,12 +144,25 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
         const image=readEvidence(directory,task.repairEvidence!.reportId,file);return {uri:'data:image/png;base64,'+image.bytes.toString('base64'),mediaType:'image/png' as const};
       }):undefined;
       if(images?.length&&!state.imageInput)throw new Pending('当前 Kooboo automation bridge 不支持图片修复委托，请更新 bridge 后恢复；尚未发送修复消息。');
-      if(images&&images.reduce((sum,image)=>sum+image.uri.length,0)>24*1024*1024)throw new Pending('本轮修复图片超过 24 MiB，需要缩小修复批次；尚未发送消息。');
+      // Validate images/answers before provisioning files or changing deliveryId.
+      assertGenerationInput(undefined,images,action?.action==='answer'?action.answer:undefined);
+      const manifest=task.requirementsId?new ManifestStore(store).get(task.requirementsId):undefined;
+      const collectionGuidance=task.collectionVersionId?'\n本任务的A段已核验并冻结资料版本 '+task.collectionVersionId+'。使用资料映射清单按需读取原件、完整正文、数据分片和关系；批量落地当前范围，避免重新全站采集。动态记录保存可回读的 sourceUrl 或 oldUrl 完整来源 URL。SQLite 表 CollectionRecordBindings 用 id、requirementId、sourceUrl、targetKind（sqlite/content）、targetContainer（真实表名/Content容器）、targetId（真实记录主键）、identityKeyField（可空，默认id）声明每项页面或数据要求的规范记录；记录本身的sourceUrl/oldUrl必须匹配原URL。页面索引和业务记录可共存，不为凑数复制实体；每个冻结路径含分页都要明确映射。CollectionRelationBindings 用 id、sourcePath（完整原路径及查询参数）、tableName、parentField、childField、orderField、parentIdentityField、childIdentityField、sourcePathField 声明真实关系字段。父子引用字段从对应规范记录读取，默认identityKeyField/id；关系行须用sourcePathField区分分页与别名，不能把分类全部分页混成一页，顺序字段须为唯一数值。所有含详情成员的来源页均适用，不依赖pageType标签。CollectionAssetBindings 用 id、sourceUrl、materialPath（冻结state.localPath原值）、targetUrl（当前目标同域真实URL）记录已取得素材映射；同字节允许多个源URL共用文件，不能混淆源URL数与文件数。三张表仅声明现有实现，不提供或改写预期成员，不把目标总量反推来源。保留分类关系、成员顺序、分页、数字路径、.aspx与查询参数；元数据引号等原字符按HTML上下文转义，不能删字符。实际目标响应须承接原页标题、可见正文和链接，禁止以HTTP200、隐藏文本、记录数量或生成自述替代完整性。每批只返回完成对象、缺口与证据的短摘要。':'';
+      if(task.requirementsId&&!manifest)throw new GenerationInputError('固定交付清单不存在，禁止发送不完整委托');
+      const prepared=action?.action==='answer'?undefined:await prepareGenerationContext(task,store,request,site.siteId,{
+        instructions:action?.action==='continue'&&action.message!==task.message
+          ?task.message+'\n\n本轮已核对的跟进要求：\n'+action.message:task.message,
+        guidance:adoptedGuidance(task,store,'generation')+collectionGuidance+acceptedAssetGuidance,
+        manifest,
+        materials,
+      });
+      assertGenerationInput(prepared?.text,images,action?.action==='answer'?action.answer:undefined);
+      if(prepared){store.event(task.id,`生成委托资料：${prepared.mode}；最终文本 ${Buffer.byteLength(prepared.text)} bytes，图片 ${images?.length||0} 张；平台原件 ${prepared.packageId}`);}
       const id=randomUUID();task.generation.deliveryId=id;task.generation.deliveryState='sending';delete task.generation.next;store.put(task);
       const receipt=await session.deliver({id,conversationId:task.generation.conversationId||state.conversationId,images,
-        ...(action?.action==='answer'?{answer:action.answer,callId:action.callId}:{text:(action?.action==='continue'?action.message:task.message)+adoptedGuidance(task,store,'generation')+(task.requirementsId?'\n\n本轮固定交付清单（不得缩减，逐项完成）：\n'+JSON.stringify(new ManifestStore(store).get(task.requirementsId)):'')})});
+        ...(action?.action==='answer'?{answer:action.answer,callId:action.callId}:{text:prepared!.text})});
       if(receipt?.state!=='accepted')throw new Pending('委托是否被接受尚未确认，需要核对原会话；不会自动重复发送');
-      task.generation.deliveryState='accepted';task.generation.conversationId=receipt.conversationId;task.threadId=receipt.conversationId;store.put(task);
+      task.generation.deliveryState='accepted';task.generation.conversationId=receipt.conversationId;task.threadId=receipt.conversationId;task.error='';store.put(task);
       store.event(task.id,initial?'委托已接受，正在追踪 Kooboo 实际执行循环':'AI 跟进已提交到原站原会话');
     } else if(task.generation.deliveryState==='sending'){
       if(state.delivery?.id!==task.generation.deliveryId||state.delivery?.state!=='accepted')throw new Pending('上一次发送结果不确定，不能自动重发，请核对原会话');
@@ -146,16 +173,24 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       signal.throwIfAborted();state=await session.snapshot();
       if(state.conversationId!==task.generation.conversationId)throw new Pending('原会话身份发生变化，停止自动操作并核对');
       if(state.pending)throw new Pending('Kooboo 正在等待输入或工具确认：'+state.pending.name);
-      if(state.delivery?.error)throw new Pending(state.delivery.error);
+      if(state.delivery?.error){if(isContextOverflow(state.delivery.error))throw new GenerationInputError(state.delivery.error+'；已停止原样重试');throw new Pending(state.delivery.error);}
       if(!state.running&&state.state==='completed'&&state.outcome?.runId&&state.delivery?.id===task.generation.deliveryId){
         task.generation.deliveryState='completed';task.generation.state='completed';store.put(task);store.event(task.id,'Kooboo 本轮执行循环已结束，正在核对站点是否可交接评测');break;
       }
-      if(!state.running&&['failed','interrupted'].includes(state.state))throw new Pending('Kooboo 本轮执行结束，结果为 '+state.state+'，由 AI 核对并跟进');
+      if(!state.running&&['failed','interrupted'].includes(state.state)){
+        if(isContextOverflow(JSON.stringify(state.context)))throw new GenerationInputError('Kooboo 报告上下文超限，已停止原样重试；需先压缩原会话或完成同站交接');
+        throw new Pending('Kooboo 本轮执行结束，结果为 '+state.state+'，由 AI 核对并跟进');
+      }
       if(state.running)idleSince=Date.now();
       if(!state.running&&Date.now()-idleSince>45000)throw new Pending('执行状态尚未取得可信终态，由 AI 读取原会话核对');
       await delay(1000,signal);
     }
   }finally{await session.close();}
+  // The trusted terminal receipt/context were persisted above and the browser
+  // has closed. The full package is archived locally for future re-provisioning.
+  await cleanupGenerationContext(task,store,request,site.siteId,true);
   task.stage='handoff';store.put(task);
   const ready=await refreshSite(task,store,vault,signal);await probeSite(ready?.url||'',signal);
 }
+
+export function isContextOverflow(message:string){return /context_length_exceeded|maximum context length|context.{0,35}(?:overflow|exceed)|上下文.{0,12}(?:溢出|超限|超出)/i.test(message);}

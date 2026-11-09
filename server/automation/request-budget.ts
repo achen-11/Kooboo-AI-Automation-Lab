@@ -46,7 +46,7 @@ export class RequestBudget {
       });
       // Admission estimates are not a guarantee about a third-party tokenizer.
       const input = Buffer.byteLength(text) + images * 16384;
-      const requested = typeof body.max_output_tokens === 'number' ? body.max_output_tokens : 8192;
+      const requested = typeof body.max_output_tokens === 'number' ? body.max_output_tokens : (this.policy.maxOutputTokens || 8192);
       const output = Math.floor(Math.min(requested, this.policy.maxOutputTokens || 8192, remaining - input));
       if (!Number.isFinite(output) || output < 1) throw new ModelBudgetExceeded('剩余预算不足以接收本次上下文；请缩小上下文或显式调整预算。');
       if (!body.__compact) body.max_output_tokens = output;

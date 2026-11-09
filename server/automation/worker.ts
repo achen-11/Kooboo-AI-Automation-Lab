@@ -14,6 +14,9 @@ import { advanceOptimization, applyOptimizationAction, optimizationBudgetReason,
 import { ModelBudgetExceeded } from './request-budget.js';
 import { ExperienceStore } from './experience-store.js';
 import { queueReflection, reflectExperience, selectExperience } from './experience.js';
+import { cleanupGenerationContext } from './generation-context.js';
+import { koobooClient } from './kooboo.js';
+import { autonomousActionStrategy, autonomousReady, autonomousWindowRemaining, canReplayGeneration, followupAccountState, isAutonomousRetry, nextAutonomousWindow, recordAutonomousAttempt } from './autonomy.js';
 export type Execute=(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal)=>Promise<void>;
 export class AutomationWorker{
   private timer?:ReturnType<typeof setInterval>;
@@ -56,14 +59,14 @@ export class AutomationWorker{
       for(const kind of ['generation','evaluation'] as const){
         const limit=kind==='generation'?settings.generationConcurrency:settings.evaluationConcurrency;
         for(let i=0;i<limit;i++){
-          const task=this.store.claim(kind,limit,t=>!this.running.has(t.id));if(!task)break;
+          const task=this.store.claim(kind,limit,t=>!this.running.has(t.id)&&autonomousReady(t));if(!task)break;
           const controller=new AbortController();
           const promise=this.run(task,controller,settings.timeoutMinutes).finally(()=>{if(this.running.get(task.id)?.controller===controller)this.running.delete(task.id);if(!this.stopping)void this.tick();});
           this.running.set(task.id,{controller,promise});
         }
       }
       for(let i=0;i<settings.followup.concurrency;i++){
-        const task=this.store.claimFollowup(settings.followup.concurrency,t=>!this.running.has(t.id));if(!task)break;
+        const task=this.store.claimFollowup(settings.followup.concurrency,t=>!this.running.has(t.id)&&autonomousReady(t));if(!task)break;
         const controller=new AbortController();const promise=this.runFollowup(task,controller).finally(()=>{if(this.running.get(task.id)?.controller===controller)this.running.delete(task.id);if(!this.stopping)void this.tick();});
         this.running.set(task.id,{controller,promise});
       }
@@ -84,6 +87,41 @@ export class AutomationWorker{
     if(policy.enabled)this.store.scheduleFollowup(task,policy);
     else this.interrupt(task,task.error,['在系统设置启用 AI 跟进，或补齐问题条件后点击“AI 接管 / 恢复”。']);
   }
+  private retainCollectionShutdown(task:AutomationTask) {
+    const preCreate=(value:AutomationTask|undefined)=>!!value?.autonomy&&value.kind==='generation'&&value.scope==='site'&&['migration','upgrade'].includes(value.scenario)&&!!value.collectionId&&!value.generatedSiteId&&!value.generation?.createAttempted&&!value.generation?.legacySubmitted&&!value.generation?.deliveryId&&!value.generation?.conversationId&&!value.generation?.runId&&!value.generation?.prepared&&!['sending','accepted'].includes(value.generation?.deliveryState||'');
+    const current=this.store.task(task.id);
+    if(!this.stopping||!task.stopped||!preCreate(task)||!preCreate(current)||current?.collectionId!==task.collectionId)return false;
+    task.status='queued';task.error='采集执行服务停止；已保留批次、进程身份和检查点，恢复时先核对原操作回执再接续。';
+    if(task.followup)task.followup.state='resolved';
+    this.store.put(task);this.store.event(task.id,task.error);return true;
+  }
+  private autonomousRecovery(task:AutomationTask, reason:unknown, followup=false) {
+    if(!task.autonomy||this.stopping)return false;
+    const detail=reason instanceof Error?reason.message:'本轮执行需要恢复';
+    const collection=reason as {name?:string;safeToRetry?:boolean;nextAt?:number;waiting?:boolean;progressKey?:string;nextSteps?:string[]};
+    if(collection.name==='CollectionBlocked'){this.interrupt(task,detail,collection.nextSteps||['补齐原站采集所需外部条件后恢复原任务。']);return true;}
+    if(!isAutonomousRetry(reason)&&!(followup&&reason instanceof Error&&!(reason instanceof FollowupRuntimeError)&&!(reason instanceof UnconfirmedStop)))return false;
+    if(!task.stopped)return false;
+    if(followup&&reason instanceof ModelBudgetExceeded&&followupAccountState(task,this.store).unknown){this.interrupt(task,detail,['存在未确认停止的历史模型请求，先核对原执行；不能通过开启新窗口绕过未知用量阻塞。']);return true;}
+    const waiting=collection.name==='CollectionPending'&&collection.waiting===true;
+    const stop=waiting?'':recordAutonomousAttempt(task,followup?'followup-recovery':task.stage||task.kind,detail,Date.now(),collection.name==='CollectionPending'?collection.progressKey:undefined);
+    if(waiting&&collection.progressKey)task.autonomy.checkpoint.progressKey=collection.progressKey;
+    if(stop){this.interrupt(task,stop,['查看保存的检查点、重复失败与已尝试策略；提供新条件或新的有证据路径后恢复。']);return true;}
+    if(collection.name==='CollectionPending'&&collection.safeToRetry){
+      task.autonomy.checkpoint.nextAt=Math.max(task.autonomy.checkpoint.nextAt||0,collection.nextAt||0);
+      task.status='queued';this.store.put(task);this.store.event(task.id,'原站采集检查点已保留，按已保存时间自动接续：'+detail);return true;
+    }
+    if(followup){
+      if(reason instanceof ModelBudgetExceeded)nextAutonomousWindow(task);
+      task.status='following-up';task.followup!.state='waiting';task.followup!.nextAt=task.autonomy.checkpoint.nextAt||Date.now();this.store.put(task);
+    }else if(canReplayGeneration(task)){
+      task.status='queued';this.store.put(task);
+    }else{
+      this.recoverTask(task);
+      if(task.followup){task.followup.nextAt=task.autonomy.checkpoint.nextAt||Date.now();this.store.put(task);}
+    }
+    this.store.event(task.id,'已保留原站、会话、累计用量与检查点，退避后接续：'+detail);return true;
+  }
   private async run(task:AutomationTask,controller:AbortController,timeout:number){
     const timer=setTimeout(()=>controller.abort(new Pending('本轮执行达到时限，需要核对当前成果后继续')),timeout*60000);timer.unref();
     try{
@@ -93,7 +131,7 @@ export class AutomationWorker{
       await this.execute[task.kind](task,this.store,this.vault,this.directory,controller.signal);
       const saved=this.store.task(task.id);if(task.optimization&&saved?.optimization?.stoppedAt)task.optimization=saved.optimization;
       task.stopped=true;
-      if(this.store.task(task.id)?.status==='cancelling'){task.status='cancelled';task.error='';}
+      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){task.status='cancelled';task.error='';}
       else{
         task.status='completed';task.error='';
         if(task.followup)task.followup.state='resolved';
@@ -107,11 +145,22 @@ export class AutomationWorker{
       task.stopped=!(error instanceof UnconfirmedStop);
       const reason=error instanceof UnconfirmedStop?error:controller.signal.reason||error;
       task.error=reason instanceof Error?reason.message:'执行失败，需要查证当前任务';this.store.event(task.id,task.error);
-      if(this.store.task(task.id)?.status==='cancelling'){
+      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){
         if(task.stopped){task.status='cancelled';this.store.put(task);}
         else this.interrupt(task,task.error,['检查原执行浏览器 / 会话，确认已停止后释放名额。']);
-      }else this.recoverTask(task);
-    }finally{clearTimeout(timer);}
+      }else if(this.retainCollectionShutdown(task)){}
+      else if(this.autonomousRecovery(task,reason)){}
+      else if(reason instanceof FollowupRuntimeError)this.interrupt(task,task.error,reason.nextSteps);
+      else this.recoverTask(task);
+    }finally{
+      clearTimeout(timer);
+      // A confirmed cancellation may clean only this task's registered copies.
+      // Interruptions retain files; they may still be needed for recovery.
+      if(task.kind==='generation'&&task.status==='cancelled'&&task.stopped&&task.generatedSiteId){
+        const site=this.store.site(task.generatedSiteId);
+        if(site)try{await cleanupGenerationContext(task,this.store,koobooClient(task,this.vault,AbortSignal.timeout(30000)).request,site.siteId,true);}catch(error){this.store.event(task.id,'取消后的临时资料待清理：'+(error as Error).message);}
+      }
+    }
   }
   private async runDelivery(task:AutomationTask,controller:AbortController){
     let unconfirmed=false;const delivery=task.delivery!;delivery.attempts=(delivery.attempts||0)+1;this.store.put(task);
@@ -125,40 +174,55 @@ export class AutomationWorker{
   private async runFollowup(task:AutomationTask,controller:AbortController){
     const followup=task.followup!;const policy=followup.policy;
     followup.budgetId||=randomUUID();this.store.put(task);
-    const remaining=policy.maxMinutes*60000-(followup.elapsedMs||0);
-    const overBudget=followup.attempts>=policy.maxAttempts||followup.tokens>=policy.maxTokens||remaining<=0;
+    let window=autonomousWindowRemaining(task);
+    const account=task.autonomy?followupAccountState(task,this.store):undefined;
+    if(account?.unknown){task.stopped=followup.executionStopped;this.interrupt(task,'历史模型请求仍缺少已停止确认，不能通过新窗口绕过未知用量。',['核对原模型执行及预占；确认停止后恢复，实际用量和费用继续保留待核算。']);return;}
+    if(task.autonomy&&(window.attempts<=0||window.tokens<=0||window.milliseconds<=0||account&&(!account.unknown&&(account.spent>=policy.maxTokens||account.requests>=(policy.maxRequests||80))))){
+      const stop=recordAutonomousAttempt(task,'followup-window','普通执行窗口已结束，保存累计用量并继续原目标');
+      if(stop){task.stopped=followup.executionStopped;this.interrupt(task,stop,['查看当前目标、检查点与无进展历史，补齐新路径后恢复。']);return;}
+      nextAutonomousWindow(task);window=autonomousWindowRemaining(task);this.store.put(task);
+      this.store.event(task.id,`跟进软窗口 ${task.autonomy.window.index+1} 已开启；累计尝试、活动时间和用量保留。`);
+    }
+    const remaining=window.milliseconds;
+    const overBudget=window.attempts<=0||window.tokens<=0||remaining<=0;
     const cost=optimizationBudgetReason(task,this.store);
-    if(cost){task.stopped=followup.executionStopped;const root=this.store.root(task);if(root?.optimization){if(root.id!==task.id)this.interrupt(task,cost,['查看费用明细，核算后再决定后续任务。']);stopOptimization(root,this.store,cost,['查看费用明细，核算后再决定后续任务。']);}return;}
+    if(cost){task.stopped=followup.executionStopped;const root=this.store.root(task);if(root?.optimization){if(root.id!==task.id)this.interrupt(task,cost,['查看费用明细，核算后再决定后续任务。']);stopOptimization(root,this.store,cost,['查看费用明细，核算后再决定后续任务。']);}else this.interrupt(task,cost,['查看费用明细，核算后再决定后续任务。']);return;}
     if(overBudget){task.stopped=followup.executionStopped;this.interrupt(task,'AI 跟进已达到配置的次数、时间或 token 预算，当前流程仍未完成。',['查看 AI 跟进记录和原始问题；补齐条件或调整预算后点击“AI 接管 / 恢复”。'],followup.observations);return;}
-    await selectExperience(task,'followup',this.store,this.vault,this.directory,controller.signal);
-    const monotonicStart=performance.now();const activeStart=Date.now();followup.activeStartedAt=activeStart;followup.activeHeartbeatAt=activeStart;followup.activeElapsedMs=0;
+    const monotonicStart=performance.now(),windowAtStart=task.autonomy?.window.index;const activeStart=Date.now();followup.activeStartedAt=activeStart;followup.activeHeartbeatAt=activeStart;followup.activeElapsedMs=0;
     const heartbeat=setInterval(()=>{followup.activeHeartbeatAt=Date.now();followup.activeElapsedMs=Math.max(0,Math.round(performance.now()-monotonicStart));this.store.put(task);},1000);heartbeat.unref();
     const timer=setTimeout(()=>controller.abort(new Error('AI 跟进达到本轮时间预算')),Math.min(remaining,5*60000));timer.unref();
     try{
+      await selectExperience(task,'followup',this.store,this.vault,this.directory,controller.signal);
       followup.attempts++;this.store.put(task);this.store.event(task.id,`AI 跟进第 ${followup.attempts} 次，阶段：${task.stage||task.kind}`);
       const action=await this.followupExecute(task,this.store,this.vault,this.directory,controller.signal);
-      if(this.store.task(task.id)?.status==='cancelling'){task.stopped=followup.executionStopped;if(task.stopped){task.status='cancelled';this.store.put(task);}else this.interrupt(task,'取消时原执行仍未确认停止。',['检查原执行并确认停止后释放名额。']);return;}
+      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){task.stopped=followup.executionStopped;if(task.stopped){task.status='cancelled';this.store.put(task);}else this.interrupt(task,'取消时原执行仍未确认停止。',['检查原执行并确认停止后释放名额。']);return;}
       controller.signal.throwIfAborted();task.stopped=followup.executionStopped;followup.lastAction=action;
       this.applyAction(task,action);
     }catch(error){
       task.stopped=error instanceof UnconfirmedStop?false:followup.executionStopped;
       const reason=controller.signal.reason||error;const detail=reason instanceof Error?reason.message:'跟进 Agent 执行失败';
       this.store.event(task.id,'AI 跟进未完成：'+detail);
-      if(this.store.task(task.id)?.status==='cancelling'&&task.stopped){task.status='cancelled';this.store.put(task);}
-      else if(this.store.task(task.id)?.status==='cancelling'){this.interrupt(task,'取消时原执行仍未确认停止：'+detail,['检查原执行并确认停止后释放名额。']);}
+      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')&&task.stopped){task.status='cancelled';this.store.put(task);}
+      else if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){this.interrupt(task,'取消时原执行仍未确认停止：'+detail,['检查原执行并确认停止后释放名额。']);}
       else if(error instanceof UnconfirmedStop){followup.executionStopped=false;this.interrupt(task,detail,['确认原浏览器已停止后释放名额，再恢复本任务。'],followup.observations);}
+      else if(this.retainCollectionShutdown(task)){}
+      else if(this.autonomousRecovery(task,reason,true)){}
       else if(error instanceof ModelBudgetExceeded){this.interrupt(task,detail,['检查用量、未知请求及预算配置，确认后再恢复。恢复不会清零已用额度。'],followup.observations);}
       else if(error instanceof FollowupRuntimeError){this.interrupt(task,detail,error.nextSteps,followup.observations);}
       else if(!this.stopping&&followup.attempts>=policy.maxAttempts){this.interrupt(task,`${task.error}；AI 跟进未能继续：${detail}`,['查看跟进记录，检查模型连接、环境及任务条件，处理后恢复本任务。'],followup.observations);}
       else{task.status='following-up';followup.state='waiting';followup.nextAt=Date.now()+5000;this.store.put(task);}
-    }finally{clearTimeout(timer);clearInterval(heartbeat);followup.elapsedMs=(followup.elapsedMs||0)+Math.max(0,Math.round(performance.now()-monotonicStart));delete followup.activeStartedAt;delete followup.activeHeartbeatAt;delete followup.activeElapsedMs;this.store.put(task);}
+    }finally{clearTimeout(timer);clearInterval(heartbeat);const elapsed=Math.max(0,Math.round(performance.now()-monotonicStart));followup.elapsedMs=(followup.elapsedMs||0)+elapsed;if(task.autonomy&&task.autonomy.window.index!==windowAtStart)task.autonomy.window.elapsedMsBase+=elapsed;delete followup.activeStartedAt;delete followup.activeHeartbeatAt;delete followup.activeElapsedMs;this.store.put(task);}
   }
   private applyAction(task:AutomationTask,action:FollowupAction){
     const followup=task.followup!;
     if(task.optimization?.state==='planning'){
-      applyOptimizationAction(task,action,this.store,this.vault.automation());return;
+      applyOptimizationAction(task,action,this.store,this.vault.automation(),this.directory);return;
     }
     if(action.action==='interrupt'){this.interrupt(task,action.reason,action.nextSteps||['检查当前任务条件后恢复。'],action.evidence);return;}
+    if(task.autonomy){
+      const stop=recordAutonomousAttempt(task,autonomousActionStrategy(action),'已核对当前执行并安排 '+action.action);
+      if(stop){this.interrupt(task,stop,['查看重复恢复操作和已有证据，补齐新的恢复路径后继续。'],action.evidence);return;}
+    }
     if(action.action==='wait'){task.status='following-up';followup.state='waiting';followup.nextAt=Date.now()+(action.waitSeconds||30)*1000;this.store.put(task);return;}
     if(!followup.executionStopped)throw new Error('原执行停止尚未确认，不能重试或交接');
     if(action.action==='evaluate'){

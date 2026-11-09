@@ -1,0 +1,14 @@
+{
+  "engine": "site-harvest",
+  "engineVersion": "1.0.0",
+  "protocolVersion": 1,
+  "materialSchemaVersion": 2,
+  "rulesSchemaVersion": 1,
+  "verifierVersion": "a-checklist-v1",
+  "sopVersion": "automation-collection-v1",
+  "python": ">=3.12,<3.13",
+  "dependencies": {
+    "lxml": "6.1.1"
+  },
+  "browserSupported": false
+}

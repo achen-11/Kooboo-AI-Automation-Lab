@@ -82,6 +82,10 @@ venv/
 .parcel-cache
 
 # Next.js build output
+/.updates/
+/releases/
+/.data.failed-*/
+/.data.restore-*/
 .next
 out
 

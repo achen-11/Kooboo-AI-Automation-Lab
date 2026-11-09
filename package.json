@@ -1,6 +1,6 @@
 {
   "name": "kooboo-ai-automation-lab",
-  "version": "0.4.0",
+  "version": "0.4.1",
   "private": true,
   "type": "module",
   "engines": {
@@ -11,8 +11,10 @@
     "dev:web": "vite --config frontend/vite.config.ts",
     "check": "tsc --noEmit -p tsconfig.server.json && vue-tsc --noEmit -p tsconfig.web.json",
     "test": "node scripts/test-node.mjs",
-    "build": "vite build --config frontend/vite.config.ts && tsc -p tsconfig.server.build.json",
-    "start": "node dist-server/server/main.js",
+    "build": "vite build --config frontend/vite.config.ts && tsc -p tsconfig.server.build.json && node scripts/write-build-info.mjs",
+    "start": "node scripts/launch.mjs",
+    "release:package": "python3 scripts/package-platform.py --update",
+    "release:publish": "node scripts/publish-release.mjs",
     "install:browser": "playwright install chromium",
     "install:collection": "node scripts/install-collection.mjs",
     "check:collection": "node scripts/install-collection.mjs --check",

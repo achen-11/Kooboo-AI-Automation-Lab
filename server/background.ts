@@ -54,6 +54,20 @@ export class BackgroundWorkers {
   }
 
   get healthy() { return this.ready && !this.failed; }
+  async quiesce(): Promise<number> {
+    const child = this.child;
+    if (!child?.connected || !this.healthy) throw new Error('后台执行服务未就绪，请先检查服务状态');
+    const id = crypto.randomUUID();
+    return new Promise((resolve, reject) => {
+      const timer = setTimeout(() => { child.off('message', onMessage); reject(new Error('后台服务尚未确认停止领取任务')); }, 10000);
+      const onMessage = (raw: unknown) => {
+        const message = raw as { type?: string; id?: string; active?: number };
+        if (message?.type !== 'quiesced' || message.id !== id || typeof message.active !== 'number') return;
+        clearTimeout(timer); child.off('message', onMessage); resolve(message.active);
+      };
+      child.on('message', onMessage); child.send({ type: 'quiesce', id }, error => { if (error) { clearTimeout(timer); child.off('message', onMessage); reject(new Error('无法连接后台执行服务')); } });
+    });
+  }
   cancel(id: string) { if (this.child?.connected) this.child.send({ type: 'cancel', id }, () => {}); }
   owns(id: string) {
     if (!this.child?.connected || this.failed) return false;

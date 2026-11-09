@@ -1,8 +1,10 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ClipboardCheck, SlidersHorizontal, FolderOpen, Settings2, ChevronLeft, RotateCw, BookOpen } from '@lucide/vue';
+import { ClipboardCheck, SlidersHorizontal, FolderOpen, Settings2, ChevronLeft, RotateCw, BookOpen, ArrowUpCircle } from '@lucide/vue';
 import { initialize, platform } from './api';
 import MessageHost from './components/MessageHost.vue';
+import SystemUpdateDialog from './components/SystemUpdateDialog.vue';
+import { openUpdatePanel, loadUpdateStatus, updateStatus } from './lib/updates';
 import AutomationNotifications from './components/AutomationNotifications.vue';
 import TasksView from './views/TasksView.vue';
 import EvaluationView from './views/EvaluationView.vue';
@@ -29,6 +31,8 @@ const detailId = computed(() => /^\/evaluations\/([a-f0-9-]+)$/.exec(route.value
 const resourceId = computed(() => /^\/resources\/([a-f0-9-]+)$/.exec(route.value)?.[1]);
 const taskId = computed(() => /^\/tasks\/([a-f0-9-]+)(?:\?.*)?$/.exec(route.value)?.[1]);
 const settingsEditor = ref<{dirty:boolean}>();
+const editorDirty = computed(() => Boolean(experienceEditor.value?.dirty || ruleEditor.value?.dirty || settingsEditor.value?.dirty));
+watch(() => platform.ready, ready => { if (ready) void loadUpdateStatus().catch(() => {}); });
 function onHash(): void {
   if (((route.value.startsWith('/experiences') && experienceEditor.value?.dirty) || (route.value === '/rules' && ruleEditor.value?.dirty) || (route.value.startsWith('/settings') && settingsEditor.value?.dirty)) && !window.confirm('有未保存的修改，确定离开？')) {
     window.history.replaceState(null, '', `#${route.value}`); return;
@@ -42,16 +46,17 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
 <template>
   <div class="workspace" :class="{ 'sidebar-collapsed': collapsed }">
     <aside class="sidebar">
-      <a href="#/tasks" class="brand" aria-label="Kooboo 自动化首页">
-        <img class="brand-mark" src="/logo.png?v=kooboo-03" alt="" width="45" height="45" />
-        <span class="brand-text"><strong>Kooboo 自动化</strong></span>
-      </a>
+      <div class="brand">
+        <a href="#/tasks" aria-label="Kooboo 自动化首页"><img class="brand-mark" src="/logo.png?v=kooboo-03" alt="" width="45" height="45" /></a>
+        <div class="brand-text"><a href="#/tasks"><strong>Kooboo 自动化</strong></a><button class="brand-version" :title="updateStatus?.available ? '有新版本，打开系统更新' : '打开系统更新'" @click="openUpdatePanel"><span>{{ platform.version ? `v${platform.version}` : '版本信息' }}</span><ArrowUpCircle :size="12" /><i v-if="updateStatus?.available" /></button></div>
+      </div>
       <nav class="navigation" aria-label="主导航">
         <a v-for="item in nav" :key="item.path" :href="`#${item.path}`" :title="item.label" :aria-current="route.startsWith(item.path) ? 'page' : undefined" :class="{ active: route.startsWith(item.path) }">
           <component :is="item.icon" :size="21" :stroke-width="1.7" /><span>{{ item.label }}</span>
         </a>
       </nav>
       <div class="sidebar-bottom">
+        <button class="icon-button compact-update" :title="updateStatus?.available ? '系统更新：有新版本' : '系统更新'" aria-label="系统更新" @click="openUpdatePanel"><ArrowUpCircle :size="19" /><i v-if="updateStatus?.available" /></button>
         <AutomationNotifications v-if="platform.ready" />
         <div class="sidebar-toolbar">
           <span class="online-state" :class="{ offline: !platform.online }"><i />{{ platform.online ? '在线' : '未连接' }}</span>
@@ -76,4 +81,9 @@ onUnmounted(() => window.removeEventListener('hashchange', onHash));
     </main>
   </div>
   <MessageHost />
+  <SystemUpdateDialog :dirty="editorDirty" />
 </template>
+
+<style scoped>
+.brand-version{display:flex;align-items:center;gap:5px;align-self:flex-start;padding:3px 0;border:0;background:none;color:var(--muted);font:inherit;font-size:11px;cursor:pointer}.brand-version:hover{color:var(--primary,#4f73d9)}.brand-version i,.compact-update i{width:6px;height:6px;border-radius:50%;background:#159d73}.compact-update{display:none;position:relative;align-self:center}.compact-update i{position:absolute;top:4px;right:4px}.sidebar-collapsed .compact-update{display:flex}@media(max-width:800px){.compact-update{display:flex}}
+</style>

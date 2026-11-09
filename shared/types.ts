@@ -133,6 +133,7 @@ export interface Evaluation {
   } | null;
 }
 export interface RuntimeSettings {
+  updateSource?: import('./update.js').UpdateSource;
   automation?: import('./automation.js').AutomationSettings;
   threshold: number;
   paused: boolean;
@@ -140,7 +141,7 @@ export interface RuntimeSettings {
   model: { endpoint: string; name: string; apiKey: string };
   environments: { id: string; name: string; origin: string; apiOrigin: string; token: string; delivery?: import('./automation.js').DeliveryPolicy & {token:string} }[];
 }
-export interface PublicSettings extends Omit<RuntimeSettings, 'model' | 'environments'> {
+export interface PublicSettings extends Omit<RuntimeSettings, 'model' | 'environments' | 'updateSource'> {
   model: Omit<RuntimeSettings['model'], 'apiKey'> & { hasApiKey: boolean };
   environments: (Omit<RuntimeSettings['environments'][number], 'token'|'delivery'> & { hasToken: boolean; delivery?:import('./automation.js').DeliveryPolicy & {hasToken:boolean} })[];
   credentials: { ingestToken: string; readToken: string };

@@ -25,6 +25,10 @@ import { AutomationWorker } from './automation/worker.js';
 import { registerAutomationApi } from './automation/api.js';
 import { registerDiagnosticApi } from './diagnostics/api.js';
 import { BackgroundWorkers } from './background.js';
+import { registerUpdateApi } from './updates/api.js';
+import { runningVersion } from './updates/files.js';
+import { inMaintenance } from './updates/maintenance.js';
+import type { UpdateTransport } from './updates/bridge.js';
 
 const domainSchema = z.string().max(253).transform((value, context) => {
   try { return normalizeSiteDomain(value); }
@@ -39,7 +43,7 @@ function present(item: Evaluation) {
   return { ...item, evaluationId: item.id, jobId: item.submission.jobId, attemptId: item.submission.attemptId, status: item.run.status, scoringStatus: scoringStatus(item.run), fidelityScore: item.run.report?.fidelityScore ?? null, completionScore: item.run.report?.completionScore ?? null, ruleSetVersion: item.run.snapshot?.rule.version ?? item.submission.ruleSetVersion ?? 'visual-v1', reportUrl: `/#/evaluations/${item.id}` };
 }
 
-export async function createApp(options: { directory: string; serveWeb?: boolean; startWorker?: boolean; workerDependencies?: Partial<Dependencies>; backgroundEntry?: URL }) {
+export async function createApp(options: { directory: string; serveWeb?: boolean; startWorker?: boolean; workerDependencies?: Partial<Dependencies>; backgroundEntry?: URL; updateTransport?: UpdateTransport }) {
   const directory = resolve(options.directory);
   const vault = new Vault(directory);
   const store = new Store(resolve(directory, 'database.sqlite'));
@@ -49,7 +53,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   const worker = new Worker(store, vault, artifacts, directory, options.workerDependencies);
   const automationStore = new AutomationStore(store.db,value=>{
     const settings=vault.get();
-    for(const secret of [settings.model.apiKey,...settings.environments.flatMap(e=>[e.token,e.delivery?.token||''])])if(secret)value=value.replaceAll(secret,'[已隐藏]');
+    for(const secret of [settings.model.apiKey,settings.updateSource?.token||'',...settings.environments.flatMap(e=>[e.token,e.delivery?.token||''])])if(secret)value=value.replaceAll(secret,'[已隐藏]');
     return value.replace(/Bearer\s+[^\s"',;]+/gi,'Bearer [已隐藏]');
   });
   const automationWorker = options.startWorker === false || options.workerDependencies
@@ -114,7 +118,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   app.post('/api/logout', async (_request, reply) => { session = randomUUID() + randomUUID(); reply.header('Set-Cookie', 'evaluator_session=; HttpOnly; SameSite=Strict; Path=/api; Max-Age=0'); return { ok: true }; });
   app.get('/api/health', async () => {
     const settings = vault.get();
-    return { ok: true, version: '0.4.0', pipelineVersion: 1, executor: 'openai-compatible-tool-agent', paused: settings.paused, modelReady: Boolean(settings.model.endpoint && settings.model.name), browserReady: existsSync(chromium.executablePath()), storage: 'sqlite', worker: options.startWorker !== false, workerReady: automationWorker instanceof BackgroundWorkers ? automationWorker.healthy : options.startWorker !== false, homeOnly: true };
+    return { ok: true, version: runningVersion, maintenance: inMaintenance(directory), pipelineVersion: 1, executor: 'openai-compatible-tool-agent', paused: settings.paused, modelReady: Boolean(settings.model.endpoint && settings.model.name), browserReady: existsSync(chromium.executablePath()), storage: 'sqlite', worker: options.startWorker !== false, workerReady: automationWorker instanceof BackgroundWorkers ? automationWorker.healthy : options.startWorker !== false, homeOnly: true };
   });
   app.get('/api/settings', async (_request, reply) => { reply.header('Cache-Control', 'no-store'); return vault.public(); });
   app.put('/api/settings', async (request) => vault.update(request.body));
@@ -290,7 +294,13 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
 
   registerPublicApi(app, store, vault, artifacts);
   registerAutomationApi(app, automationStore, vault, directory, id => automationWorker.cancel(id), id => automationWorker.owns(id));
-  registerDiagnosticApi(app, automationStore, vault, directory);
+  const diagnosticExports = registerDiagnosticApi(app, automationStore, vault, directory);
+  registerUpdateApi(app, { directory, vault, transport: options.updateTransport, active: async () => {
+    const owned = automationWorker instanceof BackgroundWorkers ? await automationWorker.quiesce() : automationWorker.ownedIds().length + Number(worker.busy);
+    const tasks = automationStore.headers().filter(task => !task.stopped || task.delivery?.stopped === false).length;
+    const legacy = Number((store.db.prepare("SELECT COUNT(*) AS count FROM runs WHERE status IN ('collecting','scoring')").get() as { count: number }).count);
+    return Math.max(owned, tasks + legacy) + Number(diagnosticExports.busy) + Number(modelTestRunning);
+  } });
 
   const dist = resolve(process.cwd(), 'dist');
   if (options.serveWeb !== false && existsSync(dist)) await app.register(staticFiles, { root: dist, prefix: '/' });

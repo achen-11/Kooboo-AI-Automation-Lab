@@ -5,6 +5,7 @@ from datetime import datetime, timezone
 import hashlib
 import json
 import os
+import re
 from pathlib import Path
 import shutil
 import subprocess
@@ -18,7 +19,7 @@ SOURCE_FILES = ('package.json', 'package-lock.json', 'tsconfig.json',
                 'tsconfig.server.json', 'tsconfig.server.build.json',
                 'tsconfig.web.json', 'README.md', 'AGENTS.md', '.gitignore',
                 '.kooboo-ai/specs/frontend.md')
-EXCLUDED_DIRS = {'.git', '.data', '.private', '.venv', 'venv', 'node_modules',
+EXCLUDED_DIRS = {'.git', '.data', '.updates', '.private', '.venv', 'venv', 'node_modules',
                  '__pycache__', '.cache', '.pytest_cache', 'dist', 'dist-server'}
 
 
@@ -67,13 +68,31 @@ def sha256(data):
     return hashlib.sha256(data).hexdigest()
 
 
+def update_manifest(sources, version, commit, snapshot_time, archive_name, archive_bytes):
+    if not re.fullmatch(r'(0|[1-9]\d*)\.(0|[1-9]\d*)\.(0|[1-9]\d*)', version):
+        raise RuntimeError('在线更新只发布正式版本号')
+    if json.loads(sources['package-lock.json'])['version'] != version:
+        raise RuntimeError('package.json 与锁文件版本不一致')
+    return {
+        'schemaVersion': 1, 'product': 'Kooboo AI Automation Lab', 'version': version,
+        'commit': commit, 'publishedAt': snapshot_time, 'minLauncher': 1,
+        'dataVersion': 1, 'nodeMajor': 24,
+        'collectionLockSha256': sha256(sources['engines/site-harvest/requirements.lock']),
+        'platforms': ['darwin', 'win32', 'linux'], 'architectures': ['arm64', 'x64'],
+        'archive': {'name': archive_name, 'size': len(archive_bytes), 'sha256': sha256(archive_bytes)},
+    }
+
+
 def main():
     parser = argparse.ArgumentParser(description=__doc__)
     parser.add_argument('--output', required=True, type=Path, help='新的 ZIP 路径，不覆盖已有文件')
     parser.add_argument('--allow-dirty', action='store_true', help='明确制作含未提交源码的测试快照')
+    parser.add_argument('--update', action='store_true', help='同时制作 UPDATE_MANIFEST.json，用于正式发行在线更新')
     parser.add_argument('--reuse-dependencies', action='store_true',
                         help='复用本机 node_modules 构建，不将其打包（macOS/Linux）')
     args = parser.parse_args()
+    if args.update and args.allow_dirty:
+        raise RuntimeError('在线更新不接受 --allow-dirty 测试快照')
     root = Path(__file__).resolve().parents[1]
     target = args.output.resolve()
     if target.suffix.lower() != '.zip' or target.exists():
@@ -82,6 +101,9 @@ def main():
         raise RuntimeError('交付 ZIP 必须保存到项目目录之外')
     if target.with_suffix('.zip.sha256').exists():
         raise RuntimeError('校验文件已存在，请使用新输出路径')
+    update_target = target.parent / 'UPDATE_MANIFEST.json'
+    if args.update and update_target.exists():
+        raise RuntimeError('更新清单已存在，请使用独立的新发布目录')
     commit = subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip()
     status = subprocess.check_output(['git', 'status', '--porcelain', '--untracked-files=all'],
                                      cwd=root, text=True)
@@ -94,6 +116,8 @@ def main():
     if commit != subprocess.check_output(['git', 'rev-parse', 'HEAD'], cwd=root, text=True).strip():
         raise RuntimeError('复制期间 Git 提交发生变化，请重试以记录准确基线')
     version = json.loads(sources['package.json'])['version']
+    if args.update and not re.fullmatch(r'[a-zA-Z0-9][a-zA-Z0-9._-]{0,180}\.zip', target.name):
+        raise RuntimeError('更新包文件名只能使用英文字母、数字、点、下划线和短横线')
     snapshot_time = datetime.now(timezone.utc).isoformat()
     npm = shutil.which('npm.cmd' if os.name == 'nt' else 'npm')
     if not npm:
@@ -122,7 +146,8 @@ def main():
             (workspace / 'node_modules').symlink_to(dependencies, target_is_directory=True)
         else:
             subprocess.run([npm, 'ci'], cwd=workspace, check=True)
-        subprocess.run([npm, 'run', 'build'], cwd=workspace, check=True)
+        subprocess.run([npm, 'run', 'build'], cwd=workspace, check=True,
+                       env={**os.environ, 'AUTOMATION_BUILD_COMMIT': commit})
         payload = dict(sources)
         for name in ('dist', 'dist-server'):
             for path in sorted((workspace / name).rglob('*')):
@@ -135,7 +160,8 @@ def main():
                 raise RuntimeError(f'缺少构建产物：{name}')
         payload['READ_FIRST.md'] = sources['docs/DEPLOYMENT_AND_HANDOFF.md'].decode('utf-8').replace(
             '](UNIFIED_AUTOMATION.md)', '](docs/UNIFIED_AUTOMATION.md)').replace(
-            '](PUBLIC_API.md)', '](docs/PUBLIC_API.md)').encode('utf-8')
+            '](PUBLIC_API.md)', '](docs/PUBLIC_API.md)').replace(
+            '](manual-updates.md)', '](docs/manual-updates.md)').encode('utf-8')
         manifest = {
             'schemaVersion': 1, 'product': 'Kooboo AI Automation Lab', 'version': version,
             'snapshotAt': snapshot_time, 'baseCommit': commit,
@@ -149,6 +175,9 @@ def main():
             'files': {name: sha256(data) for name, data in sorted(payload.items())},
         }
         payload['DELIVERY_MANIFEST.json'] = (json.dumps(manifest, ensure_ascii=False, indent=2) + '\n').encode()
+        if args.update and (len(payload) > 30000 or any(len(data) > 64 * 1024 * 1024 for data in payload.values())
+                            or sum(map(len, payload.values())) > 1024 * 1024 * 1024):
+            raise RuntimeError('更新包文件数量或解压体积超过启动器上限')
         target.parent.mkdir(parents=True, exist_ok=True)
         created = False
         try:
@@ -158,13 +187,22 @@ def main():
                 for name, data in sorted(payload.items()):
                     archive.writestr(f'Kooboo-AI-Automation-Lab/{name}', data)
             checksum = sha256(target.read_bytes())
+            if args.update and target.stat().st_size > 512 * 1024 * 1024:
+                raise RuntimeError('在线更新包超过 512 MiB 上限')
             with target.with_suffix('.zip.sha256').open('x') as output:
                 output.write(f'{checksum}  {target.name}\n')
+            if args.update:
+                release = update_manifest(sources, version, commit, snapshot_time,
+                                          target.name, target.read_bytes())
+                with update_target.open('x', encoding='utf-8') as output:
+                    output.write(json.dumps(release, ensure_ascii=False, indent=2) + '\n')
         except BaseException:
             if created:
                 target.unlink(missing_ok=True)
+                target.with_suffix('.zip.sha256').unlink(missing_ok=True)
             raise
     print(json.dumps({'archive': str(target), 'sha256': checksum, 'files': len(payload),
+                      'updateManifest': str(update_target) if args.update else None,
                       'baseCommit': commit, 'sourceState': manifest['sourceState']}, ensure_ascii=False, indent=2))
 
 

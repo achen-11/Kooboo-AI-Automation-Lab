@@ -17,6 +17,7 @@ import { queueReflection, reflectExperience, selectExperience } from './experien
 import { cleanupGenerationContext } from './generation-context.js';
 import { koobooClient } from './kooboo.js';
 import { autonomousActionStrategy, autonomousReady, autonomousWindowRemaining, canReplayGeneration, followupAccountState, isAutonomousRetry, nextAutonomousWindow, recordAutonomousAttempt } from './autonomy.js';
+import { inMaintenance } from '../updates/maintenance.js';
 export type Execute=(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal)=>Promise<void>;
 export class AutomationWorker{
   private timer?:ReturnType<typeof setInterval>;
@@ -46,7 +47,7 @@ export class AutomationWorker{
     this.lockHeld=true;this.stopping=false;this.store.recover();for(const task of this.store.tasks().filter(t=>t.status==='pending'&&!t.stopped)){if(this.vault.automation().followup.enabled)this.store.scheduleFollowup(task,this.vault.automation().followup);}this.timer=setInterval(()=>{void this.tick();},1000);this.timer.unref();void this.tick();
   }
   async tick(){
-    if(this.stopping||this.ticking)return;this.ticking=true;
+    if(this.stopping||this.ticking||inMaintenance(this.directory))return;this.ticking=true;
     try{
       const settings=this.vault.automation();if(!settings.enabled)return;
       for(const header of this.store.headers().filter(t=>t.optimization&&!['completed','stopped','planning'].includes(t.optimization.state)&&t.stopped&&!['following-up','pending','interrupted','cancelled','cancelling'].includes(t.status)&&!this.running.has(t.id))){

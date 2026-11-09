@@ -40,6 +40,7 @@ export class DiagnosticExports {
   private controllers = new Map<string, AbortController>();
   private running?: Promise<void>; private closing = false;
   readonly root: string;
+  get busy() { return Boolean(this.running) || this.pending.length > 0; }
   constructor(readonly store: AutomationStore, readonly vault: Vault, readonly directory: string, private deps: DiagnosticDependencies = {}) {
     this.root = resolve(directory, 'diagnostic-exports'); mkdirSync(this.root, { recursive: true, mode: 0o700 });
     for (const entry of readdirSync(this.root, { withFileTypes: true })) {
@@ -79,7 +80,7 @@ export class DiagnosticExports {
   }
   private redactor() {
     const config = this.vault.get();
-    return exportRedactor([config.model.apiKey, this.vault.credentials.readToken, this.vault.credentials.ingestToken, ...config.environments.flatMap(env => [env.token, env.delivery?.token || ''])]);
+    return exportRedactor([config.model.apiKey, config.updateSource?.token || '', this.vault.credentials.readToken, this.vault.credentials.ingestToken, ...config.environments.flatMap(env => [env.token, env.delivery?.token || ''])]);
   }
   cancel(id: string) {
     const job = this.jobs.get(id); if (!job || terminal(job)) throw new Conflict('没有正在执行的导出');

@@ -11,13 +11,14 @@ export async function api<T>(path: string, options: RequestInit = {}): Promise<T
   if (!response.ok) { if (response.status === 401) { platform.ready = false; platform.online = false; platform.error = result.error || '无法连接本机工作区，请重试连接'; } throw new Error(result.error || `请求失败：${response.status}`); }
   return result as T;
 }
-export const platform = reactive({ settings: null as PublicSettings | null, online: false, ready: false, browserReady: false, error: '' });
+export const platform = reactive({ settings: null as PublicSettings | null, online: false, ready: false, browserReady: false, version: '', error: '' });
 export async function initialize(): Promise<void> {
   platform.error = '';
   try {
     await api('/session');
     platform.settings = await api<PublicSettings>('/settings');
-    const health = await api<{ browserReady: boolean }>('/health');
+    const health = await api<{ browserReady: boolean; version: string }>('/health');
+    platform.version = health.version;
     platform.browserReady = health.browserReady;
     platform.online = true;
     platform.ready = true;

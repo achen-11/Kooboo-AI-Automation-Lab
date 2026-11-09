@@ -20,6 +20,7 @@ import {
 } from './lib/pipeline.js';
 import { captureErrorMessage, safeErrorMessage } from './lib/capture-error.js';
 import type { CaptureCheckpoint, EvaluationStep, StepId } from '../shared/types.js';
+import { inMaintenance } from './updates/maintenance.js';
 
 export type Dependencies = {
   agent: typeof runEvaluationAgent;
@@ -56,16 +57,17 @@ export class Worker {
     await this.running;
   }
   async tick() {
-    if (this.running || this.stopping) return;
+    if (this.running || this.stopping || inMaintenance(this.directory)) return;
     this.running = this.execute();
     try { await this.running; }
     catch (error) { console.error('后台任务调度失败：' + safeErrorMessage(error)); }
     finally { this.running = undefined; }
   }
+  get busy() { return Boolean(this.running); }
   private async execute() {
     const { store, vault, artifacts } = this;
     const settings = vault.get();
-    if (settings.paused) return;
+    if (settings.paused || inMaintenance(this.directory)) return;
     const owner = randomUUID();
     const job = store.claim(owner);
     if (!job) return;

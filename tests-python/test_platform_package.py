@@ -3,6 +3,9 @@ import importlib.util
 from pathlib import Path
 import tempfile
 import unittest
+import json
+import subprocess
+import sys
 
 SPEC = importlib.util.spec_from_file_location('platform_package', Path(__file__).resolve().parents[1] / 'scripts/package-platform.py')
 package = importlib.util.module_from_spec(SPEC)
@@ -64,6 +67,31 @@ class PlatformPackageTests(unittest.TestCase):
         (self.root / 'tsconfig.server.build.json').unlink()
         with self.assertRaisesRegex(RuntimeError, '缺少交付源码'):
             package.collect_sources(self.root)
+
+    def test_update_manifest_binds_archive_and_collection_runtime(self):
+        sources = {'package-lock.json': json.dumps({'version': '0.5.0'}).encode(),
+                   'engines/site-harvest/requirements.lock': b'locked-python-dependencies'}
+        manifest = package.update_manifest(sources, '0.5.0', 'a' * 40,
+                                           '2026-11-09T00:00:00Z', 'app.zip', b'archive')
+        self.assertEqual(manifest['archive']['sha256'], package.sha256(b'archive'))
+        self.assertEqual(manifest['archive']['size'], 7)
+        self.assertEqual(manifest['collectionLockSha256'], package.sha256(sources['engines/site-harvest/requirements.lock']))
+        self.assertEqual(manifest['minLauncher'], 1)
+
+    def test_update_manifest_rejects_version_drift_and_prerelease(self):
+        sources = {'package-lock.json': b'{"version":"0.4.0"}'}
+        with self.assertRaisesRegex(RuntimeError, '版本不一致'):
+            package.update_manifest(sources, '0.5.0', 'a' * 40, '', 'app.zip', b'')
+        with self.assertRaisesRegex(RuntimeError, '正式版本号'):
+            package.update_manifest(sources, '0.5.0-beta', 'a' * 40, '', 'app.zip', b'')
+
+    def test_dirty_snapshot_cannot_be_an_online_update(self):
+        result = subprocess.run([sys.executable, str(Path(package.__file__)), '--update',
+                                 '--allow-dirty', '--output', str(self.root / 'test.zip')],
+                                capture_output=True, text=True)
+        self.assertNotEqual(result.returncode, 0)
+        self.assertIn('不接受', result.stderr)
+        self.assertFalse((self.root / 'test.zip').exists())
 
 
 if __name__ == '__main__':

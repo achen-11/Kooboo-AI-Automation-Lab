@@ -11,7 +11,7 @@ const vault = new Vault(directory);
 const store = new Store(resolve(directory, 'database.sqlite'));
 const automationStore = new AutomationStore(store.db, value => {
   const settings = vault.get();
-  for (const secret of [settings.model.apiKey, ...settings.environments.flatMap(env => [env.token, env.delivery?.token || ''])]) {
+  for (const secret of [settings.model.apiKey, settings.updateSource?.token || '', ...settings.environments.flatMap(env => [env.token, env.delivery?.token || ''])]) {
     if (secret) value = value.replaceAll(secret, '[已隐藏]');
   }
   return value.replace(/Bearer\s+[^\s"',;]+/gi, 'Bearer [已隐藏]');
@@ -32,6 +32,10 @@ process.on('message', (message: unknown) => {
   if (!message || typeof message !== 'object' || !('type' in message)) return;
   if (message.type === 'cancel' && 'id' in message && typeof message.id === 'string') automationWorker.cancel(message.id);
   if (message.type === 'stop') void stop();
+  if (message.type === 'quiesce' && 'id' in message) {
+    // The persisted maintenance marker is already visible before this event-loop barrier.
+    send({ type: 'quiesced', id: message.id, active: automationWorker.ownedIds().length + Number(worker.busy) });
+  }
 });
 process.on('disconnect', () => { void stop(); });
 for (const event of ['SIGTERM', 'SIGINT'] as const) process.on(event, () => { void stop(); });

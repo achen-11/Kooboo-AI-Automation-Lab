@@ -6,6 +6,7 @@ import { settingsSchema } from './validation.js';
 import { Conflict } from './store.js';
 import type { KoobooConnectionInput } from '../../shared/kooboo-auth.js';
 import { defaultAutomationSettings, defaultFollowupSettings, defaultOptimizationPolicy, type AutomationSettings } from '../../shared/automation.js';
+import { defaultUpdateRepository, type UpdateSource } from '../../shared/update.js';
 
 export class Vault {
   private key: Buffer;
@@ -47,7 +48,7 @@ export class Vault {
   get(): RuntimeSettings { this.refresh(); return structuredClone({ ...this.current, execution: this.current.execution || { timeoutSeconds: 300, captureAttempts: 2 } }); }
   public(): PublicSettings {
     this.refresh();
-    const { model, environments, ...rest } = this.current;
+    const { model, environments, updateSource: _updateSource, ...rest } = this.current;
     return { ...rest, execution: this.current.execution || { timeoutSeconds: 300, captureAttempts: 2 }, model: { endpoint: model.endpoint, name: model.name, hasApiKey: Boolean(model.apiKey) }, environments: environments.map(({ token, delivery, ...env }) => ({ ...env, hasToken: Boolean(token),...(delivery?{delivery:(({token,targetEnvironmentId:_legacyTarget,...policy})=>({...policy,hasToken:!!token}))(delivery)}:{}) })), credentials: this.credentials };
   }
   importInitial(settings: unknown, credentials: PublicSettings['credentials']): void {
@@ -63,6 +64,7 @@ export class Vault {
     this.refresh();
     this.current = {
       automation: this.current.automation,
+      updateSource: this.current.updateSource,
       threshold: input.threshold, paused: input.paused, execution: input.execution,
       model: { endpoint: input.model.endpoint.replace(/\/$/, ''), name: input.model.name, apiKey: input.model.clearKey ? '' : input.model.apiKey || this.current.model.apiKey },
       environments: input.environments.map((env) => ({
@@ -89,6 +91,13 @@ export class Vault {
   automation(): AutomationSettings {
     const saved = this.get().automation;
     return structuredClone({ ...defaultAutomationSettings, ...saved, completeness:{...defaultAutomationSettings.completeness!,...saved?.completeness}, learning:{...defaultAutomationSettings.learning!,...saved?.learning}, optimization: {...defaultOptimizationPolicy,...saved?.optimization}, followup: { ...defaultFollowupSettings, ...saved?.followup }, prompts: { ...defaultAutomationSettings.prompts, ...saved?.prompts } });
+  }
+  updateSource(): UpdateSource { return structuredClone(this.get().updateSource || { repository: defaultUpdateRepository, token: '' }); }
+  setUpdateSource(input: UpdateSource & { clearToken: boolean }) {
+    this.refresh();
+    const old = this.current.updateSource;
+    this.current.updateSource = { repository: input.repository, token: input.clearToken ? '' : input.token || (old?.repository === input.repository ? old.token : '') };
+    this.persist();
   }
   updateAutomation(input: AutomationSettings): AutomationSettings {
     this.refresh();

@@ -4,6 +4,8 @@
 
 同事首次安装请从 [部署与交接指南](docs/DEPLOYMENT_AND_HANDOFF.md) 开始，覆盖 Windows / macOS、Kooboo 与模型配置、单任务验证、更新备份及排障。仅打包当前平台可用 `python3 scripts/package-platform.py --output /tmp/kooboo-automation-lab.zip`；构建在临时目录完成，不携带个人运行数据。首次仍需联网安装依赖和 Chromium。
 
+带交付清单的 ZIP 通过 `npm start` 使用独立启动器。同事可点击侧栏版本号或“系统设置 → 检查更新”，从 GitHub Releases 手动下载、备份、切换并重启；开发源码目录只检查版本。发布命令、固定数据目录与失败恢复见 [在线更新说明](docs/manual-updates.md)。
+
 运行与验收边界、操作说明及新 API 见 [统一自动化说明](docs/UNIFIED_AUTOMATION.md)。新队列首次默认暂停，既有模型凭证与 Kooboo 环境配置保留。
 
 项目目录：`/Users/achen/Priv/Yardi/AI-App/Kooboo-AI-Automation-Lab`。完整讨论与决策见 [讨论记录](docs/automation-evaluation-discussion.md)。

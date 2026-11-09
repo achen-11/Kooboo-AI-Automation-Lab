@@ -160,3 +160,6 @@ vite.config.ts.timestamp-*
 
 # Reproducible documentation bundles; keep sources and previews tracked
 /docs/conversation-diagrams-*.zip
+
+# Local task-board requirements and review materials
+/docs/ai-app-requirements/task-board/

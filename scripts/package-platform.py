@@ -24,7 +24,8 @@ EXCLUDED_DIRS = {'.git', '.data', '.updates', '.private', '.venv', 'venv', 'node
 
 
 def allowed(path):
-    return (not any(part in EXCLUDED_DIRS for part in path.parts)
+    return (path.parts[:3] != ('docs', 'ai-app-requirements', 'task-board')
+            and not any(part in EXCLUDED_DIRS for part in path.parts)
             and not any(part.startswith('.env') for part in path.parts)
             and path.name not in {'master.key', 'settings.enc', 'kooboo.d.ts', '.DS_Store'}
             and path.suffix.lower() not in {'.db', '.sqlite', '.sqlite3', '.log', '.zip',

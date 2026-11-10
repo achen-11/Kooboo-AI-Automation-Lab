@@ -5,6 +5,7 @@ import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
 import type { RequirementManifest } from '../../shared/completeness.js';
 import type { AutomationStore } from './store.js';
 import { evaluationCapturePolicy } from './browser.js';
+import { templateTargetPath } from './template-path.js';
 
 export interface CaptureSlot { key:string; role:'target'|'reference'; viewport:'desktop'|'mobile'; url:string; requirements:string[] }
 const hash=(value:string|Buffer)=>createHash('sha256').update(value).digest('hex');
@@ -19,7 +20,7 @@ export function templateCapturePlan(task:AutomationTask,manifest:RequirementMani
   const slots=new Map<string,CaptureSlot>(),gaps:string[]=[];
   const add=(path:string,viewport:CaptureSlot['viewport'],requirement:string)=>{
     for(const role of ['target','reference'] as const){const base=role==='target'?target:reference;if(!base)continue;
-      try{const url=new URL(path,base);if(url.origin!==new URL(base).origin||url.username||url.password||!['https:','http:'].includes(url.protocol))throw new Error('outside origin');url.hash='';
+      try{const url=new URL(role==='target'?templateTargetPath(path,target,reference):path,base);if(url.origin!==new URL(base).origin||url.username||url.password||!['https:','http:'].includes(url.protocol))throw new Error('outside origin');url.hash='';
         const key=hash(JSON.stringify([evaluationCapturePolicy,task.versionId,sourceSnapshotId,role==='target'?[task.id,task.siteRevision]:null,role,viewport,url.href]));
         const slot=slots.get(key)||{key,role,viewport,url:url.href,requirements:[]};if(!slot.requirements.includes(requirement))slot.requirements.push(requirement);slots.set(key,slot);
       }catch{gaps.push(`${requirement} / ${role} / ${viewport}：路径无法在固定站点内解析：${path}`);}

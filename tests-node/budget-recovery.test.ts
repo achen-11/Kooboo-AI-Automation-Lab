@@ -1,15 +1,31 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { randomUUID } from 'node:crypto';
-import { mkdtempSync, rmSync } from 'node:fs';
+import { createHash, randomUUID } from 'node:crypto';
+import { mkdtempSync, mkdirSync, writeFileSync, rmSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { createApp } from '../server/app.js';
 import { Database } from '../server/runtime.js';
 import { RequestBudget, retainRequestReservation } from '../server/automation/request-budget.js';
-import { retainStoppedFollowupReservations } from '../server/automation/budget-recovery.js';
+import { retainStoppedFollowupReservations, correctUnsentPlanningAttempts } from '../server/automation/budget-recovery.js';
 import { ExperienceStore } from '../server/automation/experience-store.js';
 import { optimizationBudgetReason } from '../server/automation/optimization.js';
+
+test('only proven unsent current planning attempts can be corrected after the missing evidence is fixed',async()=>{
+  const f=await fixture();try{
+    const task=f.store.task(f.task.id)!;task.stage='optimization';task.optimization!.state='planning';task.followup!.tokens=0;task.followup!.threadId='';task.followup!.startedAt=Date.now();task.followup!.attempts=5;
+    const report=f.create(task.id);report.kind='evaluation';task.optimization!.reportId=report.id;
+    assert.throws(()=>correctUnsentPlanningAttempts(task,f.store,f.directory),/有效报告/);assert.equal(task.followup!.attempts,5);
+    const bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVQIHWP4z8DwHwAFgAI/ScLbtAAAAABJRU5ErkJggg==','base64');
+    const path=join(f.directory,'automation-runs',report.id,'evidence');mkdirSync(path,{recursive:true});
+    const artifacts=[];for(const viewport of ['desktop','mobile'] as const)for(const role of ['target','reference'] as const){const name=randomUUID()+'.png';writeFileSync(join(path,name),bytes);artifacts.push({id:randomUUID(),name,type:'image/png',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),role,viewport});}
+    report.report={summary:'independent',quality:'unverified',scores:[],assessments:[],issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},artifacts};f.store.put(report);
+    f.store.usage.record(task.id,{id:randomUUID(),source:'codex',stage:'followup',model:'test',endpoint:'https://test.invalid',startedAt:task.followup!.startedAt-100,endedAt:task.followup!.startedAt-10,status:'completed',basis:'request',raw:{input_tokens:1,output_tokens:1}});
+    const before=structuredClone(task.followup);correctUnsentPlanningAttempts(task,f.store,f.directory);assert.equal(task.followup!.attempts,0);
+    for(const key of ['budgetId','tokens','elapsedMs','startedAt'] as const)assert.equal(task.followup![key],before![key]);
+    task.followup!.attempts=5;f.reserve();correctUnsentPlanningAttempts(task,f.store,f.directory);assert.equal(task.followup!.attempts,5,'unknown real request must never be erased');
+  }finally{await f.close();}
+});
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'budget-recovery-'));
@@ -36,7 +52,7 @@ async function fixture() {
     store.usage.record(task.id, { id, source: 'codex', stage: 'followup', model: 'test', endpoint: 'https://models.invalid', startedAt: 1, endedAt: 2, status: state === 'unknown' ? 'failed' : 'unknown', basis: 'request', raw: null });
     return id;
   };
-  return { ...f, store, task, headers, create, reserve, policy, budget, async close() { await f.app.close(); rmSync(directory, { recursive: true, force: true }); } };
+  return { ...f, directory, store, task, headers, create, reserve, policy, budget, async close() { await f.app.close(); rmSync(directory, { recursive: true, force: true }); } };
 }
 
 test('manual resume retains stopped unknown and orphaned active reservations and preserves task identity and budgets', async () => {
@@ -66,6 +82,39 @@ test('manual resume retains stopped unknown and orphaned active reservations and
       assert.ok(next.state().spent > spent); assert.equal(next.state().requests, 2);
     } finally { await f.close(); }
   }
+});
+
+test('manual resume also retains stopped planning requests without requiring a followup budget',async()=>{
+  const f=await fixture();try{
+    const task=f.store.task(f.task.id)!;delete task.followup;f.store.put(task);
+    const budget=new RequestBudget(f.store.db,{key:'planning:'+task.id,runKey:task.id,maxTokens:1000000,maxRequests:80});
+    const id=randomUUID();budget.reserve(id,Buffer.from('{}'));budget.complete(id,null);
+    f.store.usage.record(task.id,{id,source:'codex',stage:'planning',model:'test',endpoint:'https://models.invalid',startedAt:1,endedAt:2,status:'failed',basis:'request',raw:null});
+    const spent=budget.state().spent;
+    const result=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/resume`,headers:f.headers});
+    assert.equal(result.statusCode,200,result.body);assert.equal(budget.state().unknown,0);assert.equal(budget.state().spent,spent);assert.equal(f.store.usage.summary(task.id).missing,1);
+  }finally{await f.close();}
+});
+
+test('resuming stopped template evaluation queues the executor without spending an exhausted followup window',async()=>{
+  const f=await fixture();try{
+    const task=f.store.task(f.task.id)!;task.kind='evaluation';task.scenario='site-template';task.followup!.attempts=task.followup!.policy.maxAttempts;f.store.put(task);
+    const token=f.store.evaluations.begin(task.id);
+    let result=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/resume`,headers:f.headers});assert.equal(result.statusCode,409);
+    f.store.evaluations.finish(task.id,token,false);
+    result=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/confirm-stopped`,headers:f.headers});assert.equal(result.statusCode,200,result.body);
+    result=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/resume`,headers:f.headers});assert.equal(result.statusCode,200,result.body);
+    const saved=f.store.task(task.id)!;assert.equal(saved.status,'queued');assert.equal(saved.followup!.attempts,saved.followup!.policy.maxAttempts);assert.equal(saved.followup!.tokens,123);assert.equal(saved.followup!.state,'resolved');
+  }finally{await f.close();}
+});
+
+test('paused queue permits confirming an exited evaluation before its queued recovery guard has run',async()=>{
+  const f=await fixture();try{
+    const task=f.store.task(f.task.id)!;task.kind='evaluation';task.scenario='site-template';task.status='following-up';task.stopped=false;task.followup!.state='queued';task.followup!.executionStopped=false;
+    const token=f.store.evaluations.begin(task.id);f.store.evaluations.finish(task.id,token,false);f.store.put(task);
+    const confirmed=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/confirm-stopped`,headers:f.headers});assert.equal(confirmed.statusCode,200,confirmed.body);assert.equal(f.store.task(task.id)!.status,'interrupted');assert.equal(f.store.task(task.id)!.stopped,true);
+    const resumed=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/resume`,headers:f.headers});assert.equal(resumed.statusCode,200,resumed.body);assert.equal(f.store.task(task.id)!.status,'queued');assert.equal(f.store.task(task.id)!.followup!.tokens,123);
+  }finally{await f.close();}
 });
 
 test('retained estimates survive restart and still enforce token and request caps; real usage can reconcile them', () => {

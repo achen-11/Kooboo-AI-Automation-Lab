@@ -19,6 +19,7 @@ import { koobooClient } from './kooboo.js';
 import { autonomousActionStrategy, autonomousReady, autonomousWindowRemaining, canReplayGeneration, followupAccountState, isAutonomousRetry, nextAutonomousWindow, recordAutonomousAttempt } from './autonomy.js';
 import { inMaintenance } from '../updates/maintenance.js';
 import { rememberSiteRetry, siteRetryBlocked } from './retry-guard.js';
+import { optimizationEvidence } from './optimization-evidence.js';
 export type Execute=(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal)=>Promise<void>;
 export class AutomationWorker{
   private timer?:ReturnType<typeof setInterval>;
@@ -208,8 +209,9 @@ export class AutomationWorker{
     if(overBudget){task.stopped=followup.executionStopped;this.interrupt(task,'AI 跟进已达到配置的次数、时间或 token 预算，当前流程仍未完成。',['查看 AI 跟进记录和原始问题；补齐条件或调整预算后点击“AI 接管 / 恢复”。'],followup.observations);return;}
     const monotonicStart=performance.now(),windowAtStart=task.autonomy?.window.index;const activeStart=Date.now();followup.activeStartedAt=activeStart;followup.activeHeartbeatAt=activeStart;followup.activeElapsedMs=0;
     const heartbeat=setInterval(()=>{followup.activeHeartbeatAt=Date.now();followup.activeElapsedMs=Math.max(0,Math.round(performance.now()-monotonicStart));this.store.put(task);},1000);heartbeat.unref();
-    const timer=setTimeout(()=>controller.abort(new Error('AI 跟进达到本轮时间预算')),Math.min(remaining,5*60000));timer.unref();
+    const timer=setTimeout(()=>controller.abort(new Error('AI 跟进达到累计时间预算')),remaining);timer.unref();
     try{
+      if(task.optimization?.state==='planning')optimizationEvidence(task,this.store,this.directory);
       await selectExperience(task,'followup',this.store,this.vault,this.directory,controller.signal);
       followup.attempts++;this.store.put(task);this.store.event(task.id,`AI 跟进第 ${followup.attempts} 次，阶段：${task.stage||task.kind}`);
       const action=await this.followupExecute(task,this.store,this.vault,this.directory,controller.signal);

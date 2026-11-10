@@ -9,5 +9,6 @@ export class EvaluationExecutions {
   begin(taskId:string){const value:EvaluationExecution={taskId,token:randomUUID(),ownerPid:process.pid,threadId:'',startedAt:Date.now(),endedAt:null,state:'running'};this.db.prepare('INSERT OR REPLACE INTO auto_evaluation_executions VALUES(?,?)').run(taskId,JSON.stringify(value));return value.token;}
   thread(taskId:string,token:string,threadId:string){const value=this.get(taskId);if(value?.token===token){value.threadId=threadId;this.db.prepare('UPDATE auto_evaluation_executions SET json=? WHERE task_id=?').run(JSON.stringify(value),taskId);}}
   finish(taskId:string,token:string,confirmed:boolean){const value=this.get(taskId);if(value?.token===token){value.state=confirmed?'stopped':'unconfirmed';value.endedAt=confirmed?Date.now():null;this.db.prepare('UPDATE auto_evaluation_executions SET json=? WHERE task_id=?').run(JSON.stringify(value),taskId);}}
+  confirmStopped(taskId:string){const value=this.get(taskId);if(value)this.finish(taskId,value.token,true);}
   observation(taskId:string){return {executor:'codex-evaluation',taskId,execution:this.get(taskId)||null,events:this.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT 8').all(taskId).reverse().map(row=>({...row,message:String(row.message).slice(0,1500)}))};}
 }

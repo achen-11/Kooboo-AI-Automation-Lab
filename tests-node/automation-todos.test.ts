@@ -16,6 +16,7 @@ import { AutomationWorker } from '../server/automation/worker.js';
 import { runInNewContext } from 'node:vm';
 import { GenerationContextStore, generationInputLimits } from '../server/automation/generation-context.js';
 import { GenerationInputError } from '../server/automation/errors.js';
+import { createRequire } from 'node:module';
 
 const time=(s:string)=>Date.parse(s+'+08:00');
 const obs=(patch:Partial<UsageObservation>={}):UsageObservation=>({id:'request',source:'codex',stage:'evaluation',model:'deepseek-flash-1017',endpoint:'https://api.deepseek.com',startedAt:time('2026-11-09T09:30:00'),endedAt:time('2026-11-09T09:31:00'),status:'completed',basis:'request',raw:{input_tokens:1000000,output_tokens:100000,input_tokens_details:{cached_tokens:200000},output_tokens_details:{reasoning_tokens:50000}},...patch});
@@ -192,6 +193,68 @@ test('a completed generation receipt still allows an explicit continuation in th
     assert.equal(delivered?.conversationId,conversationId);assert.match(delivered?.text||'',/Continue the original homepage/);assert.notEqual(delivered?.id,previousDelivery);assert.equal(task.generation.next,undefined);assert.equal(task.generation.deliveryState,'completed');assert.equal(task.stage,'handoff');assert.equal(closed,1);assert.equal(f.automationStore.sites().length,1);
     await executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000),async()=>{throw new Error('A retry without an explicit continuation must not redeliver');});
     assert.equal(closed,1);
+  }finally{await close(server);await f.close();}
+});
+
+test('repair batches resume accepted sends without replay and do not hand off before all batches complete',async()=>{
+  const {executeGeneration}=await import('../server/automation/generator.js'),{PNG}=createRequire(import.meta.url)('playwright-core/lib/utilsBundle');const f=await fixture();let origin='';
+  const server=createServer((req,res)=>{res.setHeader('Content-Type','application/json');res.end(req.url?.startsWith('/_api/v2/Site/List')?JSON.stringify([{siteId:f.site.siteId,homePageLink:origin+'/'}]):'true');});origin=await listen(server);
+  try{
+    const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
+    const report=f.done(),task=f.create('generation'),conversationId=randomUUID();task.scenario='site-template';
+    const bytes=PNG.sync.write({width:1,height:43009,data:Buffer.alloc(43009*4,255)}),name=randomUUID()+'.png';
+    mkdirSync(join(f.directory,'automation-runs',report.id,'evidence'),{recursive:true});writeFileSync(join(f.directory,'automation-runs',report.id,'evidence',name),bytes);
+    report.report!.artifacts=[{id:randomUUID(),name,type:'image/png',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')}];f.automationStore.put(report);
+    task.repairEvidence={reportId:report.id,files:[name]};task.generation={prepared:true,conversationId,next:{action:'continue',reason:'repair',message:'Repair evidence regions.',evidence:[]}};
+    const deliveries:any[]=[];let failSecond=true;
+    const openSession:typeof import('../server/automation/generation-session.js').generationSession=async()=>({
+      snapshot:async()=>{if(failSecond&&deliveries.length===2)throw new Error('worker stopped after second accepted delivery');const id=deliveries.at(-1)?.id;return {version:1,taskId:task.id,siteId:f.site.siteId,conversationId,runId:'run-'+deliveries.length,ready:true,imageInput:true,running:false,state:'completed',observedAt:Date.now(),pending:null,context:[],outcome:{conversationId,runId:'run-'+deliveries.length,status:'completed',time:Date.now()},delivery:id?{id,state:'accepted',conversationId}:undefined};},
+      deliver:async input=>{deliveries.push(input);return {id:input.id,state:'accepted',conversationId};},close:async()=>{},
+    });
+    await assert.rejects(executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(5000),openSession),/worker stopped/);
+    assert.equal(task.generation.repairBatch?.completed,1);assert.equal(task.stage,'generation');assert.deepEqual(deliveries.map(i=>i.images.length),[20,2]);assert.match(deliveries[0].text,/此批仅研读附件/);assert.match(deliveries[1].text,/最后一批/);
+    const restored=f.automationStore.task(task.id)!;failSecond=false;
+    await executeGeneration(restored,f.automationStore,f.vault,f.directory,AbortSignal.timeout(5000),openSession);
+    assert.equal(deliveries.length,2);assert.equal(restored.generation!.repairBatch?.completed,2);assert.equal(restored.stage,'handoff');assert.equal(f.automationStore.sites().length,1);
+  }finally{await close(server);await f.close();}
+});
+
+test('failed repair conversation handoff retains the old history and reuses a planned replacement after transport failure',async()=>{
+  const f=await fixture(),old=randomUUID();let origin='',failCreate=true,createCalls=0;const conversations=[{id:old,path:'/',title:'Original',modelSelection:{provider:'deepseek',model:'flash'}}];
+  const server=createServer(async(req,res)=>{res.setHeader('Content-Type','application/json');if(req.url?.startsWith('/_api/v2/AIConversation/List'))res.end(JSON.stringify(conversations));else if(req.url?.startsWith('/_api/v2/AIConversation/Create')){const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));const created=JSON.parse(Buffer.concat(chunks).toString());conversations.push(created);createCalls++;if(failCreate){res.statusCode=503;res.end('{}');}else res.end(JSON.stringify(created));}else res.end('true');});origin=await listen(server);
+  try{
+    const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
+    const task=f.create('generation');task.scenario='site-template';task.status='interrupted';task.stopped=true;task.generation={prepared:true,conversationId:old,state:'failed',runId:'old-run',deliveryId:randomUUID(),deliveryState:'accepted'};task.repairEvidence={reportId:randomUUID(),files:[]};f.automationStore.put(task);
+    const url=`/api/automation/tasks/${task.id}/generation-context/handoff`;
+    let result=await f.app.inject({method:'POST',url,headers:f.headers});assert.equal(result.statusCode,500);const planned=f.automationStore.task(task.id)!.generation!.conversationHandoff!;
+    assert.equal(f.automationStore.task(task.id)!.generation!.conversationId,old);
+    failCreate=false;result=await f.app.inject({method:'POST',url,headers:f.headers});assert.equal(result.statusCode,200,result.body);
+    const saved=f.automationStore.task(task.id)!;assert.equal(saved.generation!.conversationId,planned.to);assert.equal(saved.generation!.deliveryId,undefined);assert.equal(saved.status,'queued');assert.equal(saved.generatedSiteId,task.generatedSiteId);assert.equal(createCalls,1);assert.equal(conversations.length,2);assert.equal(conversations[0].id,old);
+    result=await f.app.inject({method:'POST',url,headers:f.headers});assert.equal(result.statusCode,409);
+  }finally{await close(server);await f.close();}
+});
+
+test('a stopped queued repair can replace a broken waiting history but cannot bypass an ordinary pending question',async()=>{
+  const f=await fixture(),old=randomUUID();let createCalls=0;
+  const server=createServer(async(req,res)=>{
+    res.setHeader('Content-Type','application/json');
+    if(req.url?.startsWith('/_api/v2/AIConversation/List'))return res.end(JSON.stringify([{id:old,path:'/',title:'Original'}]));
+    if(req.url?.startsWith('/_api/v2/AIConversation/Create')){
+      const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));createCalls++;return res.end(Buffer.concat(chunks));
+    }
+    res.end('true');
+  });
+  const origin=await listen(server);
+  try{
+    const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
+    const task=f.create('generation');task.scenario='site-template';task.status='queued';task.stopped=true;
+    task.generation={prepared:true,conversationId:old,state:'waiting',pending:{callId:'pending',name:'ask_user_input',args:{}},next:{action:'answer',reason:'answer previous question',evidence:[],message:'Continue'}};
+    task.repairEvidence={reportId:randomUUID(),files:[]};f.automationStore.put(task);
+    const url=`/api/automation/tasks/${task.id}/generation-context/handoff`;
+    assert.equal((await f.app.inject({method:'POST',url,headers:f.headers})).statusCode,409);assert.equal(createCalls,0);
+    task.error='The reasoning_content in the thinking mode must be passed back to the API';f.automationStore.put(task);
+    const result=await f.app.inject({method:'POST',url,headers:f.headers});assert.equal(result.statusCode,200,result.body);
+    const saved=f.automationStore.task(task.id)!;assert.notEqual(saved.generation!.conversationId,old);assert.equal(saved.generation!.pending,undefined);assert.equal(saved.generation!.next!.action,'continue');assert.equal(saved.generatedSiteId,task.generatedSiteId);assert.equal(createCalls,1);
   }finally{await close(server);await f.close();}
 });
 

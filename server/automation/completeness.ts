@@ -9,6 +9,7 @@ import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { localDecision } from './local-decision.js';
 import { httpRead, koobooClient } from './kooboo.js';
+import { templateTargetPath } from './template-path.js';
 import { readMaterial } from './materials.js';
 import { Conflict } from '../lib/store.js';
 import { migrationBaselineSchema } from './migration-contract.js';
@@ -36,6 +37,7 @@ export const manifestInput=z.object({
     paths:z.array(z.string().max(2000)).max(5000), expectedCount:z.number().int().nonnegative().nullable(),
     expectedKeys:z.array(z.string().max(2000)).max(20000).optional(), samples:z.array(z.string().max(2000)).max(100).optional(),
     dataIdentity:dataIdentitySchema.optional(),
+    records:z.object({storage:z.enum(['content','sqlite','commerce']),container:z.string().trim().min(1).max(200).optional(),keyField:z.string().trim().min(1).max(200),requiredFields:z.array(z.string().trim().min(1).max(200)).max(100).optional()}).strict().describe('可选的程序记录对账契约。只有已核实目标存储映射时声明：content.container为FolderId，sqlite.container为表名，commerce为产品集合；keyField必须能逐条精确对应来源expectedKeys，requiredFields为非空字段。不得根据标题或目标数量猜测，未知时省略，交给独立核实。程序计数不替代语义、关系、模板与交互判断。').optional(),
     viewports:z.array(viewport).min(1).max(3),
   }).strict()).min(1).max(1000), evidence:z.array(z.string()).max(200), migration:migrationBaselineSchema.optional(),
 }).strict().superRefine((v,c)=>{
@@ -44,6 +46,8 @@ export const manifestInput=z.object({
     if(['page','template'].includes(i.kind)&&(!i.paths.length||!i.viewports.includes('desktop')||!i.viewports.includes('mobile')))c.addIssue({code:'custom',message:'页面及动态模板需声明路径并覆盖 PC / 移动端'});
     if(i.expectedKeys&&new Set(i.expectedKeys).size!==i.expectedKeys.length)c.addIssue({code:'custom',message:'预期记录标识不能重复'});
     if(i.dataIdentity&&i.kind!=='data')c.addIssue({code:'custom',message:'仅data交付项可声明dataIdentity计量域'});
+    if(i.records&&(i.kind!=='data'||i.dataIdentity&&i.dataIdentity.kind!=='page'||i.records.storage!=='commerce'&&!i.records.container))c.addIssue({code:'custom',message:'程序记录对账需data页面记录计量域及明确存储位置'});
+    if(i.records?.storage==='content'&&!/^(?:[a-fA-F0-9]{32}|[a-fA-F0-9-]{36})$/.test(i.records.container||''))c.addIssue({code:'custom',message:'content记录契约需明确有效FolderId'});
     if(i.dataIdentity?.kind==='relations'){
       const identity=i.dataIdentity,refs=[...identity.parentRequirementIds,...identity.childRequirementIds];
       if(new Set(identity.parentRequirementIds).size!==identity.parentRequirementIds.length||new Set(identity.childRequirementIds).size!==identity.childRequirementIds.length)c.addIssue({code:'custom',message:'关系计量域的父子清单引用不能重复'});
@@ -74,6 +78,7 @@ export const manifestInput=z.object({
 export const checksSchema=z.array(z.object({id:z.string(),status:z.enum(['verified','partial','missing','unverified','excluded']),reason:z.string().min(1).max(12000),evidence:z.array(z.string()).max(1000),checkedViewports:z.array(viewport).max(3),actualCount:z.number().int().nonnegative().nullable(),sampledPaths:z.array(z.string()).max(5000),checkedKeys:z.array(z.string()).max(20000)}).strict()).max(1000);
 /** Shared by persistence and host verification of append-only frozen manifests. */
 export function assertRequirementDataIdentityPreserved(previous:Requirement,next:Requirement):void {
+  if(previous.records&&JSON.stringify(previous.records)!==JSON.stringify(next.records))throw new Error('不得变更已固定的程序记录对账契约');
   const old=previous.dataIdentity,current=next.dataIdentity;
   // Legacy domains can be explicitly clarified once; the host must reconcile that
   // clarification against frozen source evidence before certifying target coverage.
@@ -96,9 +101,9 @@ export class ManifestStore {
     this.store.db.prepare('INSERT INTO auto_requirement_manifests VALUES(?,?,?,?)').run(value.id,task.id,value.revision,JSON.stringify(value));task.requirementsId=value.id;this.store.put(task);return value;
   });}
 }
-export function validateCompleteness(raw:unknown,manifest:RequirementManifest,files:MaterialFile[],observations:Record<string,{url:string;role:string;viewport:string}>={},targetBaseUrl?:string,pageAliases:Readonly<Record<string,string>>={}):CompletenessReport {
+export function validateCompleteness(raw:unknown,manifest:RequirementManifest,files:MaterialFile[],observations:Record<string,{url:string;role:string;viewport:string}>={},targetBaseUrl?:string,pageAliases:Readonly<Record<string,string>>={},sourceBaseUrl?:string):CompletenessReport {
   const checks=checksSchema.parse(raw),names=new Set(files.map(f=>f.name));
-  const samplePath=(value:string)=>{if(Object.hasOwn(pageAliases,value)){const path=pageAliases[value];if(!path.startsWith('/')||path.startsWith('//'))throw new Error('冻结页面样本别名不是有效路径：'+value);return path;}if(/^u\d+$/.test(value))throw new Error('未知或歧义的采集页面样本ID：'+value);return value;};
+  const samplePath=(value:string)=>{if(Object.hasOwn(pageAliases,value)){const path=pageAliases[value];if(!path.startsWith('/')||path.startsWith('//'))throw new Error('冻结页面样本别名不是有效路径：'+value);return path;}if(/^u\d+$/.test(value))throw new Error('未知或歧义的采集页面样本ID：'+value);return targetBaseUrl&&sourceBaseUrl?templateTargetPath(value,targetBaseUrl,sourceBaseUrl):value;};
   const pathKey=(value:string)=>{const parsed=new URL(value,targetBaseUrl||'https://placeholder.test');return parsed.origin+parsed.pathname+parsed.search;};
   if(checks.length!==manifest.items.length||new Set(checks.map(c=>c.id)).size!==checks.length||checks.some(c=>!manifest.items.some(i=>i.id===c.id)))throw new Error('完整度结果必须逐项对应冻结清单，不得删除遗漏项');
   for(const check of checks){
@@ -111,8 +116,9 @@ export function validateCompleteness(raw:unknown,manifest:RequirementManifest,fi
       if(['data','template','implementation'].includes(item.kind)&&!check.evidence.some(n=>n.startsWith('implementation-')&&n.endsWith('.json')))throw new Error('动态内容和实现规范必须有只读后台证据，截图不能证明实现');
       if(['page','template'].includes(item.kind)){
         const sampledPaths=check.sampledPaths.map(samplePath),sampledKeys=new Set(sampledPaths.map(pathKey));
-        if(!sampledPaths.length||item.kind==='page'&&item.paths.some(p=>!sampledKeys.has(pathKey(p)))||item.kind==='template'&&(!item.samples?.length||item.samples.some(p=>!sampledKeys.has(pathKey(samplePath(p))))))throw new Error('静态页面应覆盖清单路径；动态模板需声明样本及边界路径');
-        for(const path of item.kind==='page'?item.paths:sampledPaths)for(const v of item.viewports.filter(v=>v!=='business')){
+        const expectedPaths=(item.kind==='page'?item.paths:item.samples||[]).map(samplePath),missingPaths=expectedPaths.filter(p=>!sampledKeys.has(pathKey(p)));
+        if(!sampledPaths.length||item.kind==='page'&&missingPaths.length||item.kind==='template'&&(!expectedPaths.length||missingPaths.length))throw new Error(`静态页面应覆盖清单路径；动态模板需声明样本及边界路径；交付项 ${item.id}；缺少 sampledPaths：${JSON.stringify(missingPaths)}`);
+        for(const path of item.kind==='page'?expectedPaths:sampledPaths)for(const v of item.viewports.filter(v=>v!=='business')){
           if(!check.evidence.some(n=>{const f=files.find(f=>f.name===n),o=observations[n];if(!f||!o||f.role!=='target'||o.role!=='target'||o.viewport!==v||f.viewport!==v||f.type!=='image/png')return false;try{const expected=new URL(path,targetBaseUrl||'https://placeholder.test'),actual=new URL(o.url);return (!targetBaseUrl||expected.origin===new URL(targetBaseUrl).origin&&actual.origin===expected.origin&&!actual.username&&!actual.password)&&expected.pathname===actual.pathname&&expected.search===actual.search;}catch{return false;}}))throw new Error('页面路径 '+path+' 缺少对应 '+v+' 的真实截图与 URL 观察，不能复用首页截图证明全部页面');
         }
       }
@@ -126,8 +132,12 @@ export function validateCompleteness(raw:unknown,manifest:RequirementManifest,fi
 }
 
 /** Source-verified read-only allowlist. Commerce list uses a fixed query-only POST body. */
+export const implementationInput=z.object({kind:z.enum(['pages','routes','views','codes','page','view','code','folders','content','contentItem','tables','rows','products','product','categories']),id:z.string().regex(/^(?:[a-fA-F0-9]{32}|[a-fA-F0-9-]{36})$/).optional(),table:z.string().min(1).max(200).optional(),page:z.number().int().min(1).max(100000).default(1)}).strict().superRefine((input,ctx)=>{
+  if(['page','view','code','content','contentItem','product'].includes(input.kind)&&!input.id)ctx.addIssue({code:'custom',message:'读取此类实现需要 id'});
+  if(input.kind==='rows'&&!input.table)ctx.addIssue({code:'custom',message:'读取数据需要 table'});
+});
 export async function inspectImplementation(task:AutomationTask,store:AutomationStore,vault:Vault,signal:AbortSignal,raw:unknown){
-  const input=z.object({kind:z.enum(['pages','routes','views','codes','page','view','code','folders','content','contentItem','tables','rows','products','product','categories']),id:z.string().regex(/^(?:[a-fA-F0-9]{32}|[a-fA-F0-9-]{36})$/).optional(),table:z.string().min(1).max(200).optional(),page:z.number().int().min(1).max(100000).default(1)}).strict().parse(raw);
+  const input=implementationInput.parse(raw);
   const paths:Record<string,string>={pages:'Page/All',routes:'Route/List',views:'View/List',codes:'Code/List',page:'Page/Get',view:'View/Get',code:'Code/Get',folders:'ContentFolder/List',content:'TextContent/ByFolder',contentItem:'TextContent/Get',tables:'Sqlite/Tables',rows:'Sqlite/Data',products:'productManagement/PagingList',product:'productManagement/GetEdit',categories:'ProductCategory/List'};
   if(['page','view','code','content','contentItem','product'].includes(input.kind)&&!input.id)throw new Error('读取此类实现需要 id');if(input.kind==='rows'&&!input.table)throw new Error('读取数据需要 table');
   const site=task.generatedSiteId&&store.site(task.generatedSiteId);if(!site)throw new Error('无生成站');
@@ -136,13 +146,14 @@ export async function inspectImplementation(task:AutomationTask,store:Automation
   return store.sanitize({request:input,value,capturedAt:Date.now(),note:'仅代表当前分页；总量、逐条标识及路由对应需完整核对。权限或能力不足需标记未验证。'});
 }
 export function evidenceWriter(work:string,artifacts:MaterialFile[],role:'content'|'target',prefix:string,checkpoint?:(file:MaterialFile)=>void){mkdirSync(resolve(work,'evidence'),{recursive:true,mode:0o700});return (value:unknown)=>{const name=prefix+'-'+randomUUID()+'.json',bytes=Buffer.from(JSON.stringify(value));writeFileSync(resolve(work,'evidence',name),bytes,{mode:0o600});const file:MaterialFile={id:randomUUID(),name,type:'application/json',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),role};artifacts.push(file);checkpoint?.(file);return {evidence:name,result:value};};}
-export function sourceReader(task:AutomationTask,store:AutomationStore,directory:string,write:(value:unknown)=>unknown){
+export function sourceReader(task:AutomationTask,store:AutomationStore,directory:string,write:(value:unknown)=>unknown,options:{bodyCharacters?:number}={}){
   const input=effectiveCollectionInput(task,store,directory)!;
   return async(raw:unknown,signal:AbortSignal)=>{
     const spec=z.object({kind:z.enum(['source','material']),role:z.enum(['content','reference']).optional(),url:z.string().max(2000).optional(),id:z.string().optional()}).strict().parse(raw);
     if(spec.kind==='material'){const file=input.files.find(f=>f.id===spec.id);if(!file)throw new Error('资料不存在');const bytes=readMaterial(directory,file);if(/text|json|xml|csv|svg/.test(file.type)||/\.(md|txt|json|csv|xml|svg)$/i.test(file.name)){const text=bytes.toString('utf8');return write({kind:'material',id:file.id,name:file.name,text:text.slice(0,80000),truncated:text.length>80000});}const record=write({kind:'material',id:file.id,name:file.name,type:file.type,sha256:file.sha256,size:bytes.length});return {...record as object,...(file.type.startsWith('image/')?{imagePath:resolve(directory,'materials',file.id),note:'需实际查看图片后提炼要求'}:{filePath:resolve(directory,'materials',file.id),note:'使用本地只读工具检查原始文件，无法读取的资料需明确标记未验证'})};}
     const base=spec.role==='reference'?input.referenceUrl||input.contentUrl:input.contentUrl;if(!base)throw new Error('无此来源站');const url=new URL(spec.url||base,base);if(url.origin!==new URL(base).origin||url.username||url.password)throw new Error('只能读取本任务来源站域名');
-    const result=await httpRead(url,{signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),limit:1024*1024});return write({kind:'source',url:url.href,status:result.status,body:result.body.slice(0,100000),truncated:result.body.length>100000});
+    const bodyCharacters=Math.min(1024*1024,Math.max(1,options.bodyCharacters??100000));
+    const result=await httpRead(url,{signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),limit:1024*1024});return write({kind:'source',url:url.href,status:result.status,body:result.body.slice(0,bodyCharacters),truncated:result.body.length>bodyCharacters});
   };
 }
 export async function ensureManifest(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal){

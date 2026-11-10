@@ -15,6 +15,8 @@ export interface Requirement {
   expectedKeys?: string[];
   dataIdentity?: RequirementDataIdentity;
   samples?:string[];
+  /** Explicit read-only storage identity; never infer a collection from a similar title. */
+  records?: { storage:'content'|'sqlite'|'commerce'; container?:string; keyField:string; requiredFields?:string[] };
 }
 export interface RequirementManifest {
   id: string; taskId: string; revision: number; createdAt: number;

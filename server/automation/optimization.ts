@@ -159,8 +159,9 @@ export function applyOptimizationAction(task: AutomationTask, action: FollowupAc
     if(target)child.message+='\nB段程序核验定向修复依据：'+JSON.stringify(target);
     child.model=task.model;child.siteRevision=randomUUID();
     child.generation={...originalGeneration,next:{action:'continue',reason:action.reason,evidence:action.evidence,message:child.message}};
+    delete child.generation.repairBatch;
     if(collecting){child.generation.prepared=false;child.generation.importedMaterials={...originalGeneration.importedMaterials};collections!.requestRevision(child,objective!);}
-    if(action.imageEvidence?.length)child.repairEvidence={reportId:run.reportId!,files:action.imageEvidence};store.put(child);
+    child.repairEvidence={reportId:run.reportId!,files:action.imageEvidence||[]};store.put(child);
     run.rounds.push({number:round.number+1,revision:child.siteRevision,generationTaskId:child.id,sourceReportId:run.reportId!,brief:child.message,images:action.imageEvidence,startedAt:Date.now()});
     run.currentRevision=child.siteRevision;run.reportId=null;run.activeTaskId=child.id;run.state='repairing';task.evaluationTaskId=undefined;
     task.status='completed';task.error='';task.stage='optimization';if(task.followup)task.followup.state='resolved';

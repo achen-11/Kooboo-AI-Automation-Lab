@@ -21,7 +21,7 @@ import { registerSiteDeliveryApi } from './site-delivery.js';
 import { registerTimingApi } from './timing.js';
 import { registerDashboardApi } from './dashboard.js';
 import { registerMigrationApi } from './migration-api.js';
-import { retainStoppedFollowupReservations } from './budget-recovery.js';
+import { retainStoppedFollowupReservations, correctUnsentPlanningAttempts } from './budget-recovery.js';
 import { registerGenerationContextApi } from './generation-context-api.js';
 import { registerCollectionApi } from './collection/api.js';
 import { CollectionStore } from './collection/store.js';
@@ -105,6 +105,10 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       if(!task||owns(id)||!task.stopped||!['pending','interrupted','failed'].includes(task.status))throw new Conflict('只能恢复已确认停止的任务');
       const root=store.root(task);
       if(root?.optimization?.state==='completed')throw new Conflict('优化目标已达成');
+      if(task.kind==='evaluation'&&task.scenario==='site-template'){
+        const execution=store.evaluations.get(id);
+        if(execution&&execution.state!=='stopped')throw new Conflict('原评测执行尚未确认停止，请核查后确认停止再恢复');
+      }
       retainStoppedFollowupReservations(task,store,owns);
       if(task.autonomy){delete task.autonomy.stopReason;delete task.autonomy.checkpoint.nextAt;}
       const preCreateCollection=Boolean(task.autonomy&&!task.generatedSiteId&&task.collectionId);
@@ -115,6 +119,19 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
         if(task.id===root.id)task.optimization=run;
       }
       if(preCreateCollection){task.status='queued';store.put(task);store.event(task.id,'按原输入和采集检查点恢复A段');return task;}
+      // The user explicitly resumed a stopped evaluation. No AI decision is
+      // needed to decide whether to retry, nor another spent followup window.
+      if(task.kind==='evaluation'&&task.scenario==='site-template'){
+        task.status='queued';delete task.interruption;task.error='';
+        if(task.followup){task.followup.state='resolved';task.followup.executionStopped=true;}
+        store.put(task);store.event(id,'按原输入、站点版本和已校验证据直接恢复独立评测；保留累计用量与跟进预算。');return task;
+      }
+      if(task.scenario==='site-template'&&task.kind==='generation'&&task.generation?.next&&task.repairEvidence){
+        task.status='queued';delete task.interruption;task.error='';
+        if(task.followup)task.followup.state='resolved';
+        store.put(task);store.event(id,'恢复已保存但尚未发出的修复委托；发送前重新校验图片批次与原会话状态。');return task;
+      }
+      correctUnsentPlanningAttempts(task,store,directory);
       if(task.followup)task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);
       store.scheduleFollowup(task,root?.optimization?.recoveryPolicy||vault.automation().followup);
       return task;
@@ -249,7 +266,35 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       store.put(task);store.event(id,'操作者明确开启自动优化；原站、输入、规则与初评报告保留。');
     });return taskSummary(task);
   });
-  app.post('/api/automation/tasks/:id/confirm-stopped',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task||!['pending','interrupted'].includes(task.status)||owns(id))throw new Conflict('只能确认服务中断且没有本机执行器运行的待跟进任务');task.stopped=true;if(task.followup)task.followup.executionStopped=true;store.put(task);store.event(id,'操作者已确认原执行停止，允许重新排队和跟进');return task;});
+  app.post('/api/automation/tasks/:id/confirm-stopped',async(request)=>{
+    const{id}=params.parse(request.params);const task=store.task(id);
+    const queuedEvaluation=task?.kind==='evaluation'&&task.status==='following-up'&&task.followup?.state==='queued';
+    if(!task||!['pending','interrupted'].includes(task.status)&&!queuedEvaluation||owns(id))throw new Conflict('只能确认服务中断且没有本机执行器运行的待跟进任务');
+    if(task.kind==='evaluation')store.evaluations.confirmStopped(id);
+    task.stopped=true;if(task.followup)task.followup.executionStopped=true;
+    if(queuedEvaluation){task.status='interrupted';task.followup!.state='interrupted';}
+    store.put(task);store.event(id,'操作者已确认原执行停止，允许重新排队和跟进');return task;
+  });
+  app.post('/api/automation/tasks/:id/reassess',async request=>{
+    const {id}=params.parse(request.params);
+    return store.db.transaction(()=>{
+      const old=store.task(id),root=old&&store.root(old),run=root?.optimization,round=run?.rounds.at(-1);
+      if(!old||old.kind!=='evaluation'||old.scenario!=='site-template'||old.status!=='completed'||!old.stopped||owns(id)||!old.report||!old.generatedSiteId||!root||!run||run.state!=='stopped'||!root.stopped||owns(root.id)||round?.evaluationTaskId!==id||old.siteRevision!==run.currentRevision)throw new Conflict('只能补评当前已停止优化流程的最新独立报告');
+      if(store.headers().some(t=>t.generatedSiteId===old.generatedSiteId&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false||['queued','following-up'].includes(t.status))))throw new Conflict('同站仍有活动执行，请等待停止后补评');
+      const child=store.create({resourceIds:[old.resourceId],kind:'evaluation',scope:old.scope,environmentId:old.environmentId,generatedSiteId:old.generatedSiteId,versionId:old.versionId,parentId:old.id,ruleSnapshot:old.rule!,optimizationRootId:root.id,optimizationRound:round.number,requirements:'补齐原评测未验证的证据与评分，保持完整原范围和双端。复用经当前契约重新校验的检查点；不要修改目标站，不降低评分或完整性要求。按键操作使用 value 指定实际按键。'},executionSettings())[0];
+      if(child.siteRevision!==run.currentRevision)throw new Conflict('目标站版本已变化，不能补评旧修订');
+      child.model=old.model;store.put(child);
+      const followup=root.followup;
+      if(followup&&followup.tokens===0&&!store.usage.entries(root.id).some(e=>e.stage==='followup')){
+        // Earlier versions counted host preflight failures as model attempts.
+        // Correct only proven zero-request windows; never clear actual usage.
+        store.event(root.id,`补评前纠正 ${followup.attempts} 次未发出模型请求的前置校验重试；历史事件保留，实际请求预算和用量不变。`);followup.attempts=0;
+      }
+      round.evaluationTaskId=child.id;root.evaluationTaskId=child.id;run.reportId=null;run.activeTaskId=child.id;run.state='waiting-evaluation';run.reason='';run.nextSteps=[];delete run.stoppedAt;
+      root.status='completed';root.error='';delete root.interruption;if(followup)followup.state='resolved';store.put(root,true);
+      store.event(root.id,`补评已排队：${child.id}；原报告 ${old.id} 完整保留。`);return child;
+    });
+  });
   app.post('/api/automation/tasks/:id/followup',async(request)=>{
     const{id}=params.parse(request.params);const input=z.object({requirements:z.string().trim().min(1).max(100000),kind:z.enum(['generation','evaluation']).optional()}).parse(request.body);const old=store.task(id);
     if(!old||!old.stopped||['queued','running','following-up','cancelling'].includes(old.status))throw new Conflict('请先等待原任务确认停止');

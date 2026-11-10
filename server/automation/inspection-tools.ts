@@ -1,12 +1,22 @@
 import { createServer } from 'node:http';
-import { randomUUID, timingSafeEqual } from 'node:crypto';
+import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { copyFileSync, mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { AutomationTask, GeneratedSite, MaterialFile } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
-import { evidenceWriter, inspectImplementation, sourceReader, ManifestStore, manifestInput } from './completeness.js';
+import { evidenceWriter, inspectImplementation, implementationInput, sourceReader, ManifestStore, manifestInput } from './completeness.js';
 import { z } from 'zod';
+
+/** Keep the registered source bytes on disk, rather than echoing HTML through SDK events. */
+export function sourceInspectionReply(value:unknown) {
+  if(!value||typeof value!=='object')return value;
+  const saved=value as {evidence?:unknown;result?:{kind?:unknown;body?:unknown}};
+  if(typeof saved.evidence!=='string'||!/^source-review-[a-f0-9-]{36}\.json$/.test(saved.evidence)||saved.result?.kind!=='source'||typeof saved.result.body!=='string'||Buffer.byteLength(saved.result.body)<=6000)return value;
+  let end=Math.min(saved.result.body.length,6000);
+  while(Buffer.byteLength(saved.result.body.slice(0,end))>6000)end=Math.floor(end*0.8);
+  return {...saved,result:{...saved.result,body:saved.result.body.slice(0,end)},outputTruncated:true,evidencePath:'evidence/'+saved.evidence,note:'此工具响应仅预览来源正文开头；已登记证据文件保留原始读取结果及 truncated 标志。按需从 evidencePath 用 jq 读取具体字段或有界片段，不把整份 HTML 输出到执行流。预览不能证明页面全集。'};
+}
 
 /** Host-owned identity of the exact input and implementation inspected. */
 export function implementationEvidenceBinding(task:AutomationTask,site:GeneratedSite|undefined){
@@ -18,12 +28,28 @@ export function implementationEvidenceBinding(task:AutomationTask,site:Generated
 export async function inspectionTools(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,work:string,artifacts:MaterialFile[],signal:AbortSignal,validateDraft?:(resultFile:string)=>void){
   const token=randomUUID()+randomUUID();let calls=0,manifestCalls=0,busy=false,active:Promise<unknown>|undefined;const validationCalls=new Map<string,number>();
   const manifests=new ManifestStore(store);
-  const write=evidenceWriter(work,artifacts,'target','implementation'),sourceWrite=evidenceWriter(work,artifacts,'content','source-review',file=>{const destination=resolve(directory,'manifest-runs',task.id,'evidence');mkdirSync(destination,{recursive:true,mode:0o700});copyFileSync(resolve(work,'evidence',file.name),resolve(destination,file.name));store.db.prepare('INSERT INTO auto_manifest_artifacts VALUES(?,?,?)').run(file.name,task.id,file.sha256);}),readSource=sourceReader(task,store,directory,sourceWrite);
+  const write=evidenceWriter(work,artifacts,'target','implementation'),sourceWrite=evidenceWriter(work,artifacts,'content','source-review',file=>{const destination=resolve(directory,'manifest-runs',task.id,'evidence');mkdirSync(destination,{recursive:true,mode:0o700});copyFileSync(resolve(work,'evidence',file.name),resolve(destination,file.name));store.db.prepare('INSERT INTO auto_manifest_artifacts VALUES(?,?,?)').run(file.name,task.id,file.sha256);}),readSource=sourceReader(task,store,directory,sourceWrite,{bodyCharacters:1024*1024});
   const currentBinding=(current:AutomationTask)=>{const revision=current.generatedSiteId?store.siteState(current.generatedSiteId)?.revision:undefined;if(revision&&revision!==current.siteRevision)return;return implementationEvidenceBinding(current,current.generatedSiteId?store.site(current.generatedSiteId):undefined);};
   const checkpoint=()=>{task.artifacts=structuredClone(artifacts);store.put(task);writeFileSync(resolve(work,'evidence-manifest.json'),JSON.stringify(artifacts),{mode:0o600});};
   const implementation=async(raw:unknown)=>{
     const binding=currentBinding(task),persisted=store.task(task.id);
     if(!binding||!persisted||JSON.stringify(binding)!==JSON.stringify(currentBinding(persisted)))throw new Error('后台取证缺少当前任务与站点修订绑定');
+    signal.throwIfAborted();
+    const request=implementationInput.parse(raw);
+    const stateful=['content','contentItem','rows','products','product','categories'].includes(request.kind);
+    for(const file of artifacts.filter(f=>task.scenario==='site-template'&&/^implementation-[a-f0-9-]{36}\.json$/.test(f.name)))try{
+      const bytes=readFileSync(resolve(work,'evidence',file.name));
+      const saved=JSON.parse(bytes.toString());
+      const ordered=(value:object)=>JSON.stringify(Object.entries(value).sort(([a],[b])=>a.localeCompare(b)));
+      if(file.role==='target'&&file.type==='application/json'&&bytes.length===file.size&&createHash('sha256').update(bytes).digest('hex')===file.sha256&&JSON.stringify(saved.binding)===JSON.stringify(binding)&&saved.request&&Object.hasOwn(saved,'value')&&ordered(saved.request)===ordered(request)){
+        // Browser actions can change test data without a generation revision.
+        const changed=stateful&&artifacts.slice(artifacts.indexOf(file)+1).some(f=>{
+          if(f.role!=='target'||!/^[-a-f0-9]{36}\.json$/.test(f.name))return false;
+          try{const data=readFileSync(resolve(work,'evidence',f.name));if(data.length!==f.size||createHash('sha256').update(data).digest('hex')!==f.sha256)return true;const o=JSON.parse(data.toString());return o.binding?.taskId===task.id&&o.binding?.siteRevision===task.siteRevision&&['click','fill','select','press'].includes(o.action);}catch{return true;}
+        });
+        if(!changed)return {evidence:file.name,result:saved};
+      }
+    }catch{/* A missing or changed current proof is read again. */}
     const result=await inspectImplementation(task,store,vault,signal,raw);signal.throwIfAborted();
     const latest=store.task(task.id);
     if(!latest||JSON.stringify(binding)!==JSON.stringify(currentBinding(task))||JSON.stringify(binding)!==JSON.stringify(currentBinding(latest)))throw new Error('后台取证期间任务或站点已变化，请重新取证');
@@ -32,9 +58,7 @@ export async function inspectionTools(task:AutomationTask,store:AutomationStore,
   const programIndex=async()=>{
     const rows:{kind:string;evidence?:string;error?:string}[]=[];
     for(const kind of ['pages','routes','views','codes']){
-      signal.throwIfAborted();let evidence:string|undefined;
-      for(const file of artifacts.filter(f=>f.name.startsWith('implementation-')&&f.type==='application/json'))try{const saved=JSON.parse(readFileSync(resolve(work,'evidence',file.name),'utf8'));if(saved.request?.kind===kind&&saved.request?.page===1&&JSON.stringify(saved.binding)===JSON.stringify(currentBinding(task))){evidence=file.name;break;}}catch{}
-      if(evidence){rows.push({kind,evidence});continue;}
+      signal.throwIfAborted();
       try{const saved=await implementation({kind,page:1});rows.push({kind,evidence:saved.evidence});}catch(error){signal.throwIfAborted();rows.push({kind,error:store.sanitize(error instanceof Error?error.message:'后台索引读取失败')});}
     }
     writeFileSync(resolve(work,'implementation-index.json'),JSON.stringify({siteRevision:task.siteRevision,rows,note:'固定只读入口索引，每类第1页；不证明分页全集、实现正确或数据完整，模型按具体问题读取原件和后续分页。'},null,2),{mode:0o600});return rows;
@@ -64,10 +88,10 @@ export async function inspectionTools(task:AutomationTask,store:AutomationStore,
         }
         if(input.tool!=='implementation')throw new Error('tool 仅支持 implementation / source / manifest / extend_manifest / validate_result');
         return implementation(input.input);})();
-      const value=await active;task.artifacts=structuredClone(artifacts);store.put(task);writeFileSync(resolve(work,'evidence-manifest.json'),JSON.stringify(artifacts),{mode:0o600});reply(200,value);
+      const value=await active;task.artifacts=structuredClone(artifacts);store.put(task);writeFileSync(resolve(work,'evidence-manifest.json'),JSON.stringify(artifacts),{mode:0o600});reply(200,sourceInspectionReply(value));
     }catch(error){reply(400,{error:error instanceof Error?error.message:'只读取证失败，相关项应标记未验证'});}finally{busy=false;active=undefined;}
   });
   await new Promise<void>((r,j)=>{server.once('error',j);server.listen(0,'127.0.0.1',r);});const address=server.address();if(!address||typeof address==='string')throw new Error('只读取证服务失败');
   writeFileSync(resolve(work,'inspect.mjs'),`const r=await fetch(process.env.INSPECTION_URL,{method:'POST',headers:{Authorization:'Bearer '+process.env.INSPECTION_TOKEN,'Content-Type':'application/json'},body:process.argv[2]||'{}'});console.log(await r.text());if(!r.ok)process.exitCode=1;`,{mode:0o600});
-  return {programIndex,env:{INSPECTION_URL:`http://127.0.0.1:${address.port}/inspect`,INSPECTION_TOKEN:token},async close(){server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await active?.catch(()=>{});}};
+  return {programIndex,readImplementation:implementation,env:{INSPECTION_URL:`http://127.0.0.1:${address.port}/inspect`,INSPECTION_TOKEN:token},async close(){server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await active?.catch(()=>{});}};
 }

@@ -12,7 +12,7 @@ import { defaultAutomationSettings } from '../shared/automation.js';
 import type { RequirementManifest } from '../shared/completeness.js';
 import { Database } from '../server/runtime.js';
 import { AutomationStore } from '../server/automation/store.js';
-import { visibleFrameElement, visibleFrames } from '../server/automation/browser.js';
+import { visibleFrameElement, visibleFrames, evaluationCapturePolicy } from '../server/automation/browser.js';
 import { validatedEvaluationEvidence, validateResult } from '../server/automation/evaluator.js';
 import { validateCompleteness } from '../server/automation/completeness.js';
 import { inspectionTools } from '../server/automation/inspection-tools.js';
@@ -47,7 +47,7 @@ test('trusted evaluation evidence keeps only current JSON/PNG pairs and preserve
 });
 
 test('template reference pixels require the same source snapshot, input, policy, origin and settled observation',()=>{
-  const f=fixture();try{const snapshotId=randomUUID(),name=randomUUID()+'.png',image=f.write(name,png,{type:'image/png',role:'reference',viewport:'desktop'}),observation={role:'reference',viewport:'desktop',url:'https://source.invalid/',file:name,binding:{sourceSnapshotId:snapshotId,inputVersionId:f.task.versionId,capturePolicy:'settled-pc1440-mobile390-v1'},settlement:{settled:true}},json=f.write(name.replace('.png','.json'),Buffer.from(JSON.stringify(observation)),{role:'reference',viewport:'desktop'});
+  const f=fixture();try{const snapshotId=randomUUID(),name=randomUUID()+'.png',image=f.write(name,png,{type:'image/png',role:'reference',viewport:'desktop'}),observation={role:'reference',viewport:'desktop',url:'https://source.invalid/',file:name,binding:{sourceSnapshotId:snapshotId,inputVersionId:f.task.versionId,capturePolicy:evaluationCapturePolicy},settlement:{settled:true}},json=f.write(name.replace('.png','.json'),Buffer.from(JSON.stringify(observation)),{role:'reference',viewport:'desktop'});
     const binding={snapshotId,inputVersionId:f.task.versionId,referenceUrl:'https://source.invalid/'};
     const read=(source=binding)=>validatedEvaluationEvidence(f.task,f.files,f.directory,base,f.site,undefined,source).files;
     assert.deepEqual(read(),[image,json]);assert.deepEqual(read({...binding,snapshotId:randomUUID()}),[]);assert.deepEqual(read({...binding,inputVersionId:randomUUID()}),[]);assert.deepEqual(read({...binding,referenceUrl:'https://other.invalid/'}),[]);
@@ -122,12 +122,31 @@ test('host inspection persists binding independently of remote payload and refus
     const registered=f.store.task(f.task.id)!.artifacts!;assert.equal(registered.length,1);
     assert.deepEqual(JSON.parse(readFileSync(resolve(work,'evidence-manifest.json'),'utf8')),registered,'first-pass implementation evidence is indexed before final submission');
     assert.deepEqual(validatedEvaluationEvidence(f.store.task(f.task.id)!,registered,resolve(work,'evidence'),base,f.store.site(f.site.id)).files,registered);
+    assert.equal((await call({page:1,kind:'pages'})).status,200);assert.equal(requestedSites.length,1,'same bound request reuses registered bytes independent of property order');
+    assert.equal((await call({kind:'pages',binding:f.binding()})).status,400,'cache cannot bypass request schema validation');
     mutate=()=>{const current=f.store.site(f.site.id)!;current.siteId=randomUUID();f.store.saveSite(current);};
-    const stale=await call({kind:'pages'});assert.equal(stale.status,400);assert.match((await stale.json()).error,/期间任务或站点已变化/);assert.equal(f.files.length,1);
+    const stale=await call({kind:'pages',page:2});assert.equal(stale.status,400);assert.match((await stale.json()).error,/期间任务或站点已变化/);assert.equal(f.files.length,1);
     mutate=()=>{};f.store.saveSite(f.site);mutate=()=>{const current=f.store.task(f.task.id)!;current.siteRevision='replaced-revision';f.store.put(current);};
-    const changed=await call({kind:'pages'});assert.equal(changed.status,400);assert.match((await changed.json()).error,/期间任务或站点已变化/);assert.equal(f.files.length,1);assert.equal(f.store.task(f.task.id)!.siteRevision,'replaced-revision');
+    const changed=await call({kind:'pages',page:3});assert.equal(changed.status,400);assert.match((await changed.json()).error,/期间任务或站点已变化/);assert.equal(f.files.length,1);assert.equal(f.store.task(f.task.id)!.siteRevision,'replaced-revision');
     f.store.put(f.task);mutate=()=>{f.store.db.prepare('INSERT INTO auto_site_state VALUES(?,?,NULL)').run(f.site.id,'new-site-revision');};
-    const revised=await call({kind:'pages'});assert.equal(revised.status,400);assert.match((await revised.json()).error,/期间任务或站点已变化/);assert.equal(f.files.length,1);
+    const revised=await call({kind:'pages',page:4});assert.equal(revised.status,400);assert.match((await revised.json()).error,/期间任务或站点已变化/);assert.equal(f.files.length,1);
+  }finally{await inspection?.close();server.closeAllConnections();await new Promise<void>(done=>server.close(()=>done()));f.close();}
+});
+
+test('stateful implementation cache expires after a recorded action or changed evidence bytes',async()=>{
+  const f=fixture();let requests=0;
+  const server=createServer((_req,res)=>{requests++;res.setHeader('content-type','application/json');res.end(JSON.stringify({list:[],pageNr:1,totalPages:0,totalCount:0}));});
+  let inspection:Awaited<ReturnType<typeof inspectionTools>>|undefined;
+  try{
+    await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));const address=server.address();assert.ok(address&&typeof address!=='string');const origin=`http://127.0.0.1:${address.port}`,vault=new Vault(resolve(f.directory,'vault'));
+    vault.update({...vault.get(),environments:[{id:f.task.environmentId,name:'mock',origin,apiOrigin:origin,token:'fake'}]});const work=resolve(f.directory,'work');
+    inspection=await inspectionTools(f.task,f.store,vault,f.directory,work,f.files,new AbortController().signal);
+    const request={kind:'rows',table:'Cars'};
+    const first=await inspection.readImplementation(request);assert.equal((await inspection.readImplementation(request)).evidence,first.evidence);assert.equal(requests,1);
+    const name=randomUUID()+'.json',bytes=Buffer.from(JSON.stringify({action:'click',binding:{taskId:f.task.id,siteRevision:f.task.siteRevision}}));
+    writeFileSync(resolve(work,'evidence',name),bytes);f.files.push({id:randomUUID(),name,type:'application/json',role:'target',size:bytes.length,sha256:hash(bytes)});
+    const second=await inspection.readImplementation(request);assert.notEqual(second.evidence,first.evidence);assert.equal(requests,2);assert.equal((await inspection.readImplementation(request)).evidence,second.evidence);
+    writeFileSync(resolve(work,'evidence',second.evidence),'tampered');assert.notEqual((await inspection.readImplementation(request)).evidence,second.evidence);assert.equal(requests,3);
   }finally{await inspection?.close();server.closeAllConnections();await new Promise<void>(done=>server.close(()=>done()));f.close();}
 });
 

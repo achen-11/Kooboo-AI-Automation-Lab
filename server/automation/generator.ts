@@ -129,7 +129,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   }
   // A finished chat loop may have produced no page. An explicit, validated
   // continuation must reach the pinned conversation even after that receipt.
-  const continuation=task.generation.next?.action==='continue'||task.generation.next?.action==='answer';
+  const continuation=task.generation.next?.action==='continue'||task.generation.next?.action==='answer'||!!(task.generation.repairBatch&&task.generation.repairBatch.completed<task.generation.repairBatch.total);
   if(task.generation.deliveryState==='completed'&&!continuation){
     await cleanupGenerationContext(task,store,request,site.siteId,true);
     task.stage='handoff';store.put(task);const ready=await refreshSite(task,store,vault,signal);await probeSite(ready?.url||'',signal);return;
@@ -138,18 +138,29 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   const budget=optimizationBudgetReason(task,store);if(budget)throw new ModelBudgetExceeded(budget);
   const session=await openSession(task,store,vault,directory,signal);
   try{
+    let adapted:ReturnType<typeof adaptRepairImages>|undefined;
+    // Each batch owns a durable delivery receipt. Only a matching terminal run
+    // advances it; a restart must never replay an accepted, uncertain send.
+    while(true){
     let state=await session.snapshot();
     const action=task.generation.next;
     const initial=!task.generation.deliveryId;
     if(initial&&task.generation.legacySubmitted&&!action)throw new Pending('旧任务已提交过原始委托，由 AI 核对交付并交接评测或明确继续，不能重发初始消息');
     if(initial||action?.action==='continue'||action?.action==='answer'){
       if(state.running)throw new Pending('原会话仍在执行，保留当前执行，稍后核对');
+      if(state.pending&&action?.action!=='answer')throw new Pending('原会话存在待输入调用，需先回答后再发送修复批次：'+state.pending.name);
       const repairSources=task.repairEvidence?task.repairEvidence.files.map(name=>{
         const file=store.task(task.repairEvidence!.reportId)?.report?.artifacts.find(f=>f.name===name);if(!file)throw new Error('修复引用的原报告图片不存在');
         return readEvidence(directory,task.repairEvidence!.reportId,file);
       }):undefined;
-      const adapted=task.scenario==='site-template'&&repairSources?adaptRepairImages(repairSources,resolve(directory,'automation-runs',task.id,'repair-images')):undefined;
-      let images=adapted?.images||repairSources?.map(image=>({uri:'data:image/png;base64,'+image.bytes.toString('base64'),mediaType:'image/png' as const}));
+      if(task.scenario==='site-template'&&repairSources&&action?.action!=='answer')adapted??=adaptRepairImages(repairSources,resolve(directory,'automation-runs',task.id,'repair-images'));
+      if(adapted?.batches.length){
+        const saved=task.generation.repairBatch;
+        if(saved&&saved.planKey!==adapted.planKey)throw new GenerationInputError('修复图片计划发生变化，需核对已发送批次；禁止重置后重复发送');
+        task.generation.repairBatch??={planKey:adapted.planKey,completed:0,total:adapted.batches.length};store.put(task);
+      }
+      const batch=action?.action==='answer'?undefined:adapted?.batches[task.generation.repairBatch?.completed||0];
+      let images=action?.action==='answer'?undefined:batch?.images||(!adapted?repairSources?.map(image=>({uri:'data:image/png;base64,'+image.bytes.toString('base64'),mediaType:'image/png' as const})):undefined);
       const baseline=initial&&!images&&state.imageInput?sourceVisualBaselineImages(input,directory):undefined;
       if(baseline?.images.length)images=baseline.images;
       if(images?.length&&!state.imageInput)throw new Pending('当前 Kooboo automation bridge 不支持图片修复委托，请更新 bridge 后恢复；尚未发送修复消息。');
@@ -159,15 +170,17 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       const collectionGuidance=task.collectionVersionId?'\n本任务的A段已核验并冻结资料版本 '+task.collectionVersionId+'。使用资料映射清单按需读取原件、完整正文、数据分片和关系；批量落地当前范围，避免重新全站采集。动态记录保存可回读的 sourceUrl 或 oldUrl 完整来源 URL。SQLite 表 CollectionRecordBindings 用 id、requirementId、sourceUrl、targetKind（sqlite/content）、targetContainer（真实表名/Content容器）、targetId（真实记录主键）、identityKeyField（可空，默认id）声明每项页面或数据要求的规范记录；记录本身的sourceUrl/oldUrl必须匹配原URL。页面索引和业务记录可共存，不为凑数复制实体；每个冻结路径含分页都要明确映射。CollectionRelationBindings 用 id、sourcePath（完整原路径及查询参数）、tableName、parentField、childField、orderField、parentIdentityField、childIdentityField、sourcePathField 声明真实关系字段。父子引用字段从对应规范记录读取，默认identityKeyField/id；关系行须用sourcePathField区分分页与别名，不能把分类全部分页混成一页，顺序字段须为唯一数值。所有含详情成员的来源页均适用，不依赖pageType标签。CollectionAssetBindings 用 id、sourceUrl、materialPath（冻结state.localPath原值）、targetUrl（当前目标同域真实URL）记录已取得素材映射；同字节允许多个源URL共用文件，不能混淆源URL数与文件数。三张表仅声明现有实现，不提供或改写预期成员，不把目标总量反推来源。保留分类关系、成员顺序、分页、数字路径、.aspx与查询参数；元数据引号等原字符按HTML上下文转义，不能删字符。实际目标响应须承接原页标题、可见正文和链接，禁止以HTTP200、隐藏文本、记录数量或生成自述替代完整性。每批只返回完成对象、缺口与证据的短摘要。':'';
       if(task.requirementsId&&!manifest)throw new GenerationInputError('固定交付清单不存在，禁止发送不完整委托');
       const prepared=action?.action==='answer'?undefined:await prepareGenerationContext(task,store,request,site.siteId,{
-        instructions:action?.action==='continue'&&action.message!==task.message
+        instructions:batch&&task.generation.repairBatch!.completed<adapted!.batches.length-1
+          ?'修复证据正在分批传递。此批仅研读附件，简要记录可见差异和图片区域对应关系，不修改目标站、不调用写入工具、不重新采集。后续批次将补齐证据，最后一批才会收到完整修复委托。读完本批后简短结束，等待调度器追加下一批。'
+          :action?.action==='continue'&&action.message!==task.message
           ?task.message+'\n\n本轮已核对的跟进要求：\n'+action.message:task.message,
-        guidance:adoptedGuidance(task,store,'generation')+collectionGuidance+acceptedAssetGuidance+(baseline?.label||'')+(adapted?.label||''),
+        guidance:adoptedGuidance(task,store,'generation')+collectionGuidance+acceptedAssetGuidance+(baseline?.label||'')+(batch?`\n修复证据批次 ${(task.generation.repairBatch?.completed||0)+1}/${adapted!.batches.length}。${task.generation.repairBatch!.completed===adapted!.batches.length-1?'已到最后一批，结合前批已研读的证据统一执行本次完整修复，完成后按原完整范围独立复评。':'本批只研读，不执行修复。'}`+batch.label:''),
         manifest,
         materials,
       });
       assertGenerationInput(prepared?.text,images,action?.action==='answer'?action.answer:undefined);
       if(prepared){store.event(task.id,`生成委托资料：${prepared.mode}；最终文本 ${Buffer.byteLength(prepared.text)} bytes，图片 ${images?.length||0} 张；平台原件 ${prepared.packageId}`);}
-      const id=randomUUID();task.generation.deliveryId=id;task.generation.deliveryState='sending';delete task.generation.next;store.put(task);
+      const id=randomUUID();task.generation.deliveryId=id;task.generation.deliveryState='sending';if(task.generation.repairBatch&&task.generation.repairBatch.completed<task.generation.repairBatch.total)task.generation.repairBatch.deliveryId=id;delete task.generation.next;store.put(task);
       const receipt=await session.deliver({id,conversationId:task.generation.conversationId||state.conversationId,images,
         ...(action?.action==='answer'?{answer:action.answer,callId:action.callId}:{text:prepared!.text})});
       if(receipt?.state!=='accepted')throw new Pending('委托是否被接受尚未确认，需要核对原会话；不会自动重复发送');
@@ -193,6 +206,15 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       if(state.running)idleSince=Date.now();
       if(!state.running&&Date.now()-idleSince>45000)throw new Pending('执行状态尚未取得可信终态，由 AI 读取原会话核对');
       await delay(1000,signal);
+    }
+    const progress=task.generation.repairBatch;
+    if(progress&&progress.deliveryId===task.generation.deliveryId&&progress.completed<progress.total){
+      progress.completed++;delete progress.deliveryId;
+      if(progress.completed<progress.total)task.generation.next={action:'continue',reason:'上一修复批次已取得匹配的完成回执，接续剩余证据',evidence:[],message:'继续原修复任务，仅处理本批附件所对应的剩余问题。保留已完成修复，全部批次后检查原范围与双端。'};
+      store.put(task);store.event(task.id,`修复证据批次 ${progress.completed}/${progress.total} 已完成并保存回执。`);
+      if(progress.completed<progress.total)continue;
+    }
+    break;
     }
   }finally{await session.close();}
   // The trusted terminal receipt/context were persisted above and the browser

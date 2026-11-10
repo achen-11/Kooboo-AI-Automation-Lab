@@ -6,8 +6,8 @@ import { chromium, type Frame, type Page } from 'playwright';
 import { z } from 'zod';
 import type { MaterialFile } from '../../shared/automation.js';
 
-const action=z.object({action:z.enum(['snapshot','screenshot','navigate','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),fullPage:z.boolean().default(false)});
-export const evaluationCapturePolicy='settled-pc1440-mobile390-v1';
+export const browserAction=z.object({action:z.enum(['snapshot','screenshot','navigate','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),key:z.string().min(1).max(100).optional(),fullPage:z.boolean().default(false)}).superRefine((input,ctx)=>{if(input.action==='press'&&!input.value&&!input.key)ctx.addIssue({code:'custom',message:'press 需要 value 或 key 指定按键，不能默认触发 Enter',path:['value']});if(input.action==='press'&&input.value&&input.key&&input.value!==input.key)ctx.addIssue({code:'custom',message:'value 与 key 指定了不同按键',path:['key']});});
+export const evaluationCapturePolicy='settled-visible-pc1440-mobile390-v2';
 export interface EvaluationBrowserBinding { taskId:string; siteRevision:string; inputVersionId?:string; sourceSnapshotId?:string }
 export interface VisibleBrowserFrame { url:string; text:string }
 
@@ -41,6 +41,20 @@ export async function visibleFrames(page:Page) {
   return {frames,framesComplete:complete};
 }
 export interface PageSettlement { settled:boolean; loaded:boolean; networkIdle:boolean; images:number; pendingImages:number; blankImageRatio:number }
+/** Serialized into the page; keep this function independent of host helpers. */
+export async function settleVisibleImages(timeout:number){
+  const visible=Array.from(document.images).filter(image=>{
+    const box=image.getBoundingClientRect();
+    if(box.width<=1||box.height<=1||box.bottom<=0||box.top>=window.innerHeight||box.right<=0||box.left>=window.innerWidth)return false;
+    for(let current:Element|null=image;current;current=current.parentElement||(current.getRootNode() as ShadowRoot).host||null){
+      const style=getComputedStyle(current);if(style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse'||Number(style.opacity)===0)return false;
+    }
+    return true;
+  });
+  await Promise.race([Promise.all(visible.map(image=>image.complete?undefined:image.decode().catch(()=>{}))),new Promise(resolve=>setTimeout(resolve,timeout))]);
+  await Promise.race([document.fonts?.ready,new Promise(resolve=>setTimeout(resolve,2000))]);
+  return {images:visible.length,pending:visible.filter(image=>!image.complete).length,blank:visible.filter(image=>image.complete&&image.naturalWidth===0).length};
+}
 /** Lazy images, carousels and fonts arrive after DOMContentLoaded. Scrolling is only safe right after a navigation, before any interaction state exists. */
 export async function settlePage(page:Page,scroll:boolean,quick=false):Promise<PageSettlement> {
   const loaded=await page.waitForLoadState('load',{timeout:quick?3000:15000}).then(()=>true,()=>false);
@@ -50,12 +64,7 @@ export async function settlePage(page:Page,scroll:boolean,quick=false):Promise<P
     for(let y=0;y<end;y+=step){window.scrollTo(0,y);await new Promise(resolve=>setTimeout(resolve,150));}
     window.scrollTo(0,start);
   }).catch(()=>{});
-  const stats=await page.evaluate(async(timeout)=>{
-    const visible=Array.from(document.images).filter(image=>{const box=image.getBoundingClientRect();return box.width>1&&box.height>1&&box.bottom>0&&box.top<window.innerHeight;});
-    await Promise.race([Promise.all(visible.map(image=>image.complete?undefined:image.decode().catch(()=>{}))),new Promise(resolve=>setTimeout(resolve,timeout))]);
-    await Promise.race([document.fonts?.ready,new Promise(resolve=>setTimeout(resolve,2000))]);
-    return {images:visible.length,pending:visible.filter(image=>!image.complete).length,blank:visible.filter(image=>image.complete&&image.naturalWidth===0).length};
-  },quick?3000:5000).catch(()=>({images:0,pending:0,blank:0}));
+  const stats=await page.evaluate(settleVisibleImages,quick?3000:5000);
   await page.waitForTimeout(1000);
   return {settled:loaded&&stats.pending===0,loaded,networkIdle,images:stats.images,pendingImages:stats.pending,blankImageRatio:stats.images?Math.round(stats.blank/stats.images*100)/100:0};
 }
@@ -71,24 +80,24 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
   const token=randomUUID()+randomUUID();
   const capture=async(raw:unknown)=>{
       if(busy)throw new Error('上一浏览器操作仍在执行，请顺序调用');busy=true;
-      try{const input=action.parse(raw);signal.throwIfAborted();
+      try{const input=browserAction.parse(raw);signal.throwIfAborted();
       if(!urls[input.role])throw new Error('没有提供此角色的站点');
-      const key=input.role+'-'+input.viewport;let page=pages.get(key),navigated=false;
+      const key=input.role+'-'+input.viewport;let page=pages.get(key),navigated=false,navigationStatus:number|undefined;
       if(!page){navigated=true;const mobile=input.viewport==='mobile';const context=await browser.newContext({viewport:{width:mobile?390:1440,height:mobile?844:1000},isMobile:mobile,hasTouch:mobile});
         await context.route('**/*',route=>{
           const request=route.request();
           if(request.isNavigationRequest()&&request.frame()===page?.mainFrame()&&new URL(request.url()).origin!==new URL(urls[input.role]).origin)return route.abort();
           return route.continue();
         });
-        page=await context.newPage();pages.set(key,page);await page.goto(urls[input.role],{waitUntil:'domcontentloaded',timeout:45000});}
-      if(input.action==='navigate'){if(!input.url||new URL(input.url).origin!==new URL(urls[input.role]).origin)throw new Error('只能访问当前任务的站点');await page.goto(input.url,{waitUntil:'domcontentloaded',timeout:45000});navigated=true;}
+        page=await context.newPage();pages.set(key,page);navigationStatus=(await page.goto(urls[input.role],{waitUntil:'domcontentloaded',timeout:45000}))?.status();}
+      if(input.action==='navigate'){if(!input.url||new URL(input.url).origin!==new URL(urls[input.role]).origin)throw new Error('只能访问当前任务的站点');navigationStatus=(await page.goto(input.url,{waitUntil:'domcontentloaded',timeout:45000}))?.status();navigated=true;}
       else if(['click','fill','select','press'].includes(input.action)){
         if(!input.element||!input.name)throw new Error('请提供可访问角色 element 和名称 name');
         const locator=page.getByRole(input.element as Parameters<Page['getByRole']>[0],{name:input.name,exact:true});
         if(input.action==='click')await locator.click({timeout:15000});
         if(input.action==='fill')await locator.fill(input.value||'',{timeout:15000});
         if(input.action==='select')await locator.selectOption(input.value||'',{timeout:15000});
-        if(input.action==='press')await locator.press(input.value||'Enter',{timeout:15000});
+        if(input.action==='press')await locator.press(input.value||input.key!,{timeout:15000});
       }
       let settlement=await settlePage(page,navigated);
       // A reference capture can drive negative repair instructions, so it gets extra time before being labelled unsettled.
@@ -97,7 +106,7 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
       const snapshot=await page.locator('body').ariaSnapshot({timeout:15000});
       const text=await page.locator('body').innerText({timeout:15000});
       const frameEvidence=await visibleFrames(page);
-      const observation={action:input.action,role:input.role,viewport:input.viewport,url:page.url(),title:await page.title(),file,capturedAt:Date.now(),snapshot:snapshot.slice(0,30000),text:text.slice(0,30000),textTruncated:text.length>30000,...frameEvidence,settlement,...(trustedBinding?{binding:trustedBinding}:{})};
+      const observation={action:input.action,role:input.role,viewport:input.viewport,url:page.url(),title:await page.title(),file,capturedAt:Date.now(),navigationStatus,snapshot:snapshot.slice(0,30000),text:text.slice(0,30000),textTruncated:text.length>30000,...frameEvidence,settlement,...(trustedBinding?{binding:trustedBinding}:{})};
       const textEvidence=Buffer.from(JSON.stringify(observation));const jsonFile=file.replace('.png','.json');
       writeFileSync(resolve(directory,'evidence',jsonFile),textEvidence,{mode:0o600});
       artifacts.push(...[{name:file,type:'image/png',bytes:pixels},{name:jsonFile,type:'application/json',bytes:textEvidence}].map(f=>({id:randomUUID(),name:f.name,type:f.type,size:f.bytes.length,sha256:createHash('sha256').update(f.bytes).digest('hex'),role:input.role,viewport:input.viewport,settled:settlement.settled})));

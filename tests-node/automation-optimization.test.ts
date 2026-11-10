@@ -47,6 +47,27 @@ test('quality workflow keeps original site, frozen inputs/model/rules, independe
   }finally{await f.close();}
 });
 
+test('repair keeps its exact baseline report while preserving the required image evidence contract',async()=>{
+  const f=await fixture();try{
+    const baseline=f.finish(f.root);const root=f.advance(),action=f.decision();delete action.imageEvidence;
+    assert.throws(()=>applyOptimizationAction(root,action,f.store,f.settings),/图片/);
+    const repair=f.repair();assert.deepEqual(repair.repairEvidence,{reportId:baseline.id,files:['image.png']});assert.equal(f.store.task(baseline.id)!.report!.summary,'独立报告');
+  }finally{await f.close();}
+});
+
+test('reassessment preserves the old report and policy, replaces only the current review pointer, and corrects only zero-request planner retries',async()=>{
+  for(const paid of [false,true]){
+    const f=await fixture();try{
+      const old=f.finish(f.root),root=f.advance();root.status='interrupted';root.stopped=true;root.optimization!.state='stopped';root.optimization!.stoppedAt=Date.now();root.followup!.state='interrupted';root.followup!.attempts=5;root.followup!.tokens=paid?100:0;f.store.put(root);
+      const report=structuredClone(old.report),policy=structuredClone(root.optimization!.policy);
+      const response=await f.app.inject({method:'POST',url:`/api/automation/tasks/${old.id}/reassess`,headers:f.headers});assert.equal(response.statusCode,200,response.body);
+      const child=response.json(),saved=f.store.task(root.id)!;
+      assert.notEqual(child.id,old.id);assert.deepEqual(f.store.task(old.id)!.report,report);assert.equal(child.versionId,old.versionId);assert.equal(child.rule.hash,old.rule!.hash);assert.equal(child.siteRevision,old.siteRevision);assert.equal(child.optimizationRootId,root.id);assert.deepEqual(saved.optimization!.policy,policy);assert.equal(saved.optimization!.rounds.at(-1)!.evaluationTaskId,child.id);assert.equal(saved.followup!.attempts,paid?5:0);assert.equal(saved.followup!.tokens,paid?100:0);
+      assert.equal((await f.app.inject({method:'POST',url:`/api/automation/tasks/${old.id}/reassess`,headers:f.headers})).statusCode,409);
+    }finally{await f.close();}
+  }
+});
+
 test('each viewport and required evidence matter; scope-excluded uncertainty does not veto the objective',async()=>{
   const f=await fixture();try{
     const report=f.report(f.root,90,84);assert.equal(targetReached(f.root,report),false);report.scores[1].value=86;
@@ -196,11 +217,29 @@ test('worker executes repair and independent evaluation serially without changin
   const f=await fixture();let worker:AutomationWorker|undefined;try{
     f.settings.autoEvaluate=false;f.vault.updateAutomation(f.settings);const calls:string[]=[];
     const generation:Execute=async(task,store)=>{calls.push('generation:'+task.optimizationRound);store.beginSiteChange(task);task.generation={...task.generation,prepared:true,conversationId:f.root.generation!.conversationId,deliveryState:'completed'};};
-    const evaluation:Execute=async(task)=>{calls.push('evaluation:'+task.optimizationRound);task.report=f.report(task,task.optimizationRound?88:76,task.optimizationRound?87:78);};
+    const evaluation:Execute=async(task)=>{calls.push('evaluation:'+task.optimizationRound);task.report=f.report(task,task.optimizationRound?88:76,task.optimizationRound?87:78);
+      const bytes=Buffer.from('89504e470d0a1a0a00000000','hex'),dir=join(f.directory,'automation-runs',task.id,'evidence');mkdirSync(dir,{recursive:true});
+      task.report.artifacts=['desktop','mobile'].flatMap(viewport=>['target','reference'].map(role=>{const name=randomUUID()+'.png';writeFileSync(join(dir,name),bytes);return {id:randomUUID(),name,type:'image/png',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),viewport:viewport as 'desktop'|'mobile',role:role as 'target'|'reference'};}));
+    };
     worker=new AutomationWorker(f.store,f.vault,f.directory,{generation,evaluation},()=>true,async task=>{calls.push('plan');return f.decision();});
     await worker.tick();for(let i=0;i<80&&f.store.task(f.root.id)!.optimization!.state!=='completed';i++){await new Promise(r=>setTimeout(r,10));await worker.tick();}
     assert.equal(f.store.task(f.root.id)!.optimization!.state,'completed',JSON.stringify({calls,events:f.store.events(f.root.id)}));assert.deepEqual(calls,['generation:undefined','evaluation:0','plan','generation:1','evaluation:1']);
     const root=f.store.task(f.root.id)!;assert.equal(root.optimization!.rounds.length,2);assert.equal(f.store.currentReport(root)!.report!.scores[0].value,88);
+  }finally{await worker?.stop();await f.close();}
+});
+
+test('missing required repair screenshots stop the planner after one preflight instead of spending all recovery attempts',async()=>{
+  const f=await fixture();let worker:AutomationWorker|undefined,calls=0;
+  try{
+    f.finish(f.root);f.advance();
+    worker=new AutomationWorker(f.store,f.vault,f.directory,{generation:async()=>{},evaluation:async()=>{}},()=>true,async task=>{
+      calls++;optimizationEvidence(task,f.store,f.directory);throw new Error('Missing images must stop before model delivery');
+    });
+    await worker.tick();
+    for(let i=0;i<80&&f.store.task(f.root.id)!.status!=='interrupted';i++)await new Promise(r=>setTimeout(r,10));
+    for(let i=0;i<3;i++)await worker.tick();
+    const saved=f.store.task(f.root.id)!;
+    assert.equal(saved.status,'interrupted');assert.equal(saved.optimization!.state,'stopped');assert.match(saved.error,/缺少 desktop \/ target/);assert.equal(calls,0);assert.equal(saved.followup!.attempts,0);assert.equal(saved.followup!.tokens,0);assert.equal(f.store.usage.entries(saved.id).length,0);
   }finally{await worker?.stop();await f.close();}
 });
 
@@ -250,6 +289,7 @@ test('quality followup sends actual pixel inputs and accepts only a host-observe
   const f=await fixture();try{
     const evaluation=f.finish(f.root),bytes=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64'),folder=join(f.directory,'automation-runs',evaluation.id,'evidence');mkdirSync(folder,{recursive:true});
     evaluation.report!.artifacts=['desktop','mobile'].flatMap(viewport=>['target','reference'].map(role=>{const name=randomUUID()+'.png';writeFileSync(join(folder,name),bytes);return {id:randomUUID(),name,type:'image/png',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),viewport:viewport as 'desktop'|'mobile',role:role as 'target'|'reference'};}));f.store.put(evaluation);const root=f.advance();
+    const unselected={...evaluation.report!.artifacts[0],id:randomUUID(),name:randomUUID()+'.png'};writeFileSync(join(folder,unselected.name),bytes);evaluation.report!.artifacts.push(unselected);f.store.put(evaluation);
     let pixels=0;
     const decision=await executeFollowup(root,f.store,f.vault,f.directory,new AbortController().signal,(_vault,_dir,env)=>{
       const client={runStreamed:async(input:unknown)=>({events:(async function*(){
@@ -257,10 +297,16 @@ test('quality followup sends actual pixel inputs and accepts only a host-observe
         assert.match(input[0].text,/"tool":"act","decision":/);
         assert.match(input[0].text,/acceptedAssetGaps 中逐项精确匹配的 URL \/ 路径才可豁免/);
         assert.match(input[0].text,/source limitations、sourceGaps、源站缺原件、请求失败或已有豁免数量均不代表新增豁免/);
+        assert.match(input[0].text,/repair-history\.json/);assert.match(input[0].text,/不为查旧委托读取远端全量会话/);
+        assert.match(input[0].text,/本轮开始时剩余模型请求 80 次/);
         const schema=JSON.parse(readFileSync(join(f.directory,'followup-runs',root.id,'tools-schema.json'),'utf8'));
         assert.ok(schema.properties.tool.enum.includes('get_report'));assert.ok(schema.properties.decision.properties.progress);
         const call=async(value:unknown)=>{const response=await fetch(env.FOLLOWUP_TOOLS_URL,{method:'POST',headers:{authorization:'Bearer '+env.FOLLOWUP_TOOLS_TOKEN,'content-type':'application/json'},body:JSON.stringify(value)});assert.equal(response.status,200);return response.json();};
         const task=await call({tool:'get_task'}),report=await call({tool:'get_report'});
+        assert.equal(report.result.comparison.hasPrevious,false);assert.equal(report.result.current.artifacts.length,4);
+        const saved=JSON.parse(readFileSync(join(f.directory,'followup-runs',root.id,report.result.reportFiles.current),'utf8'));
+        assert.deepEqual(saved,evaluation.report);assert.ok(saved);assert.ok(saved.artifacts.some((file:any)=>file.name===unselected.name));
+        assert.equal(JSON.parse(readFileSync(join(f.directory,'followup-runs',root.id,report.result.repairHistoryFile),'utf8'))[0].generationTaskId,root.id);
         await call({tool:'act',decision:{...f.decision(),evidence:[task.evidenceId,report.evidenceId],imageEvidence:[evaluation.report!.artifacts[0].name]}});
         yield {type:'turn.completed' as const,usage:{input_tokens:100,output_tokens:10,cached_input_tokens:0,cache_write_input_tokens:0,reasoning_output_tokens:0}};
       })()})};return {startThread:()=>client,resumeThread:()=>client};

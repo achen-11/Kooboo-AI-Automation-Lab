@@ -24,6 +24,12 @@ const assessmentContexts = computed<EvidenceContext[]>(() => data.value?.report?
   title: (data.value?.rule?.criteria.find(criterion => criterion.id === item.criterionId)?.label || item.criterionId) + ' · ' + names[item.viewport],
   detail: item.reason, evidence: item.evidence,
 })) || []);
+const recheckContexts = computed<EvidenceContext[]>(() => data.value?.report?.rechecks?.map(item => ({
+  title: data.value?.report?.review?.targets.find(target => target.id === item.id)?.title || item.id,
+  detail: item.reason, evidence: item.evidence,
+})) || []);
+const recheckStatus = { resolved: '已解决', remaining: '仍存在', unverified: '未验证' };
+const inheritedPathCount = computed(() => data.value?.report?.review?.inheritedPagePaths?.reduce((total, item) => total + item.paths.length, 0) || 0);
 const pages = computed(() => Math.max(1, Math.ceil(images.value.length / 12)));
 const visibleImages = computed(() => images.value.slice((page.value - 1) * 12, page.value * 12));
 function artifact(name: string) { return `/api/v1/automation/reports/${data.value?.taskId}/artifacts/${encodeURIComponent(name)}`; }
@@ -42,6 +48,15 @@ function openGallery(name: string) {
   <section v-if="data?.selectedRound?.brief||data?.selectedRound?.progress" class="panel settings-panel"><Disclosure v-if="data.selectedRound.brief" label="本轮修复委托"><pre class="task-technical">{{data.selectedRound.brief}}</pre></Disclosure><template v-if="data.selectedRound.progress"><p class="task-prose">{{data.selectedRound.progress.reason}}</p><Disclosure v-for="group in ([['resolved','已解决'],['remaining','仍存在'],['unverified','未验证'],['introduced','新增问题']] as const)" :key="group[0]" :label="group[1]"><ul class="task-text-list"><li v-for="text in data.selectedRound.progress[group[0]]" :key="text">{{text}}</li></ul></Disclosure></template></section>
   <section v-if="data && !data.report" class="panel empty-state"><FileText :size="30" /><h2>尚未生成有效报告</h2><p>任务仍在执行或尚未发起评测时，不显示零分。</p></section>
   <template v-if="data?.report">
+    <section v-if="data.report.review" class="panel settings-panel">
+      <div class="section-heading"><h2>本轮复评</h2><a class="text-action" :href="`/api/v1/automation/reports/${data.report.review.baselineTaskId}`" target="_blank" rel="noopener noreferrer">基线报告 JSON<ExternalLink :size="14" /></a></div>
+      <p>复验 {{ data.report.review.targets.length }} 项原问题；本轮独立审查 {{ data.report.review.reviewedAssessments.length }} 项评分、{{ data.report.review.reviewedRequirements.length }} 项交付要求。</p>
+      <p class="text-muted">程序核对当前证据一致后，继承 {{ data.report.review.inheritedAssessments.length }} 项评分、{{ data.report.review.inheritedRequirements.length }} 项交付判断<span v-if="inheritedPathCount">及 {{ inheritedPathCount }} 条静态路径的判断</span>。</p>
+      <Disclosure v-if="data.report.rechecks?.length" label="原问题复验明细"><div class="table-scroll"><table class="task-table">
+        <thead><tr><th>原问题</th><th>结论</th><th>依据</th></tr></thead>
+        <tbody><tr v-for="(item, index) in data.report.rechecks" :key="item.id"><td class="wrapping-cell">{{ recheckContexts[index]?.title }}</td><td>{{ recheckStatus[item.status] }}</td><td class="wrapping-cell">{{ item.reason }}<div class="evidence-links"><template v-for="(file, fileIndex) in item.evidence" :key="file"><button v-if="isImage(file)" class="text-action" @click="viewer?.open(recheckContexts, index, file)"><Image :size="13" />{{ label(file, fileIndex) }}</button><a v-else :href="artifact(file)" download>{{ label(file, fileIndex) }}<Download :size="13" /></a></template></div></td></tr></tbody>
+      </table></div></Disclosure>
+    </section>
     <CompletenessReport v-if="data.report.completeness && data.taskId" :key="data.taskId" :task-id="data.taskId" />
     <section v-if="data.report.collectionTarget" class="panel settings-panel">
       <div class="section-heading"><h2>资料 → 站点核验</h2><span>{{ {complete:'通过',incomplete:'有缺失',unverified:'未验证',pending:'取证中'}[data.report.collectionTarget.state] }}</span></div>

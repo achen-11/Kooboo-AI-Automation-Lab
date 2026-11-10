@@ -3,6 +3,7 @@ import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
+import { FollowupRuntimeError } from './errors.js';
 
 export function readEvidence(directory: string, reportId: string, file: MaterialFile) {
   if(!/^[a-f0-9-]{36}$/i.test(reportId)||!/^[a-f0-9-]{36}\.png$/i.test(file.name)||file.type!=='image/png')throw new Error('修复图片必须来自有效报告 PNG');
@@ -11,7 +12,7 @@ export function readEvidence(directory: string, reportId: string, file: Material
   return {file,path,bytes,reportId};
 }
 /** A resumed planner thread already holds earlier pixels; only images new to the thread count against one request. */
-export function planningImageInput<T extends {file:MaterialFile}>(selected:readonly T[],alreadySent:ReadonlySet<string>,limit=6*1024*1024) {
+export function planningImageInput<T extends {file:MaterialFile}>(selected:readonly T[],alreadySent:ReadonlySet<string>,limit=16*1024*1024) {
   const attached:T[]=[],previous:T[]=[];let bytes=0;
   for(const item of selected){
     if(alreadySent.has(item.file.name)){previous.push(item);continue;}
@@ -37,6 +38,6 @@ export function optimizationEvidence(task: AutomationTask, store: AutomationStor
   }
   const ordered=[...current.report.issues.toSorted((a,b)=>({critical:0,major:1,minor:2}[a.severity]-{critical:0,major:1,minor:2}[b.severity])).flatMap(i=>i.evidence),...current.report.assessments.toSorted((a,b)=>(a.score??0)-(b.score??0)).flatMap(a=>a.evidence)];
   for(const name of ordered){const file=current.report.artifacts.find(f=>f.name===name&&f.type==='image/png');if(file)add(current,file);}
-  for(const viewport of ['desktop','mobile'])for(const role of ['target','reference'])if(!selected.some(i=>i.reportId===current.id&&i.file.viewport===viewport&&i.file.role===role))throw new Error(`优化缺少 ${viewport} / ${role} 的有效图片，需要先补齐独立取证`);
+  for(const viewport of ['desktop','mobile'])for(const role of ['target','reference'])if(!selected.some(i=>i.reportId===current.id&&i.file.viewport===viewport&&i.file.role===role))throw new FollowupRuntimeError(`优化缺少 ${viewport} / ${role} 的有效图片，需要先补齐独立取证`,['补齐该视口与角色的独立评测证据，再继续修复分析；不会重试缺少图片的相同分析。']);
   return {current,previous,selected};
 }

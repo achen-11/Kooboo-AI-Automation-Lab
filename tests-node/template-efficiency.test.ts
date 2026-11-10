@@ -79,6 +79,26 @@ test('manifest expansion re-prepares and reviews the new scope instead of publis
   }finally{f.close();}
 });
 
+test('a static-page batch exposes only its assigned paths, preserving the complete frozen manifest for final validation',()=>{
+  const f=fixture();try{
+    const paths=Array.from({length:15},(_,i)=>'/page-'+i);f.manifest.items=[{...f.manifest.items[0],paths,expectedCount:15,expectedKeys:paths,samples:paths}];
+    const before=structuredClone(f.manifest),parts=templateReviewBatches(f.task,f.manifest).flatMap(b=>b.manifest?.items||[]);
+    assert.deepEqual(parts.flatMap(p=>p.paths),paths);assert.deepEqual(parts.map(p=>p.expectedCount),[6,6,3]);assert.ok(parts.every(p=>p.expectedKeys===undefined&&p.samples===undefined));assert.deepEqual(f.manifest,before);
+  }finally{f.close();}
+});
+
+test('source URL mapping invalidates affected page checks while retaining independent criteria checkpoints',async()=>{
+  const f=fixture();try{
+    f.manifest.items=[{...f.manifest.items[0],paths:['https://source.test/']}];let calls=0;
+    const validate=(raw:any)=>({...raw,completeness:Array.isArray(raw.completeness)?{checks:raw.completeness}:raw.completeness}) as AutomationReport;
+    const review=async(batch:ReturnType<typeof templateReviewBatches>[number])=>{calls++;return {summary:batch.id,assessments:[],issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},scores:[],quality:'unverified',artifacts:[],...(batch.manifest?{completeness:{checks:[{id:'pages',status:'unverified',reason:'pending',evidence:[],checkedViewports:[],sampledPaths:[],checkedKeys:[],actualCount:null}]}}:{})} as AutomationReport;};
+    const input={...f,manifest:()=>f.manifest,validate,review,prepare:async()=>{}};
+    const batches=templateReviewBatches(f.task,f.manifest);await reviewTemplateBatches(input);assert.equal(calls,batches.length);
+    await reviewTemplateBatches({...input,sourceBaseUrl:'https://source.test/'});assert.equal(calls,batches.length+1);
+    await reviewTemplateBatches({...input,sourceBaseUrl:'https://source.test/'});assert.equal(calls,batches.length+1,'mapped page result is also durable');
+  }finally{f.close();}
+});
+
 test('long repair PNGs are decoded and tiled with complete pixel coverage and immutable original mapping',()=>{
   const f=fixture();try{const width=390,height=10075,data=Buffer.alloc(width*height*4);for(let y=0;y<height;y++)for(let x=0;x<width;x++){const i=(y*width+x)*4;data[i]=y%251;data[i+1]=x%251;data[i+3]=255;}
     const bytes=PNG.sync.write({width,height,data}),file:MaterialFile={id:randomUUID(),name:randomUUID()+'.png',size:bytes.length,sha256:hash(bytes),type:'image/png'};
@@ -86,6 +106,17 @@ test('long repair PNGs are decoded and tiled with complete pixel coverage and im
     for(const item of result.mapping){assert.equal(item.region.y,y);assert.equal(item.sourceHash,file.sha256);assert.ok(item.width<=2048&&item.height<=2048);const decoded=PNG.sync.read(readFileSync(resolve(f.work,'adapted',item.file)));assert.deepEqual(decoded.data,data.subarray(y*width*4,(y+item.region.height)*width*4));y+=item.region.height;}
     assert.equal(hash(bytes),file.sha256);assert.throws(()=>adaptRepairImages([{file:{...file,sha256:'0'.repeat(64)},bytes,reportId:f.task.id}],resolve(f.work,'bad')),/校验失败/);
     const corrupt=Buffer.from(bytes);corrupt[corrupt.length-5]^=1;assert.throws(()=>adaptRepairImages([{file:{...file,sha256:hash(corrupt)},bytes:corrupt,reportId:f.task.id}],resolve(f.work,'corrupt')),/无法解码/);
+  }finally{f.close();}
+});
+
+test('repair evidence above one message limit is batched without losing regions or shrinking text',()=>{
+  const f=fixture();try{
+    const width=1,height=43009,bytes=PNG.sync.write({width,height,data:Buffer.alloc(width*height*4,255)}),file:MaterialFile={id:randomUUID(),name:randomUUID()+'.png',size:bytes.length,sha256:hash(bytes),type:'image/png'};
+    const first=adaptRepairImages([{file,bytes,reportId:f.task.id}],resolve(f.work,'batches'));
+    assert.deepEqual(first.batches.map(b=>b.images.length),[20,2]);assert.equal(first.mapping.reduce((n,m)=>n+m.region.height,0),height);
+    assert.deepEqual(first.batches.flatMap(b=>b.mapping),first.mapping);assert.ok(first.mapping.every(m=>m.width===width));
+    const second=adaptRepairImages([{file,bytes,reportId:f.task.id}],resolve(f.work,'batches'));assert.equal(first.planKey,second.planKey);
+    assert.ok(first.batches.every(b=>b.images.reduce((n,i)=>n+Buffer.byteLength(i.uri.split(',')[1]),0)<=16*1024*1024));
   }finally{f.close();}
 });
 

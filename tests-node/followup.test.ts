@@ -41,6 +41,22 @@ async function fixture(){
 async function until(check:()=>boolean){const end=Date.now()+3000;while(!check()){if(Date.now()>end)throw new Error('state did not settle');await new Promise(r=>setTimeout(r,5));}}
 const idle:Execute=async()=>{};
 
+test('followup may pass five minutes but still stops at its original cumulative remaining time',async(context)=>{
+  const f=await fixture();let worker:AutomationWorker|undefined,signal:AbortSignal|undefined;
+  try{
+    const task=f.create();task.learningPolicy={...task.learningPolicy!,use:false,collect:false};
+    f.automationStore.scheduleFollowup(task,{...f.settings.followup,maxMinutes:20});task.followup!.elapsedMs=2*60000;task.followup!.tokens=123;f.automationStore.put(task);
+    context.mock.timers.enable({apis:['setTimeout']});
+    worker=new AutomationWorker(f.automationStore,f.vault,f.directory,{generation:idle,evaluation:idle},()=>true,async(_task,_store,_vault,_directory,activeSignal)=>{
+      signal=activeSignal;return await new Promise<FollowupAction>((_resolve,reject)=>{activeSignal.addEventListener('abort',()=>reject(activeSignal.reason),{once:true});});
+    });
+    await worker.tick();await new Promise<void>(done=>setImmediate(done));assert.ok(signal);
+    context.mock.timers.tick(6*60000);assert.equal(signal.aborted,false,'an undocumented five-minute cutoff must not restart the analysis');
+    context.mock.timers.tick(12*60000);assert.equal(signal.aborted,true);assert.match(signal.reason.message,/累计时间预算/);
+    await new Promise<void>(done=>setImmediate(done));const saved=f.automationStore.task(task.id)!;assert.equal(saved.followup!.policy.maxMinutes,20);assert.equal(saved.followup!.tokens,123);assert.equal(saved.followup!.attempts,1);
+  }finally{context.mock.timers.reset();if(worker)await worker.stop();await f.close();}
+});
+
 test('evaluation validation returns all missing screenshot roles to the same model session and bounds repairs',async()=>{
   const f=await fixture();
   try{

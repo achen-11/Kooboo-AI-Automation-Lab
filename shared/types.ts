@@ -139,7 +139,7 @@ export interface RuntimeSettings {
   paused: boolean;
   execution: { timeoutSeconds: number; captureAttempts: number };
   model: { endpoint: string; name: string; apiKey: string };
-  environments: { id: string; name: string; origin: string; apiOrigin: string; token: string; delivery?: import('./automation.js').DeliveryPolicy & {token:string} }[];
+  environments: { id: string; name: string; origin: string; apiOrigin: string; token: string; defaultRootDomain?: string; delivery?: import('./automation.js').DeliveryPolicy & {token:string} }[];
 }
 export interface PublicSettings extends Omit<RuntimeSettings, 'model' | 'environments' | 'updateSource'> {
   model: Omit<RuntimeSettings['model'], 'apiKey'> & { hasApiKey: boolean };

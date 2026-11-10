@@ -2,7 +2,7 @@ import { randomUUID } from 'node:crypto';
 import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
-import { Pending, GenerationInputError } from './errors.js';
+import { Pending, GenerationInputError, FollowupRuntimeError } from './errors.js';
 import { prepareGenerationContext, assertGenerationInput, cleanupGenerationContext } from './generation-context.js';
 
 import { koobooClient, siteIdentity, refreshSite, probeSite } from './kooboo.js';
@@ -19,6 +19,7 @@ import { frozenCollectionAssetGapGuidance, preflightCollectionTarget } from './c
 import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, type SourceVisualIndex } from './collection/source-visual.js';
 import { adaptRepairImages } from './repair-images.js';
 import { resolve } from 'node:path';
+import { normalizeRootDomain, parseRootDomains } from '../../shared/kooboo-domains.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
@@ -49,11 +50,13 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       const adopted={id:randomUUID(),resourceId:task.resourceId,versionId:task.versionId,environmentId:task.environmentId,siteId:siteIdentity(matches[0]),name:slug,url:'',createdAt:Date.now()};
       store.saveSite(adopted);task.generatedSiteId=adopted.id;store.put(task);throw new Pending('已找到并绑定先前创建的站点，将在下一次执行中继续准备；未重复建站。');
     }
-    const domains=await request('Domain/Available');
-    const domainList=Array.isArray(domains)?domains:[];
-    const root=domainList.map((d:any)=>typeof d==='string'?d:d.domainName||d.domain||d.name||d.rootDomain).find((d:unknown)=>typeof d==='string'&&d);
+    const domains=parseRootDomains(await request('Domain/Available'));
+    // Legacy tasks without a choice freeze it before the first creation attempt.
+    const root=normalizeRootDomain(task.generation.rootDomain||environment.defaultRootDomain||domains[0]?.domainName||'');
     if(!root)throw new Error('Kooboo 未返回可用根域名，请核对连接环境');
-    store.event(task.id,`准备新站 ${slug}；创建结果不确定时停止，不自动重发创建请求`);
+    task.generation.rootDomain=root;store.put(task);
+    if(!domains.some(domain=>domain.domainName===root))throw new FollowupRuntimeError(`建站根域名 ${root} 在当前 Kooboo 环境中已不可用，请核对环境域名后重试；不会自动改用其他域名。`,['在原 Kooboo 环境恢复所选根域名后重试；或停止本任务，选择可用根域名新建任务。']);
+    store.event(task.id,`准备新站 ${slug}；根域名 ${root}；创建结果不确定时停止，不自动重发创建请求`);
     let created:any;task.generation.createAttempted=true;store.put(task);
     try{
       created=task.scenario==='upgrade'

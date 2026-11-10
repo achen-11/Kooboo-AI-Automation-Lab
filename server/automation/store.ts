@@ -198,7 +198,7 @@ export class AutomationStore {
   }
   event(id: string, message: string) { this.db.prepare('INSERT INTO auto_events(task_id,time,message) VALUES(?,?,?)').run(id,Date.now(),this.redact(message).slice(0,16000)); }
   events(id: string) { return this.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq').all(id); }
-  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule; optimization?: Partial<OptimizationPolicy>; optimizationRootId?: string; optimizationRound?: number }, settings: AutomationSettings) {
+  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; rootDomain?: string; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule; optimization?: Partial<OptimizationPolicy>; optimizationRootId?: string; optimizationRound?: number }, settings: AutomationSettings) {
     return this.db.transaction(() => input.resourceIds.map(id => {
       const resource = this.resource(id); if (!resource) throw new Conflict('资源不存在');
       const version = input.versionId ? this.version(input.versionId) : this.versions(id)[0];
@@ -215,6 +215,7 @@ export class AutomationStore {
       const now = Date.now();
       const task: AutomationTask = { id:randomUUID(),kind:input.kind,resourceId:id,versionId:version.id,resourceName:version.name,scenario:version.scenario,scope:input.scope,environmentId:site?.environmentId||input.environmentId,generatedSiteId:site?.id||null,parentId:input.parentId||null,message,status:'queued',stopped:true,createdAt:now,updatedAt:now,error:'',context:'',threadId:'',rule:rule||null,stage:input.kind==='generation'?'prepare':'evaluation',report:null,siteUrl:site?.url||'',model:null };
       task.optimizationRootId=input.optimizationRootId;task.optimizationRound=input.optimizationRound;
+      if(!site&&input.kind==='generation'&&input.rootDomain)task.generation={rootDomain:input.rootDomain};
       const parent=input.parentId?this.task(input.parentId):undefined;
       if(parent?.autonomy){
         task.autonomy=createAutonomousExecution(task.message);

@@ -28,6 +28,7 @@ import { CollectionStore } from './collection/store.js';
 import { ManifestStore, manifestInput } from './completeness.js';
 import { preflightCollectionTarget } from './collection/target-verification.js';
 import { registerResourceFolderApi } from './resource-folders.js';
+import { rootDomainSchema } from '../lib/validation.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -47,7 +48,8 @@ const prompt=z.string().min(1).max(30000);
 const followupInput=z.object({enabled:z.boolean(),concurrency:z.number().int().min(1).max(3),maxAttempts:z.number().int().min(1).max(20),maxMinutes:z.number().int().min(1).max(120),maxTokens:z.number().int().min(1000).max(1000000000),maxRequests:z.number().int().min(1).max(1000).optional(),sop:z.string().trim().min(1).max(50000)});
 const optimizationInput=z.object({targetScore:z.number().min(1).max(100),maxRounds:z.number().int().min(1).max(10),maxCostCny:z.number().positive().max(1000000).nullable()});
 const settingsInput=z.object({showExecutionBrowser:z.boolean().optional(),completeness:completenessSettingsSchema.optional(),learning:learningSettingsSchema.optional(),optimization:optimizationInput.extend({sop:z.string().trim().min(1).max(50000)}).optional(),followup:followupInput.default(defaultFollowupSettings),enabled:z.boolean(),autoEvaluate:z.boolean().default(true),generationConcurrency:z.number().int().min(1).max(10),evaluationConcurrency:z.number().int().min(1).max(5),timeoutMinutes:z.number().int().min(1).max(240),evaluationModel:z.string().trim().min(1).max(100),evaluationEndpoint:url,prompts:z.object({materials:prompt,migration:prompt,upgrade:prompt,'site-template':prompt,'app-template':prompt})});
-const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
+const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),rootDomain:rootDomainSchema.optional(),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
+  if(input.rootDomain&&(input.kind!=='generation'||input.generatedSiteId))ctx.addIssue({code:'custom',message:'根域名仅用于新建生成站，已有站点沿用原域名',path:['rootDomain']});
   if(input.collectionManifestId&&!input.collectionSnapshotId)ctx.addIssue({code:'custom',message:'选择来源清单必须同时指定冻结采集快照'});
   if(input.collectionSnapshotId&&(input.kind!=='generation'||input.scope!=='site'||input.resourceIds.length!==1||input.generatedSiteId||input.parentId))ctx.addIssue({code:'custom',message:'冻结快照复用仅支持单资源全站的新建生成任务，不可关联已有站点或父任务'});
 });
@@ -181,7 +183,10 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
         const owner=sourceManifest&&store.task(sourceManifest.taskId);
         if(!sourceManifest||!baseline||baseline.taskId!==snapshot.taskId||!owner||owner.resourceId!==input.resourceIds[0]||owner.versionId!==snapshot.inputVersionId||sourceManifest.id!==snapshot.manifestId&&(owner.collectionId!==snapshot.collectionId||owner.collectionVersionId!==snapshot.id))throw new Conflict('来源清单不属于所选冻结快照及固定输入');
       }
-      const value={items:store.create({...input,...(snapshot?{versionId:snapshot.inputVersionId}:{})},executionSettings())};
+      // Resolve the default inside the idempotent transaction so retries keep the original choice.
+      const rootDomain=input.kind==='generation'&&!input.generatedSiteId
+        ?input.rootDomain||vault.get().environments.find(e=>e.id===input.environmentId)?.defaultRootDomain||undefined:undefined;
+      const value={items:store.create({...input,rootDomain,...(snapshot?{versionId:snapshot.inputVersionId}:{})},executionSettings())};
       for(const task of value.items){
         if(snapshot&&sourceManifest&&baseline){
           task.collectionId=snapshot.collectionId;task.collectionVersionId=snapshot.id;task.requirementsEnabled=true;
@@ -222,7 +227,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.get('/api/automation/tasks/:id/sections/:section',async(request,reply)=>{
     const {id,section}=params.extend({section:z.enum(['execution','input','report','delivery'])}).parse(request.params),task=store.task(id);
     if(!task)return reply.code(404).send({error:'任务不存在'});
-    if(section==='input')return {message:task.message,version:store.version(task.versionId),rule:task.rule,threadId:task.threadId,model:task.model,optimization:task.optimization?{policy:task.optimization.policy}:undefined};
+    if(section==='input')return {message:task.message,version:store.version(task.versionId),rule:task.rule,threadId:task.threadId,model:task.model,rootDomain:task.generation?.rootDomain,optimization:task.optimization?{policy:task.optimization.policy}:undefined};
     if(section==='execution'){
       const q=pagination.extend({taskId:uuid.optional()}).parse(request.query);if(q.taskId&&!executionTaskIds(task).includes(q.taskId))throw new Conflict('执行记录不属于本工作流');const selected=q.taskId?store.task(q.taskId)!:task;const total=Number(store.db.prepare('SELECT COUNT(*) AS total FROM auto_events WHERE task_id=?').get(selected.id).total),pages=Math.max(1,Math.ceil(total/q.pageSize)),page=Math.min(q.page,pages);
       const items=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT ? OFFSET ?').all(selected.id,q.pageSize,(page-1)*q.pageSize);

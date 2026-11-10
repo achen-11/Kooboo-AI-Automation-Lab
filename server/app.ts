@@ -11,7 +11,7 @@ import { Vault } from './lib/vault.js';
 import { listRules, parseRule } from './lib/rules.js';
 import { chromium } from 'playwright';
 import { submissionSchema, webUrl, environmentConnectionSchema } from './lib/validation.js';
-import { testEnvironment } from './lib/kooboo.js';
+import { testEnvironment, availableRootDomains } from './lib/kooboo.js';
 import { loginKooboo, KoobooLoginError } from './lib/kooboo-auth.js';
 import { Artifacts } from './lib/artifacts.js';
 import { scoringStatus } from '../shared/result.js';
@@ -158,6 +158,13 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
     if (!environment) return reply.code(404).send({ error: '环境不存在，请先保存' });
     try { return { ok: true, sites: await testEnvironment(environment) }; }
     catch (error) { return reply.code(422).send({ error: error instanceof Error ? error.message : '连接失败' }); }
+  });
+  app.get('/api/environments/:id/domains', async (request, reply) => {
+    const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
+    const environment = vault.get().environments.find(item => item.id === id);
+    if (!environment) return reply.code(404).send({ error: '环境不存在，请先保存' });
+    try { return { items: await availableRootDomains(environment) }; }
+    catch (error) { return reply.code(422).send({ error: error instanceof Error ? error.message : '根域名读取失败' }); }
   });
   app.get('/api/rules', async () => ({ items: store.rules().map((item) => ({ ...item.rule, hash: item.hash, calibrated: false })), defaultVersion: latestRuleVersion() }));
   app.get('/api/rule-drafts', async () => ({ items: store.drafts() }));

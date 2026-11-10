@@ -5,6 +5,7 @@ import { Save, Plus, Trash2, Copy, Eye, EyeOff, Cable, LoaderCircle, Pause, Play
 import BaseSelect from '../components/BaseSelect.vue';
 import Disclosure from '../components/Disclosure.vue';
 import KoobooLoginDialog from '../components/KoobooLoginDialog.vue';
+import KoobooRootDomainSelect from '../components/KoobooRootDomainSelect.vue';
 import { defaultDeliveryPolicy } from '../../../shared/automation';
 import type { PublicSettings } from '../../../shared/types';
 import type { KoobooLoginResult } from '../../../shared/kooboo-auth';
@@ -17,7 +18,7 @@ function initialForm() {
   return { threshold: settings.threshold as number, paused: settings.paused as boolean,
     execution: { timeoutSeconds: (settings.execution?.timeoutSeconds ?? 300) as number, captureAttempts: (settings.execution?.captureAttempts ?? 2) as number },
     model: { endpoint: settings.model.endpoint as string, name: settings.model.name as string, apiKey: '', clearKey: false, hasApiKey: settings.model.hasApiKey as boolean },
-    environments: (settings.environments as PublicSettings['environments']).map((env) => ({ ...env, token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,...env.delivery,hasToken:env.delivery?.hasToken||false,token:'',clearToken:false} })),
+    environments: (settings.environments as PublicSettings['environments']).map((env) => ({ ...env, defaultRootDomain: env.defaultRootDomain || '', token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,...env.delivery,hasToken:env.delivery?.hasToken||false,token:'',clearToken:false} })),
   };
 }
 const form = ref(initialForm());
@@ -39,7 +40,11 @@ async function save(): Promise<void> {
   catch (reason) { error.value = message(reason); }
   finally { saving.value = false; }
 }
-function addEnvironment(): void { form.value.environments.push({ id: crypto.randomUUID(), name: '', origin: '', apiOrigin: '', hasToken: false, token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,hasToken:false,token:'',clearToken:false} }); }
+function addEnvironment(): void { form.value.environments.push({ id: crypto.randomUUID(), name: '', origin: '', apiOrigin: '', hasToken: false, defaultRootDomain: '', token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,hasToken:false,token:'',clearToken:false} }); }
+function domainConnectionChanged(env: ReturnType<typeof initialForm>['environments'][number]): boolean {
+  const saved = platform.settings?.environments.find(item => item.id === env.id);
+  return !saved || saved.origin !== env.origin || saved.apiOrigin !== env.apiOrigin || !!env.token || env.clearToken;
+}
 function updateOrigin(index: number, value: string): void {
   const env = form.value.environments[index];
   if (env.apiOrigin === env.origin || !env.apiOrigin) env.apiOrigin = value;
@@ -52,7 +57,7 @@ function loginConnected(result: Extract<KoobooLoginResult, { status: 'connected'
   const baselineForm = JSON.parse(baseline.value) as ReturnType<typeof initialForm>;
   let previous = baselineForm.environments.find(env => env.id === saved.id);
   if (!previous) {
-    previous = { ...saved, token: '', clearToken: false, delivery: { ...defaultDeliveryPolicy, ...saved.delivery, hasToken: saved.delivery?.hasToken || false, token: '', clearToken: false } };
+    previous = { ...saved, defaultRootDomain: saved.defaultRootDomain || '', token: '', clearToken: false, delivery: { ...defaultDeliveryPolicy, ...saved.delivery, hasToken: saved.delivery?.hasToken || false, token: '', clearToken: false } };
     baselineForm.environments.push(previous);
   }
   const connected = { name: saved.name, origin: saved.origin, apiOrigin: saved.apiOrigin, hasToken: saved.hasToken, token: '', clearToken: false };
@@ -102,6 +107,7 @@ async function copy(value: string): Promise<void> {
           <label class="field"><span>平台访问地址</span><input v-model="env.apiOrigin" type="url" class="input" placeholder="默认与环境地址相同" required /></label>
         </div>
         <div class="connection-login"><button type="button" class="button secondary" :disabled="saving || !env.name.trim() || !env.origin || !env.apiOrigin" @click="loginDialog?.open(env)"><LogIn :size="17" />{{ env.hasToken ? '重新登录' : '登录连接' }}</button><span v-if="env.hasToken" class="text-muted small-text">访问凭据已保存</span></div>
+        <label class="field"><span>默认建站根域名</span><KoobooRootDomainSelect v-model="env.defaultRootDomain" :environment-id="env.id" :disabled="domainConnectionChanged(env)" /></label>
         <Disclosure label="手动填写访问令牌"><label class="field credential-field"><span>访问令牌 <small>{{ env.hasToken ? '已保存，留空保留' : 'Bearer Token' }}</small></span><div class="input-with-action"><input v-model="env.token" :type="reveal[env.id] ? 'text' : 'password'" autocomplete="new-password" :placeholder="env.hasToken ? '输入新令牌可替换当前令牌' : '填写 Kooboo 访问令牌'" /><button type="button" class="icon-button" :aria-label="reveal[env.id] ? '隐藏令牌' : '显示令牌'" @click="reveal[env.id] = !reveal[env.id]"><EyeOff v-if="reveal[env.id]" :size="18" /><Eye v-else :size="18" /></button></div></label></Disclosure>
         <label class="check-label"><input v-model="env.delivery.enabled" type="checkbox"/>启用跨环境交付</label>
         <div v-if="env.delivery.enabled" class="delivery-config"><label class="field"><span>迁移接口</span><input v-model="env.delivery.endpoint" type="url" class="input" required/></label><label class="field credential-field"><span>迁移服务令牌 <small>{{env.delivery.hasToken?'已保存，留空保留':'独立于 Kooboo 访问令牌'}}</small></span><input v-model="env.delivery.token" class="input" type="password" autocomplete="new-password"/></label><div class="form-grid"><label class="field"><span>交付方式</span><BaseSelect :model-value="env.delivery.auto?'auto':'manual'" @update:model-value="v=>env.delivery.auto=v==='auto'" :options="[{ value: 'manual', label: '评测后按需发起' }, { value: 'auto', label: '迁移 / 升级的全站评测后自动交付' }]" /></label><label class="field"><span>迁移接口超时（秒）</span><input v-model.number="env.delivery.timeoutSeconds" class="input" type="number" min="30" max="900" required/></label></div><label class="check-label"><input v-model="env.delivery.requirePassed" type="checkbox"/>源站评测通过后才允许交付</label><p class="text-muted small-text">交付去向由迁移服务决定，返回目标站后核验两端站点。保留源站；结果不确定时先核查回执。</p></div>

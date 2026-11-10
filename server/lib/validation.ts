@@ -1,6 +1,7 @@
 import { z } from 'zod';
 import { URL } from '../runtime.js';
 import { dimensionIdPattern, maxRuleDimensions } from '../../shared/rules.js';
+import { normalizeRootDomain } from '../../shared/kooboo-domains.js';
 z.config({ jitless: true });
 
 export const webUrl = z
@@ -73,6 +74,9 @@ export const environmentConnectionSchema = z.object({
   apiOrigin: webUrl.transform((url) => new URL(url).origin),
 });
 
+export const rootDomainSchema = z.string().trim().max(253).transform(normalizeRootDomain)
+  .pipe(z.string().min(1, '请选择建站根域名').regex(/^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*$/u, '根域名格式不正确'));
+
 export const settingsSchema = z
   .object({
     threshold: z.number().min(0).max(100),
@@ -87,6 +91,7 @@ export const settingsSchema = z
     environments: z
       .array(
         environmentConnectionSchema.extend({
+          defaultRootDomain: z.union([z.literal(''), rootDomainSchema]).optional(),
           token: z.string().max(10000).optional(),
           clearToken: z.boolean().optional(),
           delivery:z.object({enabled:z.boolean(),endpoint:webUrl,auto:z.boolean(),requirePassed:z.boolean(),timeoutSeconds:z.number().int().min(30).max(900),token:z.string().max(10000).optional(),clearToken:z.boolean().optional()}).optional(),

@@ -1,0 +1,179 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { createServer } from 'node:http';
+import { randomUUID } from 'node:crypto';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { tmpdir } from 'node:os';
+import { join } from 'node:path';
+import { createApp } from '../server/app.js';
+import { Vault } from '../server/lib/vault.js';
+import { executeGeneration } from '../server/automation/generator.js';
+import type { AutomationTask, Scenario } from '../shared/automation.js';
+
+async function fixture() {
+  const state = { domains: [{ domainName: 'first.test', sudDomainUseDash: false }, { domainName: 'chosen.test', sudDomainUseDash: true }],
+    domainStatus: 200, invalidJson: false, createStatus: 200, siteId: randomUUID(), requests: [] as string[], creates: [] as { path: string; body: Record<string, unknown> }[] };
+  const server = createServer(async (req, res) => {
+    const path = new URL(req.url!, 'http://localhost').pathname;
+    state.requests.push(path);
+    res.setHeader('Content-Type', 'application/json');
+    if (path === '/home') { assert.equal(req.headers.authorization, undefined); res.end('homepage'); return; }
+    assert.equal(req.headers.authorization, 'Bearer private-test-token');
+    if (path.endsWith('/Domain/Available')) {
+      res.statusCode = state.domainStatus;
+      res.end(state.invalidJson ? 'private-test-token' : JSON.stringify(state.domains)); return;
+    }
+    if (path.endsWith('/Site/Create') || path.endsWith('/Transfer/ByLevel')) {
+      let text = ''; for await (const chunk of req) text += chunk;
+      state.creates.push({ path, body: JSON.parse(text) }); res.statusCode = state.createStatus;
+      res.end(JSON.stringify({ siteId: state.siteId, taskId: 'transfer-task' })); return;
+    }
+    if (path.endsWith('/Site/List')) {
+      res.end(JSON.stringify([{ siteId: state.siteId, siteName: 'unrelated', homePageLink: origin + '/home' }])); return;
+    }
+    res.statusCode = 404; res.end('{}');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  const directory = mkdtempSync(join(tmpdir(), 'root-domains-'));
+  const services = await createApp({ directory, serveWeb: false, startWorker: false });
+  const login = await services.app.inject({ method: 'POST', url: '/api/login' });
+  const headers = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+  const environmentId = randomUUID();
+  services.vault.update({ ...services.vault.get(), environments: [{ id: environmentId, name: 'Test', origin, apiOrigin: origin, token: 'private-test-token', defaultRootDomain: 'chosen.test' }] });
+  const save = async (scenario: Scenario = 'materials') => {
+    const result = await services.app.inject({ method: 'POST', url: '/api/automation/resources', headers,
+      payload: { name: 'Example', scenario, description: '', contentUrl: scenario === 'upgrade' ? 'https://content.test' : '', referenceUrl: scenario === 'upgrade' ? 'https://reference.test' : '', externalSource: '', externalId: '', files: [] } });
+    assert.equal(result.statusCode, 201, result.body); return result.json();
+  };
+  const create = async (patch: Record<string, unknown> = {}, key = randomUUID()) => {
+    const resource = await save();
+    return services.app.inject({ method: 'POST', url: '/api/automation/tasks', headers: { ...headers, 'idempotency-key': key },
+      payload: { resourceIds: [resource.id], kind: 'generation', scope: 'homepage', environmentId, ...patch } });
+  };
+  return { ...services, state, directory, headers, environmentId, origin, save, create,
+    async close() { await services.app.close(); server.closeAllConnections(); await new Promise<void>(resolve => server.close(() => resolve())); rmSync(directory, { recursive: true, force: true }); } };
+}
+
+test('environment default roots survive encrypted save, restart, import and credential reconnect', async () => {
+  const f = await fixture();
+  const importedDirectory = mkdtempSync(join(tmpdir(), 'root-domain-import-'));
+  try {
+    const settings = f.vault.get(); settings.environments[0].defaultRootDomain = ' .CHOSEN.test ';
+    const saved = await f.app.inject({ method: 'PUT', url: '/api/settings', headers: f.headers, payload: settings });
+    assert.equal(saved.statusCode, 200); assert.equal(saved.json().environments[0].defaultRootDomain, 'chosen.test');
+    assert.ok(!saved.body.includes('private-test-token'));
+    assert.equal(new Vault(f.directory).get().environments[0].defaultRootDomain, 'chosen.test');
+    const copy = new Vault(importedDirectory); copy.importInitial(f.vault.get(), f.vault.credentials);
+    assert.equal(copy.public().environments[0].defaultRootDomain, 'chosen.test');
+    const expected = f.vault.get().environments[0];
+    f.vault.connectEnvironment({ id: expected.id, name: expected.name, origin: expected.origin, apiOrigin: expected.apiOrigin }, expected.token, expected);
+    assert.equal(f.vault.get().environments[0].defaultRootDomain, 'chosen.test');
+    const oldClient = f.vault.get(); delete oldClient.environments[0].defaultRootDomain;
+    f.vault.update(oldClient); assert.equal(f.vault.get().environments[0].defaultRootDomain, 'chosen.test');
+    oldClient.environments[0].defaultRootDomain = '';
+    f.vault.update(oldClient); assert.equal(f.vault.get().environments[0].defaultRootDomain, '');
+  } finally { await f.close(); rmSync(importedDirectory, { recursive: true, force: true }); }
+});
+
+test('available roots use saved environment credentials, preserve separators and reject unauthorized access', async () => {
+  const f = await fixture(); try {
+    const path = `/api/environments/${f.environmentId}/domains`;
+    assert.equal((await f.app.inject({ url: path })).statusCode, 401);
+    assert.equal((await f.app.inject({ url: path, headers: { authorization: `Bearer ${f.vault.credentials.readToken}` } })).statusCode, 401);
+    assert.equal(f.state.requests.length, 0);
+    const result = await f.app.inject({ url: path, headers: f.headers });
+    assert.equal(result.statusCode, 200); assert.deepEqual(result.json().items, f.state.domains);
+    assert.equal((await f.app.inject({ url: `/api/environments/${randomUUID()}/domains`, headers: f.headers })).statusCode, 404);
+    f.state.invalidJson = true;
+    const invalid = await f.app.inject({ url: path, headers: f.headers });
+    assert.equal(invalid.statusCode, 422); assert.ok(!invalid.body.includes('private-test-token'));
+    f.state.domainStatus = 401;
+    const denied = await f.app.inject({ url: path, headers: f.headers });
+    assert.equal(denied.statusCode, 422); assert.match(denied.json().error, /登录/);
+  } finally { await f.close(); }
+});
+
+test('batch enqueue freezes the default or explicit root, and idempotent retries ignore later default changes', async () => {
+  const f = await fixture(); try {
+    const resources = [await f.save(), await f.save()];
+    const headers = { ...f.headers, 'idempotency-key': randomUUID() };
+    const payload = { resourceIds: resources.map(r => r.id), kind: 'generation', scope: 'homepage', environmentId: f.environmentId };
+    const result = await f.app.inject({ method: 'POST', url: '/api/automation/tasks', headers, payload });
+    assert.equal(result.statusCode, 201); const tasks = result.json().items as AutomationTask[];
+    assert.deepEqual(tasks.map(t => t.generation?.rootDomain), ['chosen.test', 'chosen.test']);
+    const settings = f.vault.get(); settings.environments[0].defaultRootDomain = 'first.test'; f.vault.update(settings);
+    const repeated = await f.app.inject({ method: 'POST', url: '/api/automation/tasks', headers, payload });
+    assert.deepEqual(repeated.json(), result.json());
+    const override = await f.create({ rootDomain: ' .CHOSEN.test ' });
+    assert.equal(override.json().items[0].generation.rootDomain, 'chosen.test');
+    const stored = f.automationStore.task(tasks[0].id)!; assert.equal(stored.generation?.rootDomain, 'chosen.test');
+    const section = await f.app.inject({ url: `/api/automation/tasks/${stored.id}/sections/input`, headers: f.headers });
+    assert.equal(section.json().rootDomain, 'chosen.test');
+    assert.equal(f.state.requests.length, 0, 'queue submission does not contact or create a Kooboo site');
+    const conflicting = await f.app.inject({ method: 'POST', url: '/api/automation/tasks', headers, payload: { ...payload, rootDomain: 'first.test' } });
+    assert.equal(conflicting.statusCode, 409);
+  } finally { await f.close(); }
+});
+
+test('root selection rejects URLs and cannot change an existing site during continuation or evaluation', async () => {
+  const f = await fixture(); try {
+    for (const rootDomain of ['https://chosen.test', 'chosen.test/path', 'chosen.test:80', 'bad domain', '']) {
+      const result = await f.create({ rootDomain }); assert.equal(result.statusCode, 400, rootDomain);
+    }
+    const resource = await f.save();
+    const site = { id: randomUUID(), resourceId: resource.id, versionId: f.automationStore.versions(resource.id)[0].id, environmentId: f.environmentId, siteId: randomUUID(), name: 'Existing', url: f.origin + '/home', createdAt: Date.now() };
+    f.automationStore.saveSite(site);
+    for (const kind of ['generation', 'evaluation']) {
+      const payload = { resourceIds: [resource.id], environmentId: f.environmentId, generatedSiteId: site.id, kind, scope: 'homepage' };
+      const rejected = await f.app.inject({ method: 'POST', url: '/api/automation/tasks', headers: { ...f.headers, 'idempotency-key': randomUUID() }, payload: { ...payload, rootDomain: 'chosen.test' } });
+      assert.equal(rejected.statusCode, 400);
+      const accepted = await f.app.inject({ method: 'POST', url: '/api/automation/tasks', headers: { ...f.headers, 'idempotency-key': randomUUID() }, payload });
+      assert.equal(accepted.statusCode, 201); assert.equal(accepted.json().items[0].generation?.rootDomain, undefined);
+    }
+  } finally { await f.close(); }
+});
+
+for (const scenario of ['materials', 'upgrade'] as const) test(`${scenario} creation passes the frozen root to Kooboo, independent of list order and current default`, async () => {
+  const f = await fixture(); try {
+    const resource = await f.save(scenario);
+    const task = f.automationStore.create({ resourceIds: [resource.id], kind: 'generation', scope: 'homepage', environmentId: f.environmentId, rootDomain: 'chosen.test', requirements: '' }, f.vault.automation())[0];
+    task.generation = { ...task.generation, deliveryState: 'completed', transferComplete: true };
+    const settings = f.vault.get(); settings.environments[0].defaultRootDomain = 'first.test'; f.vault.update(settings);
+    await executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000));
+    assert.equal(f.state.creates.length, 1);
+    const { path, body } = f.state.creates[0];
+    assert.equal(path, scenario === 'upgrade' ? '/_api/v2/Transfer/ByLevel' : '/_api/v2/Site/Create');
+    assert.equal(body.RootDomain || body.rootDomain, 'chosen.test');
+    assert.equal(body.SubDomain || body.subDomain, `auto-${task.id.slice(0, 12)}`);
+    assert.equal(task.siteUrl, f.origin + '/home');
+  } finally { await f.close(); }
+});
+
+test('an unavailable frozen root stops before creation and cannot silently switch to an available default', async () => {
+  const f = await fixture(); try {
+    const created = await f.create(); const task = created.json().items[0] as AutomationTask;
+    f.state.domains = [f.state.domains[0]];
+    await assert.rejects(executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)), /chosen\.test.*已不可用/);
+    assert.equal(task.generation?.createAttempted, undefined); assert.equal(f.state.creates.length, 0);
+    const settings = f.vault.get(); settings.environments[0].defaultRootDomain = 'first.test'; f.vault.update(settings);
+    const restored = f.automationStore.task(task.id)!;
+    await assert.rejects(executeGeneration(restored, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)), /chosen\.test.*已不可用/);
+    assert.equal(f.state.creates.length, 0);
+  } finally { await f.close(); }
+});
+
+test('legacy tasks pin their first root before an uncertain creation, and retries do not create a second site', async () => {
+  const f = await fixture(); try {
+    const settings = f.vault.get(); settings.environments[0].defaultRootDomain = ''; f.vault.update(settings);
+    const created = await f.create(); const task = created.json().items[0] as AutomationTask;
+    assert.equal(task.generation?.rootDomain, undefined);
+    f.state.createStatus = 503;
+    await assert.rejects(executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)), /禁止自动重复建站/);
+    const restored = f.automationStore.task(task.id)!;
+    assert.equal(restored.generation?.rootDomain, 'first.test'); assert.equal(restored.generation?.createAttempted, true);
+    f.state.domains.reverse();
+    await assert.rejects(executeGeneration(restored, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)), /禁止重复创建/);
+    assert.equal(f.state.creates.length, 1);
+  } finally { await f.close(); }
+});

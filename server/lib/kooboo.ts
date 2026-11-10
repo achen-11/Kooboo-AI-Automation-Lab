@@ -1,4 +1,5 @@
 import type { Evaluation, RuntimeSettings } from '../../shared/types.js';
+import { parseRootDomains } from '../../shared/kooboo-domains.js';
 
 async function api(environment: RuntimeSettings['environments'][number], path: string, signal: AbortSignal, body?: unknown): Promise<unknown> {
   const response = await fetch(`${environment.apiOrigin}/_api/v2/${path}`, {
@@ -15,6 +16,14 @@ export async function testEnvironment(environment: RuntimeSettings['environments
   const result = await api(environment, 'Site/List', signal);
   if (!Array.isArray(result)) throw new Error('环境未返回有效站点列表，请检查登录凭据');
   return result.length;
+}
+export async function availableRootDomains(environment: RuntimeSettings['environments'][number]) {
+  if (!environment.token) throw new Error('请先登录连接 Kooboo 环境');
+  try { return parseRootDomains(await api(environment, 'Domain/Available', AbortSignal.timeout(20000))); }
+  catch (error) {
+    if (error instanceof SyntaxError) throw new Error('根域名响应不是有效 JSON，请检查环境连接');
+    throw error;
+  }
 }
 export async function resolveTarget(evaluation: Evaluation, settings: RuntimeSettings, signal: AbortSignal): Promise<{ targetUrl: string; readme: string | null; warnings: string[] }> {
   if (evaluation.targetUrl && !evaluation.submission.inputs.materialsPath) return { targetUrl: evaluation.targetUrl, readme: null, warnings: [] };

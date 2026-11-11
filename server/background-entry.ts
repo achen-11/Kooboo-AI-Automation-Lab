@@ -5,6 +5,7 @@ import { Artifacts } from './lib/artifacts.js';
 import { Worker } from './worker.js';
 import { AutomationStore } from './automation/store.js';
 import { AutomationWorker } from './automation/worker.js';
+import { installBackgroundFailureMonitor } from './background-diagnostics.js';
 
 const directory = resolve(process.argv[2]);
 const vault = new Vault(directory);
@@ -16,6 +17,7 @@ const automationStore = new AutomationStore(store.db, value => {
   }
   return value.replace(/Bearer\s+[^\s"',;]+/gi, 'Bearer [已隐藏]');
 });
+installBackgroundFailureMonitor(directory,value=>automationStore.sanitize(value));
 const worker = new Worker(store, vault, new Artifacts(store.db, resolve(directory, 'artifacts')), directory);
 const automationWorker = new AutomationWorker(automationStore, vault, directory);
 const send = (message: unknown) => { if (process.connected) process.send?.(message, undefined, undefined, () => {}); };

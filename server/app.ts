@@ -304,9 +304,9 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   const diagnosticExports = registerDiagnosticApi(app, automationStore, vault, directory);
   registerUpdateApi(app, { directory, vault, transport: options.updateTransport, active: async () => {
     const owned = automationWorker instanceof BackgroundWorkers ? await automationWorker.quiesce() : automationWorker.ownedIds().length + Number(worker.busy);
-    const tasks = automationStore.headers().filter(task => !task.stopped || task.delivery?.stopped === false).length;
-    const legacy = Number((store.db.prepare("SELECT COUNT(*) AS count FROM runs WHERE status IN ('collecting','scoring')").get() as { count: number }).count);
-    return Math.max(owned, tasks + legacy) + Number(diagnosticExports.busy) + Number(modelTestRunning);
+    // The maintenance barrier observes real executor ownership, including legacy jobs.
+    // Historical unknown stops still fence retries, but do not own this process or block updates.
+    return owned + Number(diagnosticExports.busy) + Number(modelTestRunning);
   } });
 
   const dist = resolve(process.cwd(), 'dist');

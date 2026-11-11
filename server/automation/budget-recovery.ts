@@ -1,9 +1,33 @@
 import type { AutomationTask } from '../../shared/automation.js';
+import type { LearningRun } from '../../shared/experience.js';
 import type { AutomationStore } from './store.js';
 import { ExperienceStore } from './experience-store.js';
 import { Conflict } from '../lib/store.js';
 import { retainRequestReservation } from './request-budget.js';
 import { optimizationEvidence } from './optimization-evidence.js';
+
+export function assertWorkflowStopped(task: AutomationTask, store: AutomationStore, owns: (id: string) => boolean) {
+  const experiences = new ExperienceStore(store), workflowId = experiences.workflow(task).id;
+  const activeTask = store.tasks().some(t => experiences.workflow(t).id === workflowId && (!t.stopped || owns(t.id) || t.delivery?.stopped === false));
+  const learning = store.db.prepare("SELECT id,status FROM auto_learning_runs WHERE json_extract(json,'$.workflowId')=?").all(workflowId);
+  if (activeTask || learning.some(run => run.status === 'running' || owns(String(run.id)))) throw new Conflict('同工作流仍有活动执行，请等待全部停止后恢复');
+}
+
+/** Explicit reflection recovery retains estimates without declaring missing usage to be zero. */
+export function retainStoppedLearningReservations(run: LearningRun, store: AutomationStore, owns: (id: string) => boolean) {
+  const task = store.task(run.taskId);
+  if (!task) throw new Conflict('经验来源任务已不存在');
+  if (!store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_model_requests'").get()) return { count: 0, tokens: 0 };
+  const requests = store.db.prepare("SELECT id,charged FROM auto_model_requests WHERE account_id=? AND state IN ('active','unknown')").all(run.budgetId);
+  if (!requests.length) return { count: 0, tokens: 0 };
+  const workflowId = new ExperienceStore(store).workflow(task).id;
+  if (run.workflowId !== workflowId || run.budgetId !== 'experience:' + workflowId) throw new Conflict('经验预算不属于当前工作流');
+  assertWorkflowStopped(task, store, owns);
+  for (const request of requests) retainRequestReservation(store.db, String(request.id));
+  const tokens = requests.reduce((sum, r) => sum + Number(r.charged), 0);
+  store.event(task.id, `恢复复盘：保留同工作流 ${requests.length} 笔已停止经验请求的未知用量预占，共 ${tokens} token；解除请求阻塞，实际用量与费用仍待核算。`);
+  return { count: requests.length, tokens };
+}
 
 /** Old preflight retries are not model attempts. Prove this for the current window only. */
 export function correctUnsentPlanningAttempts(task:AutomationTask,store:AutomationStore,directory:string) {
@@ -28,10 +52,7 @@ export function retainStoppedFollowupReservations(task: AutomationTask, store: A
       AND r.state IN ('active','unknown')`).all(task.id,budgetId?'followup:' + budgetId:'','planning:' + task.id);
   if (!requests.length) return;
   if (!task.stopped || owns(task.id)) throw new Conflict('只能恢复已确认停止的任务');
-  const experiences = new ExperienceStore(store), workflowId = experiences.workflow(task).id;
-  const activeTask = store.tasks().some(t => experiences.workflow(t).id === workflowId && (!t.stopped || owns(t.id) || t.delivery?.stopped === false));
-  const activeLearning = store.db.prepare("SELECT id FROM auto_learning_runs WHERE status='running' AND json_extract(json,'$.workflowId')=?").get(workflowId);
-  if (activeTask || activeLearning) throw new Conflict('同工作流仍有活动执行，请等待全部停止后恢复');
+  assertWorkflowStopped(task, store, owns);
   for (const request of requests) retainRequestReservation(store.db, request.id);
   store.event(task.id, `恢复任务：保留 ${requests.length} 笔已停止跟进 / 分析请求的未知用量预占，共 ${requests.reduce((sum, r) => sum + Number(r.charged), 0)} token；解除请求阻塞，实际用量与费用仍待核算。`);
 }

@@ -18,7 +18,7 @@ const send=(message:unknown)=>{if(process.connected)process.send?.(message,undef
 worker.onOwnershipChanged=()=>send({type:'ownership',ids:worker.ownedIds()});
 let stopping:Promise<void>|undefined;
 const stop=()=>stopping||=(async()=>{await worker.stop();store.close();process.exit(0);})();
-process.on('message',(message:any)=>{if(message.type==='cancel')worker.cancel(message.id);if(message.type==='stop')void stop();});
+process.on('message',(message:any)=>{if(message.type==='cancel')worker.cancel(message.id);if(message.type==='stop')void stop();if(message.type==='quiesce')send({type:'quiesced',id:message.id,active:worker.ownedIds().length});});
 process.on('disconnect',()=>{void stop();});
 process.on('SIGTERM',()=>{void stop();});
 worker.start();send({type:'ready'});

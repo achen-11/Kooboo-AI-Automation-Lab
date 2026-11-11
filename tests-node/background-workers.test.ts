@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { existsSync, mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdtempSync, readFileSync, rmSync, statSync } from 'node:fs';
 import { tmpdir } from 'node:os';
 import { resolve } from 'node:path';
 import { randomUUID } from 'node:crypto';
@@ -9,6 +9,24 @@ import { createApp } from '../server/app.js';
 import { defaultAutomationSettings } from '../shared/automation.js';
 
 async function until(check:()=>boolean,timeout=10000){const end=Date.now()+timeout;while(!check()){if(Date.now()>end)throw new Error('Timed out waiting for background state');await delay(20);}}
+
+test('unexpected worker rejection preserves redacted diagnostics and leaves API available without replaying jobs',async()=>{
+  const directory=mkdtempSync(resolve(tmpdir(),'background-failure-'));
+  const f=await createApp({directory,serveWeb:false,backgroundEntry:new URL('./fixtures/background-crash.ts',import.meta.url)});
+  try{
+    const file=resolve(directory,'background-worker-failures.jsonl');
+    await until(()=>existsSync(file)&&readFileSync(file,'utf8').includes('unexpected-exit'));
+    const raw=readFileSync(file,'utf8'),entries=raw.trim().split('\n').map(line=>JSON.parse(line));
+    assert.equal(raw.includes('private-test-secret'),false);
+    assert.ok(entries.some(entry=>entry.kind==='uncaught-exception'&&entry.origin==='unhandledRejection'&&entry.message.includes('[redacted]')));
+    assert.ok(entries.some(entry=>entry.kind==='unexpected-exit'&&entry.code===1));
+    if(process.platform!=='win32')assert.equal(statSync(file).mode&0o777,0o600);
+    const login=await f.app.inject({method:'POST',url:'/api/login'}),headers={cookie:String(login.headers['set-cookie']).split(';')[0]};
+    assert.equal((await f.app.inject({url:'/api/session',headers})).statusCode,200);
+    assert.equal((await f.app.inject({url:'/api/health',headers})).json().workerReady,false);
+    assert.equal(f.automationStore.tasks().length,0);
+  }finally{await f.app.close();rmSync(directory,{recursive:true,force:true});}
+});
 
 test('HTTP and persisted cancellation remain responsive while the executor CPU is blocked',async()=>{
   const directory=mkdtempSync(resolve(tmpdir(),'background-isolation-'));

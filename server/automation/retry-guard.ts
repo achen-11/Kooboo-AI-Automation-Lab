@@ -16,3 +16,8 @@ export function rememberSiteRetry(task:AutomationTask,store:AutomationStore){
   store.db.exec('CREATE TABLE IF NOT EXISTS auto_template_retry_guard(task_id TEXT PRIMARY KEY,fingerprint TEXT NOT NULL)');
   store.db.prepare('INSERT OR REPLACE INTO auto_template_retry_guard VALUES(?,?)').run(task.id,value);
 }
+
+export function clearSiteRetry(task:AutomationTask,store:AutomationStore){
+  if(store.db.prepare("SELECT name FROM sqlite_master WHERE type='table' AND name='auto_template_retry_guard'").get())
+    store.db.prepare('DELETE FROM auto_template_retry_guard WHERE task_id=?').run(task.id);
+}

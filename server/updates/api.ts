@@ -47,7 +47,7 @@ export function registerUpdateApi(app: FastifyInstance, options: { directory: st
       catch { throw new Conflict('平台正在维护，请查看当前更新进度'); }
       // Marker prevents future claims; the IPC barrier observes claims that raced with creating it.
       const active = await options.active();
-      if (inflight || active) throw new Conflict(`还有 ${Math.max(active, inflight)} 项任务或操作未停止，请处理后重新检查并安装`);
+      if (inflight || active) throw new Conflict(`当前仍有 ${Math.max(active, inflight)} 项任务或操作正在执行，请等待结束后重新检查并安装`);
       await bridge.request('apply'); handedOff = true;
     } catch (error) {
       const text = error instanceof Error ? error.message : '安装条件尚未满足';

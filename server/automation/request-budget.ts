@@ -13,7 +13,7 @@ export interface RequestBudgetPolicy {
 export function retainRequestReservation(db: Database, id: string) {
   return db.prepare("UPDATE auto_model_requests SET state='retained' WHERE id=? AND state IN ('active','unknown')").run(id);
 }
-/** Missing usage blocks requests until stopped execution is explicitly recovered. */
+/** Missing usage keeps the admission estimate; only an unfinished request blocks admission. */
 export class RequestBudget {
   constructor(private db: Database, readonly policy: RequestBudgetPolicy) {
     db.exec(`CREATE TABLE IF NOT EXISTS auto_model_accounts(id TEXT PRIMARY KEY, initial_tokens INTEGER NOT NULL);
@@ -29,10 +29,13 @@ export class RequestBudget {
     const requests = Number(this.db.prepare('SELECT COUNT(*) AS n FROM auto_model_requests WHERE account_id=? AND run_key=?').get(this.policy.key, this.policy.runKey)!.n);
     return { spent: seed + Number(row.charged), unknown: Number(row.unknown), requests };
   }
+  activeRequests() {
+    return Number(this.db.prepare("SELECT COUNT(*) AS n FROM auto_model_requests WHERE account_id=? AND state='active'").get(this.policy.key).n);
+  }
   reserve(id: string, raw: Buffer): Buffer {
     return this.db.transaction(() => {
       const state = this.state();
-      if (state.unknown) throw new ModelBudgetExceeded('前一模型请求仍在执行或缺少完整 usage，已停止新增请求；请核查用量。');
+      if (this.activeRequests()) throw new ModelBudgetExceeded('同一预算仍有模型请求执行中，请等待当前执行结束后恢复。');
       if (state.requests >= this.policy.maxRequests) throw new ModelBudgetExceeded('本次 Agent 已达到模型请求次数上限。');
       const remaining = this.policy.maxTokens - state.spent;
       if (remaining <= 0) throw new ModelBudgetExceeded('累计模型 token 已达到预算上限。');

@@ -5,6 +5,7 @@ import type { Vault } from '../lib/vault.js';
 import type { UsageObservation, UsageStage } from '../../shared/billing.js';
 import { ModelBudgetExceeded, RequestBudget, type RequestBudgetPolicy } from './request-budget.js';
 import { optimizationBudgetReason } from './optimization.js';
+import { setTimeout as delay } from 'node:timers/promises';
 
 /** Per-run loopback relay: SSE bytes pass through unchanged. Only usage is retained. */
 export async function usageCapture(taskId:string,stage:UsageStage,store:AutomationStore,vault:Vault,signal:AbortSignal,policy?:RequestBudgetPolicy){
@@ -26,10 +27,11 @@ export async function usageCapture(taskId:string,stage:UsageStage,store:Automati
       for await(const part of req){bytes+=part.length;if(bytes>maxRequestBytes){tooLarge();return;}chunks.push(part);}
       let body:Buffer=Buffer.concat(chunks,bytes);
       let model=frozen?.name||settings.evaluationModel;try{const parsed=JSON.parse(body.toString());if(parsed.model!==undefined&&typeof parsed.model!=='string')throw new Error('Invalid model');model=parsed.model||model;}catch{res.writeHead(400).end();return;}
-      const observation:UsageObservation={id:randomUUID(),source:'codex',stage,model,endpoint,startedAt:Date.now(),endedAt:Date.now(),status:'unknown',basis:'request',raw:null};
-      const price=store.usage.price(endpoint,model,observation.startedAt);
+      let observation:UsageObservation={id:randomUUID(),source:'codex',stage,model,endpoint,startedAt:Date.now(),endedAt:Date.now(),status:'unknown',basis:'request',raw:null};
+      let price=store.usage.price(endpoint,model,observation.startedAt);
       try{
         runSignal.throwIfAborted();
+        if(requestError)throw requestError;
         const task=store.task(taskId),cost=task?optimizationBudgetReason(task,store):'';
         if(cost)throw new ModelBudgetExceeded(cost);
         store.db.transaction(()=>{if(budget){
@@ -37,38 +39,67 @@ export async function usageCapture(taskId:string,stage:UsageStage,store:Automati
           body=budget.reserve(observation.id,body);
         }store.usage.record(taskId,observation,price);});
       }catch(error){
-        const reason=error instanceof ModelBudgetExceeded?error:new ModelBudgetExceeded(error instanceof Error?error.message:'模型预算不可用');
+        const reason=requestError||(error instanceof ModelBudgetExceeded?error:new ModelBudgetExceeded(error instanceof Error?error.message:'模型预算不可用'));
         res.writeHead(429,{'content-type':'application/json'}).end(JSON.stringify({error:{code:'automation_budget_exceeded',message:reason.message}}));
         limitController.abort(reason);return;
       }
       requests++;
       const controller=new AbortController();controllers.add(controller);const combined=AbortSignal.any([runSignal,controller.signal]);
       const disconnected=()=>controller.abort(new Error('SDK connection closed'));res.on('close',disconnected);
-      let pending='',streaming=false;
-      const observe=(json:string)=>{try{const item=JSON.parse(json);if(typeof item.response?.model==='string')observation.responseModel=item.response.model;if(typeof item.response?.id==='string')observation.responseId=item.response.id;if(item.type==='response.failed'||item.type==='error'||item.response?.status==='failed')observation.status='failed';const usage=item.response?.usage||item.usage;if(usage&&typeof usage==='object')observation.raw=usage;}catch{}};
+      let pending='',streaming=false,responseCompleted=false;
+      const observe=(json:string)=>{try{const item=JSON.parse(json);if(typeof item.response?.model==='string')observation.responseModel=item.response.model;if(typeof item.response?.id==='string')observation.responseId=item.response.id;if(item.type==='response.failed'||item.type==='error'||item.response?.status==='failed')observation.status='failed';if(item.type==='response.completed'&&item.response?.status!=='failed')responseCompleted=true;const usage=item.response?.usage||item.usage;if(usage&&typeof usage==='object')observation.raw=usage;}catch{}};
       try{
-        const upstream=await fetch(endpoint+req.url,{method:'POST',headers:{Authorization:'Bearer '+runtime.model.apiKey,'Content-Type':'application/json',Accept:req.headers.accept||'text/event-stream'},body:new Uint8Array(body),signal:combined,redirect:'error'});
+        let upstream:Response,reader:ReadableStreamDefaultReader<Uint8Array>|undefined,first:ReadableStreamReadResult<Uint8Array>|undefined;
+        for(let attempt=0;;attempt++){
+          try{
+            upstream=await fetch(endpoint+req.url,{method:'POST',headers:{Authorization:'Bearer '+runtime.model.apiKey,'Content-Type':'application/json',Accept:req.headers.accept||'text/event-stream'},body:new Uint8Array(body),signal:combined,redirect:'error'});
+            if(stage==='evaluation'&&upstream.ok&&upstream.body){reader=upstream.body.getReader();first=await reader.read();}
+            break;
+          }catch(error){
+            const code=(error as {cause?:{code?:unknown}})?.cause?.code;
+            // Only retry independent read-only evaluation before any response
+            // bytes reach the SDK. Never replay a partial stream or an action.
+            if(stage!=='evaluation'||attempt>=2||combined.aborted||!['UND_ERR_SOCKET','UND_ERR_CONNECT_TIMEOUT','ECONNRESET','ETIMEDOUT'].includes(String(code)))throw error;
+            await reader?.cancel().catch(()=>{});reader=undefined;first=undefined;
+            observation.status='failed';observation.endedAt=Date.now();observation.note=`模型连接在首段响应前断开（${code}）；保留未知用量，有限重试 ${attempt+1}/2。`;
+            budget?.complete(observation.id,null);store.usage.complete(taskId,observation,price);
+            store.event(taskId,observation.note);
+            await delay(300,undefined,{signal:combined});
+            const next:UsageObservation={id:randomUUID(),source:'codex',stage,model,endpoint,startedAt:Date.now(),endedAt:Date.now(),status:'unknown',basis:'request',raw:null},nextPrice=store.usage.price(endpoint,model,next.startedAt);
+            try{runSignal.throwIfAborted();const task=store.task(taskId),cost=task?optimizationBudgetReason(task,store):'';if(cost)throw new ModelBudgetExceeded(cost);store.db.transaction(()=>{if(budget)body=budget.reserve(next.id,body);store.usage.record(taskId,next,nextPrice);});}
+            catch(reason){requestError=reason instanceof Error?reason:new Error('评测重试预算不可用');limitController.abort(requestError);throw reason;}
+            observation=next;price=nextPrice;requests++;
+          }
+        }
         streaming=Boolean(upstream.headers.get('content-type')?.includes('text/event-stream'));
-        if(!upstream.ok){requestError=new Error(`模型服务返回 HTTP ${upstream.status}；请检查用量记录后决定是否恢复。`);observation.note=requestError.message;}
+        if(!upstream.ok){const failure=new Error(upstream.status===402?'模型服务拒绝请求（HTTP 402）；请检查模型账户余额、额度及服务配置后恢复。':`模型服务返回 HTTP ${upstream.status}；请在模型服务恢复后重试。`);requestError??=failure;observation.note=failure.message;}
         res.writeHead(upstream.status,{'content-type':upstream.headers.get('content-type')||'application/json','cache-control':'no-store'});
-        if(upstream.body){const decoder=new TextDecoder(),reader=upstream.body.getReader();while(true){const next=await reader.read();if(next.done)break;const chunk=next.value;
+        if(upstream.body){const decoder=new TextDecoder(),bodyReader=reader||upstream.body.getReader();while(true){const next=first||await bodyReader.read();first=undefined;if(next.done)break;const chunk=next.value;
           if(!res.destroyed)res.write(chunk);
           pending+=decoder.decode(chunk,{stream:true});
           if(pending.length>8*1024*1024)pending=pending.slice(-1024*1024);
           if(upstream.headers.get('content-type')?.includes('text/event-stream')){
             let match:RegExpExecArray|null;while((match=/\r?\n\r?\n/.exec(pending))){const event=pending.slice(0,match.index).replaceAll('\r','');pending=pending.slice(match.index+match[0].length);const data=event.split('\n').filter(l=>l.startsWith('data:')).map(l=>l.slice(5).trimStart()).join('\n');observe(data);}
           }
+          // Responses completion is the protocol boundary. The SDK may close
+          // its HTTP body here while a provider keeps the SSE transport open.
+          // Do not turn that normal close into a sticky error for the next turn.
+          if(responseCompleted){await bodyReader.cancel();break;}
         }pending+=decoder.decode();observe(pending);}
         observation.status=upstream.ok&&observation.status!=='failed'?'completed':'failed';
       }catch(error){
+        if(responseCompleted&&observation.status!=='failed'){
+          observation.status='completed';
+        }else{
         observation.status='failed';
         const code=typeof (error as {cause?:{code?:unknown}})?.cause?.code==='string'?String((error as {cause:{code:string}}).cause.code):'';
         // Keep only machine codes; provider messages, URLs, headers and bodies can contain credentials.
         const safeCode=/^[A-Z][A-Z0-9_]{0,63}$/.test(code)?code:'';
         const reason=runSignal.aborted?'本轮已取消或达到活动时间上限':controller.signal.aborted?'SDK 已关闭模型连接':safeCode==='UND_ERR_CONNECT_TIMEOUT'?'连接模型服务超时':safeCode==='ENOTFOUND'?'模型域名解析失败':'模型上游连接失败';
-        requestError=new Error(`${reason}${safeCode?'（'+safeCode+'）':''}；未返回的用量无法推断，预占保留。`);observation.note=requestError.message;
+        const failure=new Error(`${reason}${safeCode?'（'+safeCode+'）':''}；未返回的用量无法推断，预占保留。`);requestError??=failure;observation.note||=failure.message;
         if(!res.headersSent)res.writeHead(502,{'content-type':'application/json'});
         if(!res.destroyed){const value=JSON.stringify({error:{message:requestError.message}});res.write(streaming?'data: '+JSON.stringify({type:'error',message:requestError.message})+'\n\n':value);}
+        }
       }
       finally{
         res.off('close',disconnected);controllers.delete(controller);observation.endedAt=Date.now();budget?.complete(observation.id,observation.raw);store.usage.complete(taskId,observation,price&&(!observation.responseModel||price.models.some(model=>model.toLowerCase()===observation.responseModel!.toLowerCase()))?price:null);if(!res.destroyed)res.end();

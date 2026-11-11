@@ -10,7 +10,7 @@ import Fastify from 'fastify';
 import { compareVersions, defaultUpdateRepository, stableVersion, updateProduct, type UpdateManifest, type UpdateRelease } from '../shared/update.js';
 import { checkRelease, githubResponse, limitedBytes, sourceSchema } from '../server/updates/source.js';
 import { sha256, unpackUpdate, verifyPayload } from '../server/updates/archive.js';
-import { atomicJson, readJson } from '../server/updates/files.js';
+import { atomicJson, readJson, runningVersion } from '../server/updates/files.js';
 import { registerUpdateApi } from '../server/updates/api.js';
 import { maintenancePath } from '../server/updates/maintenance.js';
 import { ManagedLauncher } from '../server/updates/launcher.js';
@@ -148,6 +148,15 @@ test('update credentials stay encrypted, masked, and preserved when ordinary set
 
 test('update API persists successful checks and blocks writes or active claims before installation', async () => {
   const root = temporary(), directory = resolve(root, 'data'), vault = new Vault(directory), app = Fastify();
+  const [major, minor, patch] = runningVersion.split('.').map(Number), nextVersion = `${major}.${minor}.${patch + 1}`;
+  const newerFetch = (async (input: Parameters<typeof fetch>[0]) => {
+    const response = await fakeFetch(input), data = await response.json();
+    if (String(input).endsWith('/releases/latest')) {
+      data.tag_name = `v${nextVersion}`;
+      data.html_url = `https://github.com/${defaultUpdateRepository}/releases/tag/v${nextVersion}`;
+    } else if (String(input).endsWith('/assets/11')) data.version = nextVersion;
+    return Response.json(data);
+  }) as typeof fetch;
   let active = 1, applied = false, prepared: (() => void) | undefined;
   const id = randomUUID(), statePath = resolve(root, '.updates/state.json');
   const transport: UpdateTransport = { root, prepared: handler => { prepared = handler; }, close() {}, async request(method, data) {
@@ -156,7 +165,7 @@ test('update API persists successful checks and blocks writes or active claims b
     if (method === 'apply') { assert.ok(existsSync(maintenancePath(directory))); applied = true; }
   } };
   app.setErrorHandler((error, _request, reply) => reply.code(409).send({ error: error instanceof Error ? error.message : 'failed' }));
-  registerUpdateApi(app, { directory, vault, transport, active: async () => active, fetcher: fakeFetch });
+  registerUpdateApi(app, { directory, vault, transport, active: async () => active, fetcher: newerFetch });
   app.post('/api/business-write', async () => ({ ok: true }));
   try {
     assert.equal((await app.inject({ method: 'POST', url: '/api/updates/check' })).statusCode, 200);

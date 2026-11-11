@@ -62,7 +62,8 @@ export function retainStoppedFollowupReservations(task: AutomationTask, store: A
   if(rows.length)store.event(task.id,`本轮模型与工具已确认停止，保留 ${rows.length} 笔未知用量预占；实际用量与费用仍待核算。`);
 }
 export function followupAccountState(task: AutomationTask, store: AutomationStore) {
-  return new RequestBudget(store.db,followupRequestPolicy(task)).state();
+  const budget=new RequestBudget(store.db,followupRequestPolicy(task));
+  return {...budget.state(),active:budget.activeRequests()};
 }
 export function autonomousActionStrategy(action: FollowupAction) {
   return action.action+':'+digest({message:action.message,answer:action.answer,callId:action.callId});

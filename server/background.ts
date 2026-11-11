@@ -3,6 +3,7 @@ import { existsSync } from 'node:fs';
 import { fileURLToPath } from 'node:url';
 import type { AutomationStore } from './automation/store.js';
 import { taskExecuting } from '../shared/task-presentation.js';
+import { recordBackgroundFailure } from './background-diagnostics.js';
 
 /** Only control messages cross IPC. Task data and secrets stay in the existing stores. */
 export class BackgroundWorkers {
@@ -23,10 +24,13 @@ export class BackgroundWorkers {
       execArgv: entry.pathname.endsWith('.ts') ? ['--import', 'tsx'] : [],
       stdio: ['ignore', 'ignore', 'ignore', 'ipc'],
     });
-    this.exited = new Promise(resolve => child.once('close', () => {
+    this.exited = new Promise(resolve => child.once('close', (code,signal) => {
       this.ready = false;
       this.owned.clear();
-      if (!this.stopping) this.failed = true;
+      if (!this.stopping) {
+        this.failed = true;
+        recordBackgroundFailure(this.directory,value=>this.store.sanitize(value),{kind:'unexpected-exit',pid:child.pid,code,signal});
+      }
       resolve();
     }));
     await new Promise<void>((resolve, reject) => {
@@ -50,7 +54,7 @@ export class BackgroundWorkers {
       });
     });
     // An error after startup must not become an unhandled process error.
-    child.on('error', () => { this.failed = true; });
+    child.on('error', error => { this.failed = true;recordBackgroundFailure(this.directory,value=>this.store.sanitize(value),{kind:'child-error',pid:child.pid,message:error.message,stack:error.stack}); });
   }
 
   get healthy() { return this.ready && !this.failed; }

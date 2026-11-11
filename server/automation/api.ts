@@ -29,6 +29,7 @@ import { ManifestStore, manifestInput } from './completeness.js';
 import { preflightCollectionTarget } from './collection/target-verification.js';
 import { registerResourceFolderApi } from './resource-folders.js';
 import { rootDomainSchema } from '../lib/validation.js';
+import { registerSiteDomainApi } from './site-domains.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -59,6 +60,7 @@ const pagination=z.object({page:pageNumber.default(1),pageSize:pageSizeNumber.de
 
 export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,cancel:(id:string)=>void,owns:(id:string)=>boolean){
   registerResourceFolderApi(app,store.resourceFolders);
+  registerSiteDomainApi(app,store,vault,owns);
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
@@ -259,6 +261,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   });
   app.post('/api/automation/tasks/:id/optimize',async(request)=>{
     const {id}=params.parse(request.params),task=store.task(id),policy=optimizationInput.parse(request.body);
+    if(task&&store.domainReserved(task.generatedSiteId))throw new Conflict('站点正在换绑域名，请稍后开启优化');
     if(!task||task.kind!=='generation'||!supportsAutomaticOptimization(task.scenario)||task.optimization||!task.stopped||task.status!=='completed'||!task.generation?.conversationId)throw new Conflict('只能为已完成且可继续原会话的 AI Site 模板、迁移与升级任务开启优化');
     const evaluation=store.currentReport(task);if(!evaluation?.report||!evaluation.rule||!evaluation.stopped||evaluation.status!=='completed')throw new Conflict('需要当前版本已完成且保留规则快照的独立评测报告');
     if(store.tasks().some(t=>t.id!==task.id&&t.generatedSiteId===task.generatedSiteId&&(!t.stopped||['queued','following-up'].includes(t.status))))throw new Conflict('请先等待该站点其他任务结束');

@@ -46,6 +46,7 @@ export class AutomationStore {
       CREATE INDEX IF NOT EXISTS auto_events_task_seq ON auto_events(task_id,seq);`);
     db.exec('CREATE TABLE IF NOT EXISTS auto_site_state(site_id TEXT PRIMARY KEY, revision TEXT NOT NULL, report_id TEXT)');
     db.exec('CREATE TABLE IF NOT EXISTS auto_migration_read_locks(site_id TEXT PRIMARY KEY, workflow_id TEXT NOT NULL, expires_at INTEGER NOT NULL)');
+    db.exec('CREATE TABLE IF NOT EXISTS auto_site_domain_locks(site_id TEXT PRIMARY KEY, owner TEXT NOT NULL, expires_at INTEGER NOT NULL)');
     db.exec(`CREATE TABLE IF NOT EXISTS auto_task_index(id TEXT PRIMARY KEY,status TEXT NOT NULL,kind TEXT NOT NULL,site_key TEXT,created_at INTEGER NOT NULL,reflection_key TEXT,json TEXT NOT NULL);
       CREATE INDEX IF NOT EXISTS auto_task_index_queue ON auto_task_index(status,kind,created_at);
       CREATE INDEX IF NOT EXISTS auto_task_index_site ON auto_task_index(site_key,created_at DESC);`);
@@ -174,8 +175,11 @@ export class AutomationStore {
     return source;
   }
   siteReserved(task: AutomationTask) {
-    if(this.migrationReadReserved(task))return true;
+    if(this.migrationReadReserved(task)||this.domainReserved(task.generatedSiteId))return true;
     return !!task.generatedSiteId&&this.headers(task.generatedSiteId).some(t=>t.id!==task.id&&t.optimization&&!['completed','stopped'].includes(t.optimization.state)&&task.optimizationRootId!==t.id);
+  }
+  domainReserved(siteId: string | null) {
+    return !!siteId&&!!this.db.prepare('SELECT site_id FROM auto_site_domain_locks WHERE site_id=? AND expires_at>?').get(siteId,Date.now());
   }
   migrationReadReserved(task: AutomationTask) {
     return !!task.generatedSiteId&&!!this.db.prepare('SELECT site_id FROM auto_migration_read_locks WHERE site_id=? AND expires_at>?').get(task.generatedSiteId,Date.now());
@@ -300,7 +304,7 @@ export class AutomationStore {
       const candidate=tasks.toReversed().filter(t=>t.status==='following-up'&&(t.stopped||t.followup?.state!=='running')&&t.followup&&t.followup.nextAt<=Date.now()&&!tasks.some(a=>a.id!==t.id&&(!!a.delivery&&(a.delivery.stopped===false||['queued','running','verifying','uncertain'].includes(a.delivery.status))||!a.stopped)&&t.generatedSiteId&&a.generatedSiteId===t.generatedSiteId));
       for(const header of candidate){
         const task=this.task(header.id,false)!;
-        if(!ready(task)||this.migrationReadReserved(task))continue;
+        if(!ready(task)||this.migrationReadReserved(task)||this.domainReserved(task.generatedSiteId))continue;
         task.stopped=false;task.followup!.state='running';this.put(task);return task;
       }
     });

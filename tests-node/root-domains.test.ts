@@ -12,7 +12,7 @@ import type { AutomationTask, Scenario } from '../shared/automation.js';
 
 async function fixture() {
   const state = { domains: [{ domainName: 'first.test', sudDomainUseDash: false }, { domainName: 'chosen.test', sudDomainUseDash: true }],
-    domainStatus: 200, invalidJson: false, createStatus: 200, siteId: randomUUID(), requests: [] as string[], creates: [] as { path: string; body: Record<string, unknown> }[] };
+    domainStatus: 200, invalidJson: false, createStatus: 200, siteId: randomUUID(), reportedSiteName: 'unrelated', requests: [] as string[], creates: [] as { path: string; body: Record<string, unknown> }[] };
   const server = createServer(async (req, res) => {
     const path = new URL(req.url!, 'http://localhost').pathname;
     state.requests.push(path);
@@ -29,7 +29,7 @@ async function fixture() {
       res.end(JSON.stringify({ siteId: state.siteId, taskId: 'transfer-task' })); return;
     }
     if (path.endsWith('/Site/List')) {
-      res.end(JSON.stringify([{ siteId: state.siteId, siteName: 'unrelated', homePageLink: origin + '/home' }])); return;
+      res.end(JSON.stringify([{ siteId: state.siteId, siteName: state.reportedSiteName, homePageLink: origin + '/home' }])); return;
     }
     res.statusCode = 404; res.end('{}');
   });
@@ -145,7 +145,7 @@ for (const scenario of ['materials', 'upgrade'] as const) test(`${scenario} crea
     const { path, body } = f.state.creates[0];
     assert.equal(path, scenario === 'upgrade' ? '/_api/v2/Transfer/ByLevel' : '/_api/v2/Site/Create');
     assert.equal(body.RootDomain || body.rootDomain, 'chosen.test');
-    assert.equal(body.SubDomain || body.subDomain, `auto-${task.id.slice(0, 12)}`);
+    assert.equal(body.SubDomain || body.subDomain, `auto_${task.id.slice(0, 12).replace(/-/g, '_')}`);
     assert.equal(task.siteUrl, f.origin + '/home');
   } finally { await f.close(); }
 });
@@ -172,8 +172,22 @@ test('legacy tasks pin their first root before an uncertain creation, and retrie
     await assert.rejects(executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)), /禁止自动重复建站/);
     const restored = f.automationStore.task(task.id)!;
     assert.equal(restored.generation?.rootDomain, 'first.test'); assert.equal(restored.generation?.createAttempted, true);
+    assert.equal(restored.generation?.siteName, `auto_${task.id.slice(0, 12).replace(/-/g, '_')}`);
     f.state.domains.reverse();
     await assert.rejects(executeGeneration(restored, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)), /禁止重复创建/);
     assert.equal(f.state.creates.length, 1);
+  } finally { await f.close(); }
+});
+
+for (const legacy of [false, true]) test(`uncertain ${legacy ? 'pre-upgrade' : 'new'} creation reconciles its original name without another create`, async () => {
+  const f = await fixture(); try {
+    const task = (await f.create()).json().items[0] as AutomationTask;
+    const name = legacy ? `auto-${task.id.slice(0, 12)}` : `auto_${task.id.slice(0, 12).replace(/-/g, '_')}`;
+    task.generation = { createAttempted: true, ...(legacy ? {} : { siteName: name }) }; f.automationStore.put(task);
+    f.state.reportedSiteName = name;
+    await assert.rejects(executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)), /已找到并绑定先前创建的站点/);
+    assert.equal(f.state.creates.length, 0); assert.ok(task.generatedSiteId);
+    assert.equal(f.automationStore.site(task.generatedSiteId!)!.siteId, f.state.siteId);
+    assert.equal(f.automationStore.site(task.generatedSiteId!)!.name, name);
   } finally { await f.close(); }
 });

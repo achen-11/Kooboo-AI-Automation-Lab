@@ -18,7 +18,7 @@ export function registerMigrationApi(app: FastifyInstance, store: AutomationStor
   const stopped = (id: string) => {
     const task = store.task(id); if (!task) throw new Conflict('任务不存在');
     const root = store.root(task)!;
-    if (!root.stopped || owns(root.id) || checking.has(root.id) || store.migrationReadReserved(root) || store.tasks().some(t => t.generatedSiteId === root.generatedSiteId && (!t.stopped || t.status === 'queued' || t.status === 'following-up' || owns(t.id) || t.delivery?.stopped === false))) throw new Conflict('等待原站全部执行停止后再登记或检查');
+    if (!root.stopped || owns(root.id) || checking.has(root.id) || store.migrationReadReserved(root) || store.domainReserved(root.generatedSiteId) || store.tasks().some(t => t.generatedSiteId === root.generatedSiteId && (!t.stopped || t.status === 'queued' || t.status === 'following-up' || owns(t.id) || t.delivery?.stopped === false))) throw new Conflict('等待原站全部执行停止后再登记或检查');
     return root;
   };
   app.post('/api/automation/tasks/:id/migration/profile', async req => {

@@ -19,7 +19,7 @@ import { frozenCollectionAssetGapGuidance, preflightCollectionTarget } from './c
 import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, type SourceVisualIndex } from './collection/source-visual.js';
 import { adaptRepairImages } from './repair-images.js';
 import { resolve } from 'node:path';
-import { normalizeRootDomain, parseRootDomains } from '../../shared/kooboo-domains.js';
+import { generatedSiteName, normalizeRootDomain, parseRootDomains } from '../../shared/kooboo-domains.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
@@ -43,7 +43,8 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   task.stage='prepare';task.generation??={};store.put(task);
   let site=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
   if(!site){
-    const slug=`auto-${task.id.slice(0,12)}`;
+    // A pre-upgrade uncertain create must still reconcile the exact old name.
+    const slug=task.generation.siteName||(task.generation.createAttempted?`auto-${task.id.slice(0,12)}`:generatedSiteName(task.id));
     if(task.generation.createAttempted){
       const list=await request('Site/List');const matches=(Array.isArray(list)?list:[]).filter((s:any)=>(s.siteName||s.SiteName)===slug);
       if(matches.length!==1)throw new Pending(`站点 ${slug} 创建结果尚未唯一确认，禁止重复创建；请检查 Kooboo 环境。`);
@@ -57,7 +58,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     task.generation.rootDomain=root;store.put(task);
     if(!domains.some(domain=>domain.domainName===root))throw new FollowupRuntimeError(`建站根域名 ${root} 在当前 Kooboo 环境中已不可用，请核对环境域名后重试；不会自动改用其他域名。`,['在原 Kooboo 环境恢复所选根域名后重试；或停止本任务，选择可用根域名新建任务。']);
     store.event(task.id,`准备新站 ${slug}；根域名 ${root}；创建结果不确定时停止，不自动重发创建请求`);
-    let created:any;task.generation.createAttempted=true;store.put(task);
+    let created:any;task.generation.siteName=slug;task.generation.createAttempted=true;store.put(task);
     try{
       created=task.scenario==='upgrade'
         ?await request('Transfer/ByLevel',{siteName:slug,subDomain:slug,rootDomain:root,url:input.contentUrl,headless:false,convertToRoot:false,TotalPages:20,Depth:2})

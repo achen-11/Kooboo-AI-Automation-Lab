@@ -16,7 +16,7 @@ export function httpRead(url:URL,options:{token?:string;body?:unknown;signal:Abo
   });
 }
 
-export function koobooClient(task:AutomationTask,vault:Vault,signal:AbortSignal) {
+export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vault,signal:AbortSignal) {
   const environment=vault.get().environments.find(e=>e.id===task.environmentId);
   if(!environment?.token)throw new Error('缺少 Kooboo 环境令牌，请在系统设置补齐');
   const origin=new URL(environment.origin).origin,apiOrigin=new URL(environment.apiOrigin||origin).origin;
@@ -35,11 +35,24 @@ export async function refreshSite(task:AutomationTask,store:AutomationStore,vaul
   const site=store.site(task.generatedSiteId);if(!site)return;
   const {request}=koobooClient(task,vault,signal),list=await request('Site/List');
   const actual=(Array.isArray(list)?list:[]).find(s=>siteIdentity(s).toLowerCase()===site.siteId.toLowerCase());
-  const url=actual?.homePageLink||actual?.HomePageLink;
+  const url=await publicSiteUrl(site,actual,request);
   if(typeof url==='string'&&/^https?:\/\//i.test(url)) {
     site.url=url;task.siteUrl=url;store.saveSite(site);store.put(task);
   }
   return site;
+}
+
+/** A newly added binding need not be Kooboo's first/default binding. */
+export async function publicSiteUrl(site:GeneratedSite|undefined,actual:any,request:ReturnType<typeof koobooClient>['request']) {
+  if(site?.preferredDomain){
+    const bindings=await request('Binding/ListBySite',undefined,site.siteId);
+    const binding=Array.isArray(bindings)&&bindings.find(item=>String(item.fullName||item.FullName||'').toLowerCase()===site.preferredDomain&&!Number(item.port??item.Port??0));
+    if(!binding)throw new Error('已选择的站点域名绑定不存在，请重新绑定域名');
+    const url=new URL(site.url);
+    url.hostname=site.preferredDomain;url.port='';url.protocol=(binding.enableSsl??binding.EnableSsl)?'https:':'http:';
+    return url.href;
+  }
+  return actual?.homePageLink||actual?.HomePageLink;
 }
 
 export async function probeSite(url:string,signal:AbortSignal) {

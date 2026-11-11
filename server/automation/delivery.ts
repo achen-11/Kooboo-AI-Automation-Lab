@@ -7,19 +7,21 @@ import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { UnconfirmedStop } from './errors.js';
 import { Conflict } from '../lib/store.js';
-import { koobooClient, siteIdentity, probeSite } from './kooboo.js';
+import { koobooClient, siteIdentity, probeSite, publicSiteUrl } from './kooboo.js';
 import { evaluationBrowser } from './browser.js';
 import { codexClient } from './evaluator.js';
 import { usageCapture } from './usage-proxy.js';
 
 const receiptSchema=z.object({siteId:z.string().uuid(),siteUrl:z.url().refine(v=>{const u=new URL(v);return /^https?:$/.test(u.protocol)&&!u.username&&!u.password;})});
 export function queueDelivery(task:AutomationTask,store:AutomationStore,vault:Vault){
+  if(store.domainReserved(task.generatedSiteId))throw new Conflict('站点正在换绑域名，请稍后安排交付');
   if(task.kind!=='evaluation'||task.status!=='completed'||!task.stopped||!task.report)throw new Conflict('请先完成源站的独立评测');
   if(task.delivery)return task;
   const env=vault.get().environments.find(e=>e.id===task.environmentId),config=env?.delivery;
   if(!config?.enabled||!config.token)throw new Conflict('当前连接未启用交付，或缺少迁移令牌');
   if(config.requirePassed&&task.report.quality!=='passed')throw new Conflict('当前交付策略要求源站评测通过');
   const site=task.generatedSiteId&&store.site(task.generatedSiteId);if(!site||!site.url)throw new Conflict('缺少生成站身份或地址');
+  if(site.preferredDomain&&store.currentReport(task)?.id!==task.id)throw new Conflict('站点域名已变更，请先完成当前地址的独立评测再交付');
   const related=store.tasks().filter(t=>t.generatedSiteId===site.id);
   if(related.some(t=>!t.stopped||['queued','following-up'].includes(t.status)))throw new Conflict('同一个源站还有执行任务，请等待结束');
   if(related.some(t=>t.id!==task.id&&t.delivery))throw new Conflict('这个源站已有关联交付；请查看原交付记录，首版不重复迁移或覆盖目标站');
@@ -84,7 +86,8 @@ export async function executeDelivery(task:AutomationTask,store:AutomationStore,
     if(!config?.enabled||config.endpoint!==delivery.policy.endpoint||!config.token)throw new Error('原迁移配置不可用；请补齐同一连接的迁移令牌');
     const sourceClient=koobooClient({...task,environmentId:delivery.sourceEnvironmentId},vault,signal);
     const sourceList=await sourceClient.request('Site/List');const actualSource=(Array.isArray(sourceList)?sourceList:[]).find(s=>siteIdentity(s).toLowerCase()===delivery.sourceSiteId.toLowerCase());
-    const sourceUrl=actualSource?.homePageLink||actualSource?.HomePageLink;
+    const sourceSite=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
+    const sourceUrl=actualSource?await publicSiteUrl(sourceSite?.siteId.toLowerCase()===delivery.sourceSiteId.toLowerCase()?sourceSite:undefined,actualSource,sourceClient.request):undefined;
     if(typeof sourceUrl!=='string'||new URL(sourceUrl).origin!==new URL(delivery.sourceUrl).origin)throw new Error('源环境的站点身份 / 地址与评测记录不一致，禁止迁移；请核对生成站');
     delivery.status='running';delivery.attemptedAt=Date.now();store.put(task);store.event(task.id,'正在迁移生成站至目标环境（不会删除源站）');
     try{

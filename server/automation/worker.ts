@@ -80,7 +80,7 @@ export class AutomationWorker{
       }
       if(![...this.running.keys()].some(id=>{const task=this.store.header(id);return task?.delivery&&['running','verifying'].includes(task.delivery.status);})){
         const headers=this.store.headers();
-        const candidate=headers.toReversed().find(t=>t.delivery?.status==='queued'&&(t.delivery.nextAt||0)<=Date.now()&&!this.running.has(t.id)&&!headers.some(other=>other.id!==t.id&&other.generatedSiteId===t.generatedSiteId&&!other.stopped));
+        const candidate=headers.toReversed().find(t=>t.delivery?.status==='queued'&&(t.delivery.nextAt||0)<=Date.now()&&!this.running.has(t.id)&&!this.store.domainReserved(t.generatedSiteId)&&!headers.some(other=>other.id!==t.id&&other.generatedSiteId===t.generatedSiteId&&!other.stopped));
         const task=candidate?this.store.task(candidate.id,false):undefined;
         if(task){const controller=new AbortController();task.delivery!.status=task.delivery!.target?'verifying':'running';task.delivery!.stopped=false;this.store.put(task);const promise=this.runDelivery(task,controller).finally(()=>{this.release(task.id);if(!this.stopping)void this.tick();});this.own(task.id,{controller,promise});}
       }

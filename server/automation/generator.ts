@@ -7,7 +7,7 @@ import { prepareGenerationContext, assertGenerationInput, cleanupGenerationConte
 
 import { koobooClient, siteIdentity, refreshSite, probeSite } from './kooboo.js';
 import { materialDestination, readMaterial } from './materials.js';
-import { generationSession } from './generation-session.js';
+import { generationSession, matchingGenerationOutcome } from './generation-session.js';
 import { readEvidence } from './optimization-evidence.js';
 import { ensureManifest, ManifestStore } from './completeness.js';
 import { selectExperience, adoptedGuidance } from './experience.js';
@@ -20,6 +20,8 @@ import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, typ
 import { adaptRepairImages } from './repair-images.js';
 import { resolve } from 'node:path';
 import { generatedSiteName, normalizeRootDomain, parseRootDomains, findRootDomain, bindingDomain } from '../../shared/kooboo-domains.js';
+import { generationSourceEvidence } from './generation-reference.js';
+import { archiveDeliveryImages, GenerationDeliveryStore, isPreSendBridgeRejection } from './generation-delivery.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
@@ -148,19 +150,23 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   }
   task.stage='generation';store.put(task);
   const budget=optimizationBudgetReason(task,store);if(budget)throw new ModelBudgetExceeded(budget);
+  const deliveries=new GenerationDeliveryStore(store);
   const session=await openSession(task,store,vault,directory,signal);
+  const snapshot=async()=>{const state=await session.snapshot();deliveries.observe(state);return state;};
   try{
     let adapted:ReturnType<typeof adaptRepairImages>|undefined;
     // Each batch owns a durable delivery receipt. Only a matching terminal run
     // advances it; a restart must never replay an accepted, uncertain send.
     while(true){
-    let state=await session.snapshot();
+    let state=await snapshot();
     const action=task.generation.next;
     const initial=!task.generation.deliveryId;
     if(initial&&task.generation.legacySubmitted&&!action)throw new Pending('旧任务已提交过原始委托，由 AI 核对交付并交接评测或明确继续，不能重发初始消息');
     if(initial||action?.action==='continue'||action?.action==='answer'){
       if(state.running)throw new Pending('原会话仍在执行，保留当前执行，稍后核对');
       if(state.pending&&action?.action!=='answer')throw new Pending('原会话存在待输入调用，需先回答后再发送修复批次：'+state.pending.name);
+      if(state.canSend===false)throw new Pending('目标环境 Kooboo AI 模型尚未就绪或无可用模型（canSend=false），尚未发送委托；请检查目标环境 AI 配置后重试');
+      if(action?.retryOf&&(!matchingGenerationOutcome(task,state)||task.generation.deliveryId!==action.retryOf.deliveryId||state.runId!==action.retryOf.runId||!['failed','interrupted'].includes(state.state)))throw new Pending('原失败执行的回执已变化，需重新查证后决定是否重试；尚未发送新消息');
       const repairSources=task.repairEvidence?task.repairEvidence.files.map(name=>{
         const file=store.task(task.repairEvidence!.reportId)?.report?.artifacts.find(f=>f.name===name);if(!file)throw new Error('修复引用的原报告图片不存在');
         return readEvidence(directory,task.repairEvidence!.reportId,file);
@@ -189,13 +195,36 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
         guidance:adoptedGuidance(task,store,'generation')+collectionGuidance+acceptedAssetGuidance+(baseline?.label||'')+(batch?`\n修复证据批次 ${(task.generation.repairBatch?.completed||0)+1}/${adapted!.batches.length}。${task.generation.repairBatch!.completed===adapted!.batches.length-1?'已到最后一批，结合前批已研读的证据统一执行本次完整修复，完成后按原完整范围独立复评。':'本批只研读，不执行修复。'}`+batch.label:''),
         manifest,
         materials,
+        ...(task.scenario==='site-template'?{sourceEvidence:generationSourceEvidence(manifest,store,directory)}:{}),
       });
       assertGenerationInput(prepared?.text,images,action?.action==='answer'?action.answer:undefined);
       if(prepared){store.event(task.id,`生成委托资料：${prepared.mode}；最终文本 ${Buffer.byteLength(prepared.text)} bytes，图片 ${images?.length||0} 张；平台原件 ${prepared.packageId}`);}
-      const id=randomUUID();task.generation.deliveryId=id;task.generation.deliveryState='sending';if(task.generation.repairBatch&&task.generation.repairBatch.completed<task.generation.repairBatch.total)task.generation.repairBatch.deliveryId=id;delete task.generation.next;store.put(task);
-      const receipt=await session.deliver({id,conversationId:task.generation.conversationId||state.conversationId,images,
-        ...(action?.action==='answer'?{answer:action.answer,callId:action.callId}:{text:prepared!.text})});
-      if(receipt?.state!=='accepted')throw new Pending('委托是否被接受尚未确认，需要核对原会话；不会自动重复发送');
+      const id=randomUUID(),conversationId=task.generation.conversationId||state.conversationId;
+      const payload:Parameters<typeof session.deliver>[0]={id,conversationId,images,...(action?.action==='answer'?{answer:action.answer,callId:action.callId}:{text:prepared!.text})};
+      // Persist the real outgoing payload independently of mutable checkpoints and chat summaries.
+      deliveries.archive({id,taskId:task.id,versionId:task.versionId,siteId:site.siteId,packageId:prepared?.packageId,
+        kind:action?.action==='answer'?'answer':batch||task.repairEvidence?'repair':action?.action==='continue'||!initial?'continue':'initial',
+        batch:batch?{number:(task.generation.repairBatch?.completed||0)+1,total:adapted!.batches.length}:undefined,
+        createdAt:Date.now(),conversationId,previousRunId:action?.action==='answer'?task.generation.previousRunId:state.runId||undefined,
+        state:'prepared',text:payload.text,answer:payload.answer,callId:payload.callId,textBytes:Buffer.byteLength(payload.text||''),images:archiveDeliveryImages(directory,images)});
+      const priorGeneration=structuredClone(task.generation);
+      if(action?.action!=='answer')task.generation.previousRunId=state.runId||undefined;task.generation.deliveryId=id;task.generation.deliveryState='sending';if(task.generation.repairBatch&&task.generation.repairBatch.completed<task.generation.repairBatch.total)task.generation.repairBatch.deliveryId=id;delete task.generation.next;store.put(task);
+      deliveries.sending(id);
+      let receipt:Awaited<ReturnType<typeof session.deliver>>;
+      try{receipt=await session.deliver(payload);}
+      catch(error){
+        if(isPreSendBridgeRejection(error)){
+          const live=await snapshot().catch(()=>undefined);
+          if(live&&live.taskId===task.id&&(!conversationId||live.conversationId===conversationId)&&live.delivery?.id!==id){
+            const detail=error instanceof Error?error.message:String(error);
+            store.db.transaction(()=>{task.generation=priorGeneration;store.put(task);deliveries.rejectPreSend(id,detail);});
+            throw new Pending('Kooboo 会话发送前置检查未通过（'+detail+'），已确认未发出请求并保留待发送委托');
+          }
+        }
+        throw error;
+      }
+      if(receipt?.state!=='accepted'||receipt.id!==id||conversationId&&receipt.conversationId!==conversationId)throw new Pending('委托是否被接受尚未确认，需要核对原会话；不会自动重复发送');
+      deliveries.accept(id,receipt.conversationId);
       task.generation.deliveryState='accepted';task.generation.conversationId=receipt.conversationId;task.threadId=receipt.conversationId;task.error='';store.put(task);
       store.event(task.id,initial?'委托已接受，正在追踪 Kooboo 实际执行循环':'AI 跟进已提交到原站原会话');
     } else if(task.generation.deliveryState==='sending'){
@@ -204,14 +233,15 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     }
     let idleSince=Date.now();
     while(true){
-      signal.throwIfAborted();state=await session.snapshot();
+      signal.throwIfAborted();state=await snapshot();
       if(state.conversationId!==task.generation.conversationId)throw new Pending('原会话身份发生变化，停止自动操作并核对');
       if(state.pending)throw new Pending('Kooboo 正在等待输入或工具确认：'+state.pending.name);
-      if(state.delivery?.error){if(isContextOverflow(state.delivery.error))throw new GenerationInputError(state.delivery.error+'；已停止原样重试');throw new Pending(state.delivery.error);}
-      if(!state.running&&state.state==='completed'&&state.outcome?.runId&&state.delivery?.id===task.generation.deliveryId){
+      if(state.delivery&&state.delivery.id===task.generation.deliveryId&&state.delivery.error){if(isContextOverflow(state.delivery.error))throw new GenerationInputError(state.delivery.error+'；已停止原样重试');throw new Pending(state.delivery.error);}
+      const matchingOutcome=matchingGenerationOutcome(task,state);
+      if(!state.running&&state.state==='completed'&&matchingOutcome){
         task.generation.deliveryState='completed';task.generation.state='completed';store.put(task);store.event(task.id,'Kooboo 本轮执行循环已结束，正在核对站点是否可交接评测');break;
       }
-      if(!state.running&&['failed','interrupted'].includes(state.state)){
+      if(!state.running&&['failed','interrupted'].includes(state.state)&&matchingOutcome){
         if(isContextOverflow(JSON.stringify(state.context)))throw new GenerationInputError('Kooboo 报告上下文超限，已停止原样重试；需先压缩原会话或完成同站交接');
         throw new Pending('Kooboo 本轮执行结束，结果为 '+state.state+'，由 AI 核对并跟进');
       }

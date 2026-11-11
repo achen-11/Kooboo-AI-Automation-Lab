@@ -2,7 +2,7 @@ import type { AutomationTask, FollowupAction } from '../../shared/automation.js'
 import { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { executeGeneration } from './generator.js';
-import { FollowupRuntimeError, Pending, UnconfirmedStop } from './errors.js';
+import { EvaluationSliceYield, FollowupRuntimeError, Pending, UnconfirmedStop } from './errors.js';
 import { executeDelivery, queueDelivery } from './delivery.js';
 import { executeEvaluation } from './evaluator.js';
 import { existsSync, readFileSync, unlinkSync, writeFileSync } from 'node:fs';
@@ -15,12 +15,36 @@ import { ModelBudgetExceeded } from './request-budget.js';
 import { ExperienceStore } from './experience-store.js';
 import { queueReflection, reflectExperience, selectExperience } from './experience.js';
 import { cleanupGenerationContext } from './generation-context.js';
+import { trimTaskGenerationBrowserCache } from './generation-cache.js';
 import { koobooClient } from './kooboo.js';
 import { autonomousActionStrategy, autonomousReady, autonomousWindowRemaining, canReplayGeneration, followupAccountState, isAutonomousRetry, nextAutonomousWindow, recordAutonomousAttempt } from './autonomy.js';
 import { inMaintenance } from '../updates/maintenance.js';
 import { rememberSiteRetry, siteRetryBlocked } from './retry-guard.js';
 import { optimizationEvidence } from './optimization-evidence.js';
 export type Execute=(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal)=>Promise<void>;
+export function syncReflectionCandidates(store:AutomationStore,experiences=new ExperienceStore(store)){
+  for(const id of store.reflectionCandidates()){
+    const header=store.header(id);if(!header)continue;
+    const parentHeader=header.parentId?store.header(header.parentId):undefined;
+    const rootHeader=header.optimizationRootId?store.header(header.optimizationRootId):parentHeader?.optimization?parentHeader:parentHeader?.optimizationRootId?store.header(parentHeader.optimizationRootId):header;
+    if(rootHeader?.optimization&&!['completed','stopped'].includes(rootHeader.optimization.state))continue;
+    const candidate=store.task(id,false);if(!candidate)continue;
+    const root=store.root(candidate);
+    if(root?.optimization){
+      if(!['completed','stopped'].includes(root.optimization.state))continue;
+      const latestReportId=root.optimization.reportId||[...root.optimization.rounds].reverse().map(r=>r.evaluationTaskId).find(evalId=>evalId&&store.header(evalId)?.report);
+      if(candidate.kind==='evaluation'&&candidate.report&&!candidate.interruption&&latestReportId&&latestReportId!==candidate.id){
+        const key=header.reflectionKey;
+        if(key){
+          const skipped=experiences.enqueue(candidate,'evaluation','reflection',key);
+          if(skipped.status==='queued'){skipped.status='completed';skipped.reason='跳过复盘：自动优化工作流已产生更新轮次报告，仅对终态结果复盘。';experiences.put(skipped);}
+        }
+        continue;
+      }
+    }
+    queueReflection(candidate,store);
+  }
+}
 export class AutomationWorker{
   private timer?:ReturnType<typeof setInterval>;
   private running=new Map<string,{controller:AbortController;promise:Promise<void>}>();
@@ -34,7 +58,7 @@ export class AutomationWorker{
   ownedIds(){return [...new Set([...this.running.keys(),...this.learning.keys()])];}
   private own(id:string,item:{controller:AbortController;promise:Promise<void>}){this.running.set(id,item);this.onOwnershipChanged?.();}
   private release(id:string,controller?:AbortController){if(!controller||this.running.get(id)?.controller===controller){this.running.delete(id);this.onOwnershipChanged?.();}}
-  constructor(readonly store:AutomationStore,private vault:Vault,private directory:string,private execute:{generation:Execute;evaluation:Execute}={generation:executeGeneration,evaluation:executeEvaluation},private browserReady=()=>existsSync(chromium.executablePath()),private followupExecute:FollowupExecute=executeFollowup){}
+  constructor(readonly store:AutomationStore,private vault:Vault,private directory:string,private execute:{generation:Execute;evaluation:Execute}={generation:executeGeneration,evaluation:executeEvaluation},private browserReady=()=>existsSync(chromium.executablePath()),private followupExecute:FollowupExecute=executeFollowup,private reflect:typeof reflectExperience=reflectExperience){}
   start(){
     if(this.timer)return;
     const lock=resolve(this.directory,'automation-worker.lock');
@@ -57,12 +81,12 @@ export class AutomationWorker{
         try{advanceOptimization(root,this.store,settings);}catch(error){stopOptimization(root,this.store,'优化调度无法继续：'+(error as Error).message,['查看执行记录，核实站点、原会话与报告。']);}
       }
       // Executor-injected test workers do not start real model side effects.
-      if(this.execute.generation===executeGeneration&&this.execute.evaluation===executeEvaluation){
+      if((this.execute.generation===executeGeneration&&this.execute.evaluation===executeEvaluation)||this.reflect!==reflectExperience){
         const experiences=new ExperienceStore(this.store);
         if(!this.learningReady){experiences.recover();this.learningReady=true;}
-        for(const id of this.store.reflectionCandidates())queueReflection(this.store.task(id,false)!,this.store);
+        syncReflectionCandidates(this.store,experiences);
         const limit=settings.learning?.concurrency||1;
-        while(this.learning.size<limit){const run=experiences.claim(run=>{if(this.learning.has(run.id))return false;const root=this.store.task(run.workflowId);return !!root&&(!root.optimization||['completed','stopped'].includes(root.optimization.state))&&!this.store.workflowIds(root).some(id=>{const t=this.store.task(id);return t&&(!t.stopped||['queued','following-up'].includes(t.status));});});if(!run)break;const controller=new AbortController();const promise=reflectExperience(run,this.store,this.vault,this.directory,controller.signal).catch(error=>{run.status='failed';run.reason=(error as Error).message;experiences.put(run);}).finally(()=>{this.learning.delete(run.id);this.onOwnershipChanged?.();if(!this.stopping)void this.tick();});this.learning.set(run.id,{controller,promise});this.onOwnershipChanged?.();}
+        while(this.learning.size<limit){const run=experiences.claim(run=>{if(this.learning.has(run.id))return false;const root=this.store.task(run.workflowId);return !!root&&(!root.optimization||['completed','stopped'].includes(root.optimization.state))&&!this.store.workflowIds(root).some(id=>{const t=this.store.task(id);return t&&(!t.stopped||['queued','following-up'].includes(t.status));});});if(!run)break;const controller=new AbortController();const promise=this.reflect(run,this.store,this.vault,this.directory,controller.signal).catch(error=>{run.status='failed';run.reason=(error as Error).message;experiences.put(run);}).finally(()=>{this.learning.delete(run.id);this.onOwnershipChanged?.();if(!this.stopping)void this.tick();});this.learning.set(run.id,{controller,promise});this.onOwnershipChanged?.();}
       }
       for(const kind of ['generation','evaluation'] as const){
         const limit=kind==='generation'?settings.generationConcurrency:settings.evaluationConcurrency;
@@ -112,7 +136,7 @@ export class AutomationWorker{
     if(collection.name==='CollectionBlocked'){this.interrupt(task,detail,collection.nextSteps||['补齐原站采集所需外部条件后恢复原任务。']);return true;}
     if(!isAutonomousRetry(reason)&&!(followup&&reason instanceof Error&&!(reason instanceof FollowupRuntimeError)&&!(reason instanceof UnconfirmedStop)))return false;
     if(!task.stopped)return false;
-    if(followup&&reason instanceof ModelBudgetExceeded&&followupAccountState(task,this.store).unknown){this.interrupt(task,detail,['存在未确认停止的历史模型请求，先核对原执行；不能通过开启新窗口绕过未知用量阻塞。']);return true;}
+    if(followup&&reason instanceof ModelBudgetExceeded&&followupAccountState(task,this.store).active){this.interrupt(task,detail,['仍有模型请求执行中，请等待当前执行结束后恢复。']);return true;}
     const waiting=collection.name==='CollectionPending'&&collection.waiting===true;
     const stop=waiting?'':recordAutonomousAttempt(task,followup?'followup-recovery':task.stage||task.kind,detail,Date.now(),collection.name==='CollectionPending'?collection.progressKey:undefined);
     if(waiting&&collection.progressKey)task.autonomy.checkpoint.progressKey=collection.progressKey;
@@ -133,8 +157,33 @@ export class AutomationWorker{
     this.store.event(task.id,'已保留原站、会话、累计用量与检查点，退避后接续：'+detail);return true;
   }
   private async run(task:AutomationTask,controller:AbortController,timeout:number){
-    const heartbeat=setInterval(()=>this.store.timing.heartbeat(task.id),1000);heartbeat.unref();
-    const timer=setTimeout(()=>controller.abort(new Pending('本轮执行达到时限，需要核对当前成果后继续')),timeout*60000);timer.unref();
+    let timer:ReturnType<typeof setTimeout>|undefined;
+    const armTimer=()=>{
+      if(timer)clearTimeout(timer);
+      timer=setTimeout(()=>controller.abort(new Pending('本轮执行达到时限，需要核对当前成果后继续')),timeout*60000);
+      timer.unref();
+    };
+    const readBatchProgress=()=>{
+      if(task.kind!=='evaluation')return '0:0:0';
+      try{
+        const row=this.store.db.prepare('SELECT COUNT(*) AS count, COALESCE(MAX(rowid),0) AS lastRow, COALESCE(MAX(updated_at),0) AS latest FROM auto_template_review_batches WHERE task_id=?').get(task.id);
+        return `${row?.count||0}:${row?.lastRow||0}:${row?.latest||0}`;
+      }catch{
+        try{
+          const row=this.store.db.prepare('SELECT COUNT(*) AS count, COALESCE(MAX(rowid),0) AS lastRow FROM auto_template_review_batches WHERE task_id=?').get(task.id);
+          return `${row?.count||0}:${row?.lastRow||0}:0`;
+        }catch{return '0:0:0';}
+      }
+    };
+    let lastBatchProgress=readBatchProgress();
+    armTimer();
+    const heartbeat=setInterval(()=>{
+      this.store.timing.heartbeat(task.id);
+      if(task.kind==='evaluation'){
+        const nextProgress=readBatchProgress();
+        if(nextProgress!==lastBatchProgress){lastBatchProgress=nextProgress;armTimer();}
+      }
+    },1000);heartbeat.unref();
     try{
       const budget=optimizationBudgetReason(task,this.store);
       if(budget){task.stopped=true;task.status='cancelled';task.error=budget;this.store.put(task);const root=this.store.root(task);if(root?.optimization)stopOptimization(root,this.store,budget,['查看费用与用量，核算预算后再决定后续任务。']);return;}
@@ -155,17 +204,26 @@ export class AutomationWorker{
     }catch(error){
       task.stopped=!(error instanceof UnconfirmedStop);
       const reason=error instanceof UnconfirmedStop?error:controller.signal.reason||error;
-      task.error=reason instanceof Error?reason.message:'执行失败，需要查证当前任务';this.store.event(task.id,task.error);
       if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){
+        task.error=reason instanceof Error?reason.message:'执行失败，需要查证当前任务';this.store.event(task.id,task.error);
         if(task.stopped){task.status='cancelled';this.store.noteCancelledSiteChange(task);this.store.put(task);}
         else this.interrupt(task,task.error,['检查原执行浏览器 / 会话，确认已停止后释放名额。']);
-      }else if(this.retainCollectionShutdown(task)){}
-      else if(this.autonomousRecovery(task,reason)){}
-      else if(reason instanceof FollowupRuntimeError)this.interrupt(task,task.error,reason.nextSteps);
-      else this.recoverTask(task);
+      }else if(reason instanceof EvaluationSliceYield&&task.stopped&&!this.stopping){
+        task.status='queued';task.error='';
+        if(task.followup)task.followup.executionStopped=true;
+        this.store.put(task);this.store.event(task.id,reason.message);
+      }else{
+        task.error=reason instanceof Error?reason.message:'执行失败，需要查证当前任务';this.store.event(task.id,task.error);
+        if(this.retainCollectionShutdown(task)){}
+        else if(this.autonomousRecovery(task,reason)){}
+        else if(reason instanceof FollowupRuntimeError)this.interrupt(task,task.error,reason.nextSteps);
+        else this.recoverTask(task);
+      }
     }finally{
       clearInterval(heartbeat);
-      clearTimeout(timer);
+      if(timer)clearTimeout(timer);
+      if(task.kind==='generation'&&task.stopped&&['completed','cancelled'].includes(task.status))
+        await trimTaskGenerationBrowserCache(this.directory,task.id,()=>this.store.event(task.id,'生成浏览器已关闭；可再生缓存未能全部清理，将在后续维护时重试。'));
       // A confirmed cancellation may clean only this task's registered copies.
       // Interruptions retain files; they may still be needed for recovery.
       if(task.kind==='generation'&&task.status==='cancelled'&&task.stopped&&task.generatedSiteId){
@@ -195,8 +253,8 @@ export class AutomationWorker{
     followup.budgetId||=randomUUID();this.store.put(task);
     let window=autonomousWindowRemaining(task);
     const account=task.autonomy?followupAccountState(task,this.store):undefined;
-    if(account?.unknown){task.stopped=followup.executionStopped;this.interrupt(task,'历史模型请求仍缺少已停止确认，不能通过新窗口绕过未知用量。',['核对原模型执行及预占；确认停止后恢复，实际用量和费用继续保留待核算。']);return;}
-    if(task.autonomy&&(window.attempts<=0||window.tokens<=0||window.milliseconds<=0||account&&(!account.unknown&&(account.spent>=policy.maxTokens||account.requests>=(policy.maxRequests||80))))){
+    if(account?.active){task.stopped=followup.executionStopped;this.interrupt(task,'仍有模型请求执行中，请等待当前执行结束后恢复。',['等待当前执行结束后恢复原任务。']);return;}
+    if(task.autonomy&&(window.attempts<=0||window.tokens<=0||window.milliseconds<=0||account&&(!account.active&&(account.spent>=policy.maxTokens||account.requests>=(policy.maxRequests||80))))){
       const stop=recordAutonomousAttempt(task,'followup-window','普通执行窗口已结束，保存累计用量并继续原目标');
       if(stop){task.stopped=followup.executionStopped;this.interrupt(task,stop,['查看当前目标、检查点与无进展历史，补齐新路径后恢复。']);return;}
       nextAutonomousWindow(task);window=autonomousWindowRemaining(task);this.store.put(task);
@@ -215,14 +273,15 @@ export class AutomationWorker{
       await selectExperience(task,'followup',this.store,this.vault,this.directory,controller.signal);
       followup.attempts++;this.store.put(task);this.store.event(task.id,`AI 跟进第 ${followup.attempts} 次，阶段：${task.stage||task.kind}`);
       const action=await this.followupExecute(task,this.store,this.vault,this.directory,controller.signal);
-      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){task.stopped=followup.executionStopped;if(task.stopped){task.status='cancelled';this.store.put(task);}else this.interrupt(task,'取消时原执行仍未确认停止。',['检查原执行并确认停止后释放名额。']);return;}
+      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){task.stopped=followup.executionStopped;if(task.stopped){task.status='cancelled';this.store.put(task);if(task.kind==='generation')await trimTaskGenerationBrowserCache(this.directory,task.id);}else this.interrupt(task,'取消时原执行仍未确认停止。',['检查原执行并确认停止后释放名额。']);return;}
       controller.signal.throwIfAborted();task.stopped=followup.executionStopped;followup.lastAction=action;
       this.applyAction(task,action);
+      if(task.kind==='generation'&&task.stopped&&task.status==='completed')await trimTaskGenerationBrowserCache(this.directory,task.id);
     }catch(error){
       task.stopped=error instanceof UnconfirmedStop?false:followup.executionStopped;
       const reason=controller.signal.reason||error;const detail=reason instanceof Error?reason.message:'跟进 Agent 执行失败';
       this.store.event(task.id,'AI 跟进未完成：'+detail);
-      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')&&task.stopped){task.status='cancelled';this.store.put(task);}
+      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')&&task.stopped){task.status='cancelled';this.store.put(task);if(task.kind==='generation')await trimTaskGenerationBrowserCache(this.directory,task.id);}
       else if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){this.interrupt(task,'取消时原执行仍未确认停止：'+detail,['检查原执行并确认停止后释放名额。']);}
       else if(error instanceof UnconfirmedStop){followup.executionStopped=false;this.interrupt(task,detail,['确认原浏览器已停止后释放名额，再恢复本任务。'],followup.observations);}
       else if(this.retainCollectionShutdown(task)){}

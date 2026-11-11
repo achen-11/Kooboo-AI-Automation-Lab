@@ -15,6 +15,11 @@ import { templateReviewBatches, reviewTemplateBatches, mergeTemplateReports } fr
 import { adaptRepairImages } from '../server/automation/repair-images.js';
 import { validateResult } from '../server/automation/evaluator.js';
 import { siteRetryBlocked, rememberSiteRetry } from '../server/automation/retry-guard.js';
+import { EvaluationSliceYield } from '../server/automation/errors.js';
+import { AutomationWorker, syncReflectionCandidates } from '../server/automation/worker.js';
+import { Vault } from '../server/lib/vault.js';
+import { ExperienceStore } from '../server/automation/experience-store.js';
+import { defaultLearningSettings } from '../shared/experience.js';
 
 const {PNG}=createRequire(import.meta.url)('playwright-core/lib/utilsBundle');
 const hash=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
@@ -26,8 +31,8 @@ function fixture(){const directory=mkdtempSync(resolve(tmpdir(),'template-effici
 }
 
 test('template capture covers all static paths, boundary samples and viewports; source reuse never carries old target revisions',async()=>{
-  const f=fixture();try{let calls=0;const capture=async(slot:CaptureSlot)=>{calls++;const name=randomUUID()+'.png',pixels=PNG.sync.write({width:1,height:1,data:Buffer.from([5,6,7,255])});const observation={file:name,url:slot.url,role:slot.role,viewport:slot.viewport,settlement:{settled:true},binding:{taskId:f.task.id,siteRevision:f.task.siteRevision,inputVersionId:f.task.versionId,sourceSnapshotId:f.task.id,capturePolicy:evaluationCapturePolicy}};
-      for(const [file,bytes,type] of [[name,pixels,'image/png'],[name.replace('.png','.json'),Buffer.from(JSON.stringify(observation)),'application/json']] as const){writeFileSync(resolve(f.work,'evidence',file),bytes);f.artifacts.push({id:randomUUID(),name:file,size:bytes.length,sha256:hash(bytes),type,role:slot.role,viewport:slot.viewport,settled:true});}return observation;};
+  const f=fixture();try{let calls=0;const capture=async(slot:CaptureSlot)=>{calls++;const name=randomUUID()+'.png',pixels=PNG.sync.write({width:1,height:1,data:Buffer.from([5,6,7,255])});const observation={action:'take_page_screenshots',file:name,url:slot.url,role:slot.role,viewport:slot.viewport,settlement:{settled:true},position:{url:slot.url,scrollX:0,scrollY:0,documentHeight:1000,viewportWidth:1440,viewportHeight:1000},capture:{id:randomUUID(),index:1,scope:'page',policy:evaluationCapturePolicy},binding:{taskId:f.task.id,siteRevision:f.task.siteRevision,inputVersionId:f.task.versionId,sourceSnapshotId:f.task.id,capturePolicy:evaluationCapturePolicy}};
+      for(const [file,bytes,type] of [[name,pixels,'image/png'],[name.replace('.png','.json'),Buffer.from(JSON.stringify(observation)),'application/json']] as const){writeFileSync(resolve(f.work,'evidence',file),bytes);f.artifacts.push({id:randomUUID(),name:file,size:bytes.length,sha256:hash(bytes),type,role:slot.role,viewport:slot.viewport,settled:true});}return {action:'take_page_screenshots',status:'complete',coverageComplete:true,screenshots:[observation],gaps:[],nextStartY:null,nextSelectorIndex:null};};
     const input={...f,target:'https://target.test/',reference:'https://source.test/',signal:new AbortController().signal,capture,checkpoint:()=>{}};
     const first=await captureTemplate(input);assert.equal(first.slots.length,16);assert.equal(calls,16);assert.equal(first.progress.every(p=>p.state==='captured'),true);
     await captureTemplate(input);assert.equal(calls,16,'all registered bytes are reusable within the same task/revision');
@@ -39,6 +44,30 @@ test('template capture covers all static paths, boundary samples and viewports; 
 
 test('capture errors remain visible rather than verified',async()=>{
   const f=fixture();try{const result=await captureTemplate({...f,target:'https://target.test/',reference:'https://source.test/',signal:new AbortController().signal,capture:async()=>{throw new Error('timeout');},checkpoint:()=>{}});assert.equal(result.progress.length,16);assert.equal(result.progress.every(p=>p.state==='unverified'),true);assert.match(readFileSync(resolve(f.work,'capture-plan.json'),'utf8'),/timeout/);
+  }finally{f.close();}
+});
+
+test('viewport prefixes resume after interruption; all frame pairs are retained and legacy single-image caches are rejected',async()=>{
+  const f=fixture();try{
+    const requests:string[]=[];let interrupt=true;
+    const capture=async(slot:CaptureSlot,startY:number)=>{
+      requests.push(slot.viewport+':'+startY);
+      const height=slot.viewport==='mobile'?844:1000,step=Math.round(height*.85);
+      if(slot.viewport==='desktop'&&startY===step&&interrupt){interrupt=false;throw new Error('interrupted continuation');}
+      const name=randomUUID()+'.png',pixels=PNG.sync.write({width:1,height:1,data:Buffer.from([1,2,3,255])});
+      const observation={action:'take_page_screenshots',file:name,url:slot.url,role:slot.role,viewport:slot.viewport,settlement:{settled:true},position:{url:slot.url,scrollX:0,scrollY:startY,documentHeight:height+step,viewportWidth:slot.viewport==='mobile'?390:1440,viewportHeight:height},capture:{id:randomUUID(),index:1,scope:'page',policy:evaluationCapturePolicy},binding:{taskId:f.task.id,siteRevision:f.task.siteRevision,inputVersionId:f.task.versionId,sourceSnapshotId:f.task.id,capturePolicy:evaluationCapturePolicy}};
+      for(const [file,bytes,type] of [[name,pixels,'image/png'],[name.replace('.png','.json'),Buffer.from(JSON.stringify(observation)),'application/json']] as const){writeFileSync(resolve(f.work,'evidence',file),bytes);f.artifacts.push({id:randomUUID(),name:file,size:bytes.length,sha256:hash(bytes),type,role:slot.role,viewport:slot.viewport,settled:true});}
+      return {action:'take_page_screenshots',status:startY?'complete':'partial',coverageComplete:startY>0,screenshots:[observation],gaps:[],nextStartY:startY?null:step,nextSelectorIndex:null};
+    };
+    const input={...f,manifest:undefined,target:'https://target.test/',reference:'',signal:new AbortController().signal,capture,checkpoint:()=>{}};
+    const first=await captureTemplate(input);assert.equal(first.progress[0].state,'unverified');assert.equal(first.progress[0].files.length,2);assert.equal(first.progress[0].nextStartY,850);
+    assert.equal(first.progress[1].coverageComplete,true);assert.equal(first.progress[1].files.length,4);
+    const second=await captureTemplate(input);assert.equal(second.progress[0].coverageComplete,true);assert.equal(second.progress[0].files.length,4);assert.equal(second.progress[1].state,'reused');
+    assert.deepEqual(requests,['desktop:0','desktop:850','mobile:0','mobile:717','desktop:850']);
+    await captureTemplate(input);assert.equal(requests.length,5,'verified multi-frame caches are reused');
+    const key=second.slots[0].key,row=f.db.prepare('SELECT json FROM auto_template_captures WHERE key=?').get(key)!;
+    const saved=JSON.parse(row.json);f.db.prepare('UPDATE auto_template_captures SET json=? WHERE key=?').run(JSON.stringify(saved.files.slice(0,2)),key);
+    await captureTemplate(input);assert.deepEqual(requests.slice(-2),['desktop:0','desktop:850'],'legacy pair cannot stand in for page coverage');
   }finally{f.close();}
 });
 
@@ -129,4 +158,314 @@ test('restart recovery trusts only a completed SDK and browser exit receipt and 
 test('same failed run cannot repeat retry without a new checkpoint, while a new run or scenario remains eligible',()=>{
   const f=fixture();try{f.task.kind='generation';f.task.generation={runId:'run-1',state:'failed',conversationId:'conversation'};f.task.error='same failure';assert.equal(siteRetryBlocked(f.task,f.store),false);rememberSiteRetry(f.task,f.store);assert.equal(siteRetryBlocked(f.task,f.store),true);f.task.generation.runId='run-2';assert.equal(siteRetryBlocked(f.task,f.store),false);rememberSiteRetry(f.task,f.store);f.task.scenario='app-template';assert.equal(siteRetryBlocked(f.task,f.store),false);
   }finally{f.close();}
+});
+
+test('criteria-desktop and criteria-mobile checkpoints stay cached when extend_manifest expands manifest during completeness review',async()=>{
+  const f=fixture();try{
+    f.manifest={...f.manifest,items:[{...f.manifest.items[0],paths:Array.from({length:8},(_,i)=>'/p-'+i)},f.manifest.items[1]]};
+    const executed:string[]=[];let prepared=0,expanded=false;
+    const validate=(raw:any)=>({...raw,completeness:Array.isArray(raw.completeness)?{checks:raw.completeness}:raw.completeness}) as AutomationReport;
+    const review=async(batch:ReturnType<typeof templateReviewBatches>[number])=>{
+      executed.push(batch.id);
+      if(batch.id==='completeness-1'&&!expanded){
+        expanded=true;
+        f.manifest={...f.manifest,id:randomUUID(),revision:2,items:[...f.manifest.items,{id:'faq',title:'FAQ',kind:'page',required:true,source:'extended',expectation:'FAQ page',paths:['/faq'],viewports:['desktop','mobile'],expectedCount:1}]};
+      }
+      return {
+        summary:batch.id,
+        assessments:batch.task.rule!.criteria.flatMap(c=>c.viewports.map(viewport=>({criterionId:c.id,viewport,score:90,passed:true,reason:'Reviewed',evidence:[]}))),
+        issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},quality:'passed',scores:[],artifacts:[],
+        ...(batch.manifest?{completeness:{manifestId:batch.manifest.id,manifestRevision:batch.manifest.revision,sourceComplete:true,state:'complete',checks:batch.manifest.items.map(item=>({id:item.id,status:'verified',reason:'Checked',evidence:[],checkedViewports:['desktop','mobile'],actualCount:null,sampledPaths:item.paths,checkedKeys:[]}))}}:{})
+      } as AutomationReport;
+    };
+    const result=await reviewTemplateBatches({...f,manifest:()=>f.manifest,prepare:async()=>{prepared++;},validate,review});
+    assert.equal(prepared,1);
+    assert.deepEqual(executed,['criteria-desktop','criteria-mobile','completeness-1','completeness-1','completeness-2','completeness-3'],'criteria-desktop and criteria-mobile checkpoints are NOT re-executed when completeness-1 extends manifest');
+    assert.deepEqual(result.completeness!.map(c=>c.id),['pages','cars','faq']);
+    assert.equal(result.assessments.length,f.task.rule!.criteria.filter(c=>c.scopes.includes(f.task.scope)).flatMap(c=>c.viewports).length);
+
+    // Also verify unaffected earlier completeness chunks stay cached when a later completeness batch extends manifest.
+    f.task.siteRevision='r2';executed.length=0;prepared=0;let expandedLate=false;
+    await reviewTemplateBatches({...f,manifest:()=>f.manifest,prepare:async()=>{prepared++;},validate,review:async batch=>{
+      if(batch.id==='completeness-3'&&!expandedLate){
+        expandedLate=true;
+        f.manifest={...f.manifest,id:randomUUID(),revision:3,items:[...f.manifest.items,{id:'contact',title:'Contact',kind:'page',required:true,source:'extended',expectation:'Contact page',paths:['/contact'],viewports:['desktop','mobile'],expectedCount:1}]};
+      }
+      return review(batch);
+    }});
+    assert.equal(prepared,1);
+    assert.deepEqual(executed,['criteria-desktop','criteria-mobile','completeness-1','completeness-2','completeness-3','completeness-3']);
+  }finally{f.close();}
+});
+
+test('extend_manifest invalidates cached batches carrying stale coverage.unverified, outOfScope or completeness issues while keeping clean checkpoints cached',async()=>{
+  // Case A: criteria-desktop records coverage.unverified under manifest v1, criteria-mobile is clean; completeness-1 extends manifest to v2 adding /faq.
+  const a=fixture();try{
+    a.manifest={...a.manifest,sourceComplete:false,limitations:['FAQ 待核实'],items:[a.manifest.items[0]]};
+    const observations:Record<string,{url:string;role:string;viewport:string}>={};
+    const registerPaths=(paths:string[])=>{
+      for(const path of paths)for(const viewport of ['desktop','mobile'] as const){
+        const url='https://target.test'+path;
+        if(Object.values(observations).some(o=>o.url===url&&o.viewport===viewport))continue;
+        const name=randomUUID()+'.png';
+        a.artifacts.push({id:randomUUID(),name,type:'image/png',size:1,sha256:'a'.repeat(64),role:'target',viewport,settled:true});
+        observations[name]={url,role:'target',viewport};
+      }
+    };
+    registerPaths(['/','/about?x=1']);
+    const validate=(raw:unknown,batch:{task:AutomationTask;manifest?:RequirementManifest})=>validateResult(raw,batch.task,a.artifacts,80,false,batch.manifest,observations,'https://target.test/');
+    const executed:string[]=[];let expanded=false;
+    const merged=await reviewTemplateBatches({
+      ...a,manifest:()=>a.manifest,prepare:async()=>{registerPaths(['/faq']);},validate,
+      review:async batch=>{
+        executed.push(batch.id);
+        if(batch.id==='completeness-1'&&!expanded){
+          expanded=true;
+          a.manifest={...a.manifest,id:randomUUID(),revision:2,sourceComplete:true,limitations:[],items:[...a.manifest.items,{id:'faq',title:'FAQ',kind:'page',required:true,source:'extended',expectation:'FAQ page',paths:['/faq'],viewports:['desktop','mobile'],expectedCount:1}]};
+        }
+        const raw={
+          summary:batch.id,
+          assessments:batch.task.rule!.criteria.flatMap(c=>c.viewports.map(viewport=>({
+            criterionId:c.id,viewport,score:90,passed:true,reason:'Reviewed',
+            evidence:viewport==='business'?[a.artifacts[0].name]:Object.entries(observations).filter(([,o])=>o.viewport===viewport).slice(0,1).map(([name])=>name)
+          }))),
+          issues:[],
+          coverage:batch.id==='criteria-desktop'&&!expanded
+            ?{verified:['hero checked'],unverified:['FAQ 未纳入清单'],outOfScope:[]}
+            :batch.id==='criteria-mobile'
+            ?{verified:['mobile hero checked'],unverified:[],outOfScope:[]}
+            :{verified:['scope verified'],unverified:[],outOfScope:[]},
+          ...(batch.manifest?{completeness:batch.manifest.items.map(item=>({
+            id:item.id,status:'verified' as const,reason:'Checked',
+            evidence:Object.entries(observations).filter(([,o])=>item.paths.some(p=>new URL(o.url).pathname+new URL(o.url).search===p)).map(([name])=>name),
+            checkedViewports:['desktop','mobile'],actualCount:null,sampledPaths:item.paths,checkedKeys:[]
+          }))}:{})
+        };
+        return validate(raw,batch);
+      }
+    });
+    assert.deepEqual(executed,['criteria-desktop','criteria-mobile','completeness-1','criteria-desktop','completeness-1'],'criteria-mobile stays cached while stale criteria-desktop is invalidated and re-reviewed under manifest v2');
+    assert.deepEqual(merged.coverage.unverified,[]);
+    const finalReport=validateResult(merged,a.task,a.artifacts,80,false,a.manifest,observations,'https://target.test/');
+    assert.deepEqual(finalReport.coverage.unverified,[]);
+    assert.equal(finalReport.completeness!.state,'complete');
+    assert.equal(finalReport.quality,'passed');
+  }finally{a.close();}
+
+  // Case B: earlier completeness-1 chunk (with unchanged items between v1 and v2) records coverage.unverified under v1 before completeness-2 adds faq into completeness-2.
+  const b=fixture();try{
+    const mkPage=(id:string,path:string)=>({id,title:id,kind:'page' as const,required:true,source:'frozen',expectation:id,paths:[path],viewports:['desktop','mobile'] as ('desktop'|'mobile')[],expectedCount:1});
+    b.manifest={...b.manifest,sourceComplete:true,limitations:[],items:[mkPage('p1','/p1'),mkPage('p2','/p2'),mkPage('p3','/p3'),mkPage('p4','/p4'),mkPage('p5','/p5')]};
+    const observations:Record<string,{url:string;role:string;viewport:string}>={};
+    const registerPaths=(paths:string[])=>{
+      for(const path of paths)for(const viewport of ['desktop','mobile'] as const){
+        const url='https://target.test'+path;
+        if(Object.values(observations).some(o=>o.url===url&&o.viewport===viewport))continue;
+        const name=randomUUID()+'.png';
+        b.artifacts.push({id:randomUUID(),name,type:'image/png',size:1,sha256:'b'.repeat(64),role:'target',viewport,settled:true});
+        observations[name]={url,role:'target',viewport};
+      }
+    };
+    registerPaths(['/p1','/p2','/p3','/p4','/p5']);
+    const validate=(raw:unknown,batch:{task:AutomationTask;manifest?:RequirementManifest})=>validateResult(raw,batch.task,b.artifacts,80,false,batch.manifest,observations,'https://target.test/');
+    const executed:string[]=[];let expanded=false;
+    const merged=await reviewTemplateBatches({
+      ...b,manifest:()=>b.manifest,prepare:async()=>{registerPaths(['/faq']);},validate,
+      review:async batch=>{
+        executed.push(batch.id);
+        if(batch.id==='completeness-2'&&!expanded){
+          expanded=true;
+          b.manifest={...b.manifest,id:randomUUID(),revision:2,sourceComplete:true,limitations:[],items:[...b.manifest.items,mkPage('faq','/faq')]};
+        }
+        const raw={
+          summary:batch.id,
+          assessments:batch.task.rule!.criteria.flatMap(c=>c.viewports.map(viewport=>({
+            criterionId:c.id,viewport,score:92,passed:true,reason:'Reviewed',
+            evidence:viewport==='business'?[b.artifacts[0].name]:Object.entries(observations).filter(([,o])=>o.viewport===viewport).slice(0,1).map(([name])=>name)
+          }))),
+          issues:[],
+          coverage:batch.id==='completeness-1'&&!expanded
+            ?{verified:['p1..p4 checked'],unverified:['FAQ 未纳入清单'],outOfScope:[]}
+            :{verified:['clean'],unverified:[],outOfScope:[]},
+          ...(batch.manifest?{completeness:batch.manifest.items.map(item=>({
+            id:item.id,status:'verified' as const,reason:'Checked',
+            evidence:Object.entries(observations).filter(([,o])=>item.paths.includes(new URL(o.url).pathname)).map(([name])=>name),
+            checkedViewports:['desktop','mobile'],actualCount:null,sampledPaths:item.paths,checkedKeys:[]
+          }))}:{})
+        };
+        return validate(raw,batch);
+      }
+    });
+    assert.deepEqual(executed,['criteria-desktop','criteria-mobile','completeness-1','completeness-2','completeness-1','completeness-2'],'completeness-1 is invalidated and re-reviewed in pass=1 when it carried stale coverage.unverified from manifest v1');
+    assert.deepEqual(merged.coverage.unverified,[]);
+    assert.deepEqual(merged.completeness!.map(c=>c.id),['p1','p2','p3','p4','p5','faq']);
+    const finalReport=validateResult(merged,b.task,b.artifacts,80,false,b.manifest,observations,'https://target.test/');
+    assert.deepEqual(finalReport.coverage.unverified,[]);
+    assert.equal(finalReport.completeness!.state,'complete');
+    assert.equal(finalReport.quality,'passed');
+
+    // Also verify outOfScope on criteria and issues on completeness chunks invalidate across manifest expansion while clean criteria stay cached.
+    b.task.siteRevision='r2';executed.length=0;let expandedR2=false;
+    const mergedR2=await reviewTemplateBatches({
+      ...b,manifest:()=>b.manifest,prepare:async()=>{registerPaths(['/terms']);},validate,
+      review:async batch=>{
+        executed.push(batch.id);
+        if(batch.id==='completeness-2'&&!expandedR2){
+          expandedR2=true;
+          b.manifest={...b.manifest,id:randomUUID(),revision:3,sourceComplete:true,limitations:[],items:[...b.manifest.items,mkPage('terms','/terms')]};
+        }
+        const raw={
+          summary:batch.id,
+          assessments:batch.task.rule!.criteria.flatMap(c=>c.viewports.map(viewport=>({
+            criterionId:c.id,viewport,score:92,passed:true,reason:'Reviewed',
+            evidence:viewport==='business'?[b.artifacts[0].name]:Object.entries(observations).filter(([,o])=>o.viewport===viewport).slice(0,1).map(([name])=>name)
+          }))),
+          issues:batch.id==='completeness-1'&&!expandedR2?[{severity:'minor' as const,title:'Terms link',detail:'Terms not in manifest yet',evidence:[b.artifacts[0].name]}]:[],
+          coverage:batch.id==='criteria-desktop'&&!expandedR2
+            ?{verified:['desktop'],unverified:[],outOfScope:['Terms 不在当前清单范围']}
+            :{verified:['clean'],unverified:[],outOfScope:[]},
+          ...(batch.manifest?{completeness:batch.manifest.items.map(item=>({
+            id:item.id,status:'verified' as const,reason:'Checked',
+            evidence:Object.entries(observations).filter(([,o])=>item.paths.includes(new URL(o.url).pathname)).map(([name])=>name),
+            checkedViewports:['desktop','mobile'],actualCount:null,sampledPaths:item.paths,checkedKeys:[]
+          }))}:{})
+        };
+        return validate(raw,batch);
+      }
+    });
+    assert.deepEqual(executed,['criteria-desktop','criteria-mobile','completeness-1','completeness-2','criteria-desktop','completeness-1','completeness-2']);
+    assert.deepEqual(mergedR2.coverage.outOfScope,[]);
+    assert.deepEqual(mergedR2.issues,[]);
+  }finally{b.close();}
+});
+
+test('reviewTemplateBatches yields via EvaluationSliceYield at batch boundaries and AutomationWorker re-queues without followup while renewing timeouts on batch progress',async()=>{
+  const f=fixture();let worker:AutomationWorker|undefined;try{
+    const executed:string[]=[];
+    const validate=(raw:any)=>({...raw,completeness:Array.isArray(raw.completeness)?{checks:raw.completeness}:raw.completeness}) as AutomationReport;
+    const input={...f,maxSliceMs:0,manifest:()=>f.manifest,prepare:async()=>{},validate,review:async(batch:ReturnType<typeof templateReviewBatches>[number])=>{
+      executed.push(batch.id);
+      return {
+        summary:batch.id,
+        assessments:batch.task.rule!.criteria.flatMap(c=>c.viewports.map(viewport=>({criterionId:c.id,viewport,score:88,passed:true,reason:'Checked',evidence:[]}))),
+        issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},quality:'passed',scores:[],artifacts:[],
+        ...(batch.manifest?{completeness:{checks:batch.manifest.items.map(item=>({id:item.id,status:'verified',reason:'Checked',evidence:[],checkedViewports:['desktop','mobile'],actualCount:null,sampledPaths:item.paths,checkedKeys:[]}))}}:{})
+      } as AutomationReport;
+    }};
+    await assert.rejects(reviewTemplateBatches(input),EvaluationSliceYield);
+    assert.deepEqual(executed,['criteria-desktop']);
+    await assert.rejects(reviewTemplateBatches(input),EvaluationSliceYield);
+    assert.deepEqual(executed,['criteria-desktop','criteria-mobile']);
+    const merged=await reviewTemplateBatches(input);
+    assert.deepEqual(executed,['criteria-desktop','criteria-mobile','completeness-1']);
+    assert.equal(merged.completeness?.length,2);
+
+    f.task.status='completed';f.task.stopped=true;f.store.put(f.task);
+    const vault=new Vault(resolve(f.directory,'vault'));
+    const siteId=randomUUID();
+    f.store.saveSite({id:siteId,resourceId:f.task.resourceId,versionId:f.task.versionId,environmentId:f.task.environmentId,siteId:randomUUID(),name:'Target',url:'https://target.test/',createdAt:1});
+    const settings={...structuredClone(defaultAutomationSettings),enabled:true,timeoutMinutes:1.35/60,followup:{...defaultAutomationSettings.followup,enabled:true}};
+    vault.updateAutomation(settings);
+    const evalTask=f.store.create({resourceIds:[f.task.resourceId],kind:'evaluation',scope:'site',environmentId:f.task.environmentId,generatedSiteId:siteId,requirements:''},settings)[0];
+    evalTask.siteRevision='rev-slice';f.store.put(evalTask);
+    let runs=0,followupCalls=0;
+    worker=new AutomationWorker(f.store,vault,f.directory,{
+      generation:async()=>{},
+      evaluation:async(task,store,_vault,_dir,signal)=>{
+        runs++;
+        store.db.exec('CREATE TABLE IF NOT EXISTS auto_template_review_batches(key TEXT PRIMARY KEY,task_id TEXT NOT NULL,json TEXT NOT NULL,updated_at INTEGER NOT NULL DEFAULT 0)');
+        if(runs===1){
+          store.db.prepare('INSERT OR REPLACE INTO auto_template_review_batches(key,task_id,json,updated_at) VALUES(?,?,?,?)').run('b1',task.id,'{}',Date.now());
+          vault.updateAutomation({...settings,enabled:false});
+          throw new EvaluationSliceYield('已完成本时间片评测批次并保存检查点，自动接续剩余批次');
+        }
+        await new Promise(r=>setTimeout(r,600));
+        signal.throwIfAborted();
+        store.db.prepare('INSERT OR REPLACE INTO auto_template_review_batches(key,task_id,json,updated_at) VALUES(?,?,?,?)').run('b2',task.id,'{}',Date.now());
+        await new Promise(r=>setTimeout(r,950));
+        signal.throwIfAborted();
+        task.report={summary:'Done',assessments:[],issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},scores:[],quality:'passed',artifacts:[]};
+      }
+    },()=>true,async()=>{followupCalls++;return {action:'interrupt',reason:'unexpected followup',evidence:['e']};});
+
+    await worker.tick();
+    while(worker.owns(evalTask.id))await new Promise(r=>setTimeout(r,20));
+    const yielded=f.store.task(evalTask.id)!;
+    assert.equal(yielded.status,'queued','EvaluationSliceYield re-queues task directly without scheduling followup');
+    assert.equal(yielded.stopped,true);
+    assert.equal(yielded.error,'');
+    assert.equal(yielded.followup,undefined);
+    assert.equal(followupCalls,0);
+
+    vault.updateAutomation({...settings,enabled:true});
+    await worker.tick();
+    while(worker.owns(evalTask.id))await new Promise(r=>setTimeout(r,20));
+    const completed=f.store.task(evalTask.id)!;
+    assert.equal(runs,2);
+    assert.equal(completed.status,'completed','progress-aware timeout renewal prevents mid-batch abort when checkpoints advance');
+    assert.equal(followupCalls,0);
+  }finally{await worker?.stop();f.close();}
+});
+
+test('intermediate optimization round evaluations defer reflection while active and record skipped runs once superseded',async()=>{
+  const f=fixture();let worker:AutomationWorker|undefined;try{
+    const vault=new Vault(resolve(f.directory,'vault'));
+    const learning={...defaultLearningSettings,collect:true,use:false};
+    const settings={...structuredClone(defaultAutomationSettings),enabled:true,learning};
+    vault.updateAutomation(settings);
+    const siteId=randomUUID();
+    f.store.saveSite({id:siteId,resourceId:f.task.resourceId,versionId:f.task.versionId,environmentId:f.task.environmentId,siteId:randomUUID(),name:'OptTarget',url:'https://target.test/',createdAt:1});
+    const root=f.store.create({resourceIds:[f.task.resourceId],kind:'generation',scope:'site',environmentId:f.task.environmentId,generatedSiteId:siteId,requirements:'',optimization:{targetScore:90,maxRounds:3}},settings)[0];
+    root.learningPolicy=structuredClone(learning);root.status='completed';root.stopped=true;f.store.put(root);
+
+    const makeEval=(round:number,summary:string)=>{
+      const ev=f.store.create({resourceIds:[f.task.resourceId],kind:'evaluation',scope:'site',environmentId:f.task.environmentId,generatedSiteId:siteId,requirements:'',parentId:root.id,optimizationRootId:root.id,optimizationRound:round},settings)[0];
+      ev.learningPolicy=structuredClone(learning);ev.siteRevision=`rev-${round}`;ev.status='completed';ev.stopped=true;
+      ev.report={summary,assessments:[],issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},scores:[{viewport:'desktop',value:70+round*10},{viewport:'mobile',value:70+round*10}],quality:round===2?'passed':'failed',artifacts:[]};
+      f.store.put(ev);return ev;
+    };
+
+    const eval0=makeEval(0,'Round 0 report');
+    const eval1=makeEval(1,'Round 1 report');
+    root.optimization!.rounds=[
+      {number:0,revision:'rev-0',generationTaskId:root.id,evaluationTaskId:eval0.id,startedAt:1},
+      {number:1,revision:'rev-1',generationTaskId:root.id,evaluationTaskId:eval1.id,startedAt:2},
+    ];
+    root.optimization!.state='planning';
+    root.optimization!.reportId=eval1.id;
+    f.store.put(root);
+
+    const experiences=new ExperienceStore(f.store);
+    const reflected:string[]=[];
+    worker=new AutomationWorker(f.store,vault,f.directory,{generation:async()=>{},evaluation:async()=>{}},()=>true,undefined,async run=>{
+      reflected.push(run.taskId);
+      run.status='completed';run.reason='Reflected final report';experiences.put(run);
+    });
+
+    syncReflectionCandidates(f.store,experiences);
+    assert.equal(experiences.runs(eval0.id).total,0,'active optimization defers reflection queueing');
+    assert.equal(experiences.runs(eval1.id).total,0,'active optimization defers reflection queueing');
+    assert.equal(experiences.claim(),undefined);
+
+    const eval2=makeEval(2,'Round 2 final report');
+    root.optimization!.rounds.push({number:2,revision:'rev-2',generationTaskId:root.id,evaluationTaskId:eval2.id,startedAt:3});
+    root.optimization!.state='completed';
+    root.optimization!.reportId=eval2.id;
+    root.optimization!.stoppedAt=Date.now();
+    f.store.put(root);
+
+    syncReflectionCandidates(f.store,experiences);
+    const run0=experiences.runs(eval0.id).items[0]!;
+    const run1=experiences.runs(eval1.id).items[0]!;
+    const run2=experiences.runs(eval2.id).items[0]!;
+    assert.equal(run0.status,'completed');assert.match(run0.reason,/跳过复盘/);
+    assert.equal(run1.status,'completed');assert.match(run1.reason,/跳过复盘/);
+    assert.equal(run2.status,'queued');
+    assert.deepEqual(f.store.reflectionCandidates(),[]);
+
+    await worker.tick();
+    while(worker.owns(run2.id))await new Promise(r=>setTimeout(r,10));
+    assert.deepEqual(reflected,[eval2.id],'only the final evaluation report is claimed for reflectExperience');
+    assert.equal(experiences.claim(),undefined);
+  }finally{await worker?.stop();f.close();}
 });

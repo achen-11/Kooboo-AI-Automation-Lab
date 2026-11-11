@@ -6,15 +6,25 @@ import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { Pending, UnconfirmedStop } from './errors.js';
 import { koobooClient } from './kooboo.js';
-import { trimGenerationBrowserCache } from './generation-cache.js';
 
 export interface GenerationObservation {
   imageInput?: boolean;
+  canSend?: boolean;
   usage?:{id:string;conversationId:string;runId:string;provider:string;model:string;startedAt:number;endedAt:number;status:'unknown'|'completed'|'failed';raw:Record<string,unknown>|null;note?:string}[];usageError?:string;
   version:number;taskId:string;siteId:string;conversationId:string;runId:string;ready:boolean;running:boolean;state:string;observedAt:number;
   pending:{callId:string;name:string;args:Record<string,unknown>}|null;
   delivery?:{id:string;state:'sending'|'accepted';conversationId:string;error?:string};
   outcome?:{conversationId:string;runId:string;status:string;time:number};context:unknown[];
+}
+
+/** A terminal receipt belongs to the current delivery, never to its predecessor. */
+export function matchingGenerationOutcome(task:AutomationTask,state:GenerationObservation) {
+  const generation=task.generation,outcome=state.outcome;
+  return !!generation?.deliveryId&&state.taskId===task.id&&state.conversationId===generation.conversationId
+    &&state.delivery?.id===generation.deliveryId&&state.delivery.state==='accepted'
+    &&state.delivery.conversationId===state.conversationId&&!!outcome?.runId
+    &&outcome.conversationId===state.conversationId&&outcome.runId===state.runId
+    &&outcome.runId!==generation.previousRunId&&outcome.status===state.state;
 }
 export async function pause(ms:number,signal:AbortSignal) {
   signal.throwIfAborted();await new Promise<void>((resolve,reject)=>{
@@ -46,17 +56,33 @@ export async function generationSession(task:AutomationTask,store:AutomationStor
     throw error;
   }
   let closing:Promise<void>|undefined;
-  const close=()=>closing??=context.close().catch(()=>{throw new UnconfirmedStop('无法确认生成执行浏览器已关闭，请检查原执行再恢复');}).then(async()=>{
-    try{await trimGenerationBrowserCache(profile);}catch{store.event(task.id,'生成浏览器已关闭；可再生缓存未能全部清理，将在后续维护时重试。');}
-  });
+  // Retain HTTP/Code Cache across retries and follow-up inspections of the same task;
+  // regenerable caches are trimmed once the task reaches a terminal state.
+  const close=()=>closing??=context.close().catch(()=>{throw new UnconfirmedStop('无法确认生成执行浏览器已关闭，请检查原执行再恢复');});
   const onAbort=()=>{void close().catch(()=>{});};signal.addEventListener('abort',onAbort,{once:true});
   try {
     signal.throwIfAborted();
     await context.addCookies([{name:'jwt_token',value:environment.token,url:origin,httpOnly:false,secure:origin.startsWith('https:')}]);
     const page=context.pages()[0]||await context.newPage();
     const url=new URL('/_Admin/ai-chat/overview',origin);url.searchParams.set('SiteId',site.siteId);url.searchParams.set('automationTaskId',task.id);url.searchParams.set('starterSiteCreated','1');
-    await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:60000});
-    await page.waitForFunction(()=>{try{return (window as any).__koobooAutomation?.snapshot().ready===true;}catch{return false;}},{},{timeout:45000}).catch(()=>{throw new Pending('Kooboo AI Chat 执行状态桥接尚未就绪；请确认目标环境包含 automation bridge 前端');});
+    await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:120000});
+    await page.waitForFunction(()=>{try{return (window as any).__koobooAutomation?.snapshot().ready===true;}catch{return false;}},{},{timeout:180000}).catch(async()=>{
+      const probe=await Promise.resolve(page.evaluate(()=>{
+        const pathname=typeof location!=='undefined'?location.pathname:'';
+        const readyState=typeof document!=='undefined'?document.readyState:'unknown';
+        const bridge=(window as any).__koobooAutomation;
+        if(!bridge)return {pathname,readyState,hasBridge:false,state:''};
+        try{const s=bridge.snapshot();return {pathname,readyState,hasBridge:true,state:String(s?.state||'')};}
+        catch(err){return {pathname,readyState,hasBridge:true,state:err instanceof Error?err.message:'error'};}
+      })).catch(()=>null);
+      if(probe?.pathname&&!/^\/_admin\/ai-chat\b/i.test(probe.pathname))
+        throw new Pending(`Kooboo AI Chat 页面未能进入工作台（当前路径 ${probe.pathname}），请检查目标环境登录令牌是否有效`);
+      if(probe&&!probe.hasBridge&&probe.readyState!=='complete')
+        throw new Pending(`Kooboo AI Chat 前端静态资源加载超时（readyState=${probe.readyState}），远端网络较慢；浏览器缓存已保留，稍后重试可加速加载`);
+      if(probe?.hasBridge)
+        throw new Pending(`Kooboo AI Chat 会话初始化超时（state=${probe.state||'loading'}），稍后可重试核对`);
+      throw new Pending('Kooboo AI Chat 执行状态桥接尚未就绪；请确认目标环境包含 automation bridge 前端');
+    });
     task.generation={...task.generation,ownerPid:process.pid};store.put(task);
     const snapshot=async()=>{
       signal.throwIfAborted();
@@ -81,6 +107,9 @@ export async function generationSession(task:AutomationTask,store:AutomationStor
     const expected=expectedConversation;
     // snapshot may describe the last selected chat; restore the pinned identity before acting.
     if(expected&&state.conversationId!==expected){await page.evaluate(id=>(window as any).__koobooAutomation.selectConversation(id),expected);state=await snapshot();}
+    // AI/Providers loads asynchronously alongside AI/Conversation; wait briefly so canSend settles.
+    const providerDeadline=Date.now()+30000;
+    while(!state.running&&state.canSend===false&&Date.now()<providerDeadline){await pause(500,signal);state=await snapshot();}
     return {snapshot,deliver:async(input:{id:string;conversationId:string;text?:string;answer?:Record<string,unknown>;callId?:string;images?:{uri:string;mediaType:'image/png'}[]})=>{
       signal.throwIfAborted();return page.evaluate(value=>(window as any).__koobooAutomation.deliver(value),input) as Promise<GenerationObservation['delivery']>;
     },close:async()=>{signal.removeEventListener('abort',onAbort);await close();}};

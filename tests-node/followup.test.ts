@@ -20,6 +20,7 @@ import { FollowupRuntimeError, UnconfirmedStop } from '../server/automation/erro
 import { createAutonomousExecution } from '../shared/autonomy.js';
 import { followupRequestPolicy } from '../server/automation/autonomy.js';
 import { ModelBudgetExceeded, RequestBudget } from '../server/automation/request-budget.js';
+import { rememberSiteRetry, siteRetryBlocked } from '../server/automation/retry-guard.js';
 
 const input={name:'Sample',scenario:'site-template' as const,description:'Build homepage',contentUrl:'https://content.test',referenceUrl:'',externalSource:'',externalId:'',files:[]};
 const decision=(action:FollowupAction['action'],extra:Partial<FollowupAction>={}):FollowupAction=>({action,reason:'已依据实际证据决定下一步',evidence:['observed'],...extra});
@@ -235,6 +236,46 @@ test('host validation rejects invented evidence, uncertain sends, wrong phases, 
   }finally{await f.close();}
 });
 
+test('retry of a confirmed failed delivery becomes a new same-conversation delivery, while uncertain executions cannot be replayed',async()=>{
+  const f=await fixture();try{
+    const task=f.create(),site=f.attach(task);f.automationStore.scheduleFollowup(task,f.settings.followup);
+    const runId=randomUUID();task.generation!.runId=runId;task.generation!.state='failed';
+    const state:GenerationObservation={version:1,taskId:task.id,siteId:site.siteId,conversationId:task.generation!.conversationId!,runId,ready:true,running:false,state:'failed',observedAt:Date.now(),pending:null,context:[{role:'assistant',text:'Insufficient Balance'}],delivery:{id:task.generation!.deliveryId!,state:'accepted',conversationId:task.generation!.conversationId!},outcome:{conversationId:task.generation!.conversationId!,runId,status:'failed',time:Date.now()-3600000}};
+    const retry=decision('retry',{reason:'用户已确认充值完成，重新执行未完成的原任务'});
+    const validate=(execution?:GenerationObservation)=>validateFollowupAction(retry,task,{execution},new Set(['observed']));
+    assert.throws(()=>validate(),/inspect_execution/);
+    assert.throws(()=>validate({...state,running:true}),/仍在执行/);
+    assert.throws(()=>validate({...state,pending:{callId:'call',name:'ask_user',args:{}}}),/answer/);
+    for(const invalid of [
+      {...state,outcome:undefined},
+      {...state,runId:randomUUID()},
+      {...state,taskId:randomUUID()},
+      {...state,delivery:{...state.delivery!,id:randomUUID()}},
+      {...state,outcome:{...state.outcome!,conversationId:randomUUID()}},
+    ])assert.throws(()=>validate(invalid),/不匹配/);
+    const before=structuredClone(task),action=validate(state);
+    assert.equal(action.action,'continue');assert.match(action.message!,/充值完成/);
+    assert.deepEqual(action.retryOf,{deliveryId:task.generation!.deliveryId,runId});assert.deepEqual(task,before);
+    assert.equal(validate({...state,state:'interrupted',outcome:{...state.outcome!,status:'interrupted'}}).action,'continue');
+    task.generation!.deliveryState='sending';
+    assert.throws(()=>validate({...state,delivery:undefined}),/不确定/);
+    assert.equal(validate(state).action,'continue','an accepted matching receipt resolves the sending uncertainty');
+  }finally{await f.close();}
+});
+
+test('manual resume clears the historical retry guard and retains the original execution and budgets',async()=>{
+  const f=await fixture();try{
+    const task=f.create();f.attach(task);task.generation!.runId=randomUUID();task.generation!.state='failed';task.error='旧失败';
+    f.automationStore.scheduleFollowup(task,f.settings.followup);task.followup!.attempts=2;task.followup!.tokens=123;
+    task.status='interrupted';task.stopped=true;f.automationStore.put(task);rememberSiteRetry(task,f.automationStore);
+    assert.equal(siteRetryBlocked(task,f.automationStore),true);
+    const response=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/resume`,headers:f.headers});
+    assert.equal(response.statusCode,200);const saved=f.automationStore.task(task.id)!;
+    assert.equal(saved.status,'following-up');assert.equal(siteRetryBlocked(saved,f.automationStore),false);
+    assert.deepEqual(saved.generation,task.generation);assert.equal(saved.followup!.attempts,2);assert.equal(saved.followup!.tokens,123);
+  }finally{await f.close();}
+});
+
 test('site identity and conversation summaries handle Kooboo contracts without embedding image payloads',()=>{
   assert.equal(siteIdentity({siteId:'actual',id:'wrong'}),'actual');assert.equal(siteIdentity({SiteId:'upper'}),'upper');
   const summary=summarizeMessages([{role:'assistant',contents:[{$type:'functionCall',callId:'one',name:'ask_user_input',arguments:{x:1}},{$type:'image',url:'data:image/png;base64,PRIVATE_PIXELS'}]},{role:'tool',contents:[{$type:'functionResult',callId:'one',result:'ok'}]},{role:'assistant',contents:[{$type:'text',text:'Homepage complete'}]}]);
@@ -424,4 +465,65 @@ test('real generator handoff refreshes camel-case siteId and probes homepage wit
     t.generatedSiteId=site.id;t.scenario='upgrade';t.generation={createAttempted:true};
     await assert.rejects(()=>executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(1000)),/克隆未返回任务标识/);
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await f.close();}
+});
+
+test('failed generation retry sends once, ignores the previous run and consumes only the new terminal receipt',async()=>{
+  for(const result of ['completed','failed','lost-receipt','changed-execution','answer'] as const){
+    const f=await fixture(),task=f.create(),site=f.attach(task),runId=randomUUID();let origin='',sent=0,reads=0,closed=0;
+    const server=createServer((req,res)=>{
+      res.setHeader('Content-Type','application/json');
+      if(req.url?.startsWith('/_api/v2/Site/List'))res.end(JSON.stringify([{siteId:site.siteId,homePageLink:origin+'/home'}]));
+      else if(req.url==='/home')res.end('homepage');
+      else{res.statusCode=500;res.end('{}');}
+    });
+    await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
+    try{
+      f.vault.update({...f.vault.get(),environments:[{id:f.environmentId,name:'Test',origin,apiOrigin:origin,token:'test-only-token'}]});
+      task.generation!.runId=runId;task.generation!.state='failed';task.learningPolicy={...task.learningPolicy!,use:false,collect:false};
+      f.automationStore.scheduleFollowup(task,f.settings.followup);
+      const conversationId=task.generation!.conversationId!,oldDelivery=task.generation!.deliveryId!;
+      const old:GenerationObservation={version:1,taskId:task.id,siteId:site.siteId,conversationId,runId,ready:true,running:false,state:'failed',observedAt:Date.now(),pending:null,context:[{role:'assistant',text:'Insufficient Balance'}],delivery:{id:oldDelivery,state:'accepted',conversationId},outcome:{conversationId,runId,status:'failed',time:Date.now()-3600000}};
+      if(result==='answer'){
+        old.state='waiting';old.pending={callId:'pending-call',name:'ask_user',args:{}};delete old.outcome;
+        task.generation!.next=validateFollowupAction(decision('answer',{callId:'pending-call',answer:{approved:true}}),task,{execution:old},new Set(['observed']));
+      }else task.generation!.next=validateFollowupAction(decision('retry',{reason:'余额已补充，重新执行'}),task,{execution:old},new Set(['observed']));
+      const newRun=result==='answer'?runId:randomUUID(),outcome=result==='failed'?'failed':'completed';let currentDelivery=oldDelivery;
+      const openSession:typeof import('../server/automation/generation-session.js').generationSession=async(current)=>({
+        snapshot:async()=>{
+          let state=structuredClone(old);
+          if(result==='changed-execution'&&!sent){state.runId=newRun;state.outcome!.runId=newRun;}
+          if(sent){
+            reads++;
+            if(reads===1&&result!=='answer')state.delivery!.error='old delivery error';
+            if(reads>=2)state.delivery!.id=currentDelivery;
+            if(reads>=3||result==='lost-receipt'||result==='answer')state={...state,runId:newRun,state:outcome,pending:null,delivery:{id:currentDelivery,state:'accepted',conversationId},outcome:{conversationId,runId:newRun,status:outcome,time:Date.now()}};
+          }
+          applyGenerationObservation(current,state);f.automationStore.put(current);return state;
+        },
+        deliver:async input=>{
+          sent++;assert.equal(input.conversationId,conversationId);
+          if(result==='answer'){assert.equal(input.callId,'pending-call');assert.deepEqual(input.answer,{approved:true});}
+          else assert.match(input.text!,/余额已补充/);
+          assert.notEqual(input.id,oldDelivery);currentDelivery=input.id;
+          const saved=f.automationStore.task(task.id)!;assert.equal(saved.generation!.previousRunId,result==='answer'?undefined:runId);assert.equal(saved.generation!.deliveryState,'sending');assert.equal(saved.generation!.next,undefined);
+          if(result==='lost-receipt')throw new Error('connection lost after acceptance');
+          return {id:input.id,state:'accepted',conversationId};
+        },
+        close:async()=>{closed++;},
+      });
+      const execute=(value:AutomationTask)=>executeGeneration(value,f.automationStore,f.vault,f.directory,AbortSignal.timeout(8000),openSession);
+      if(result==='changed-execution'){
+        await assert.rejects(()=>execute(task),/回执已变化/);assert.equal(sent,0);
+      }else if(result==='lost-receipt'){
+        await assert.rejects(()=>execute(task),/connection lost/);
+        const recovered=f.automationStore.task(task.id)!;assert.equal(recovered.generation!.deliveryState,'sending');
+        await execute(recovered);assert.equal(recovered.generation!.deliveryState,'completed');assert.equal(sent,1);assert.equal(closed,2);
+      }else{
+        if(result==='failed')await assert.rejects(()=>execute(task),/结果为 failed/);
+        else{await execute(task);assert.equal(task.stage,'handoff');assert.equal(task.siteUrl,origin+'/home');assert.equal(task.generation!.deliveryState,'completed');}
+        assert.equal(sent,1);assert.ok(reads>=(result==='answer'?1:3));assert.equal(task.generation!.runId,newRun);
+      }
+      assert.equal(task.generatedSiteId,site.id);assert.equal(task.versionId,f.automationStore.versions(f.resource.id)[0].id);assert.equal(task.generation!.conversationId,conversationId);
+    }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await f.close();}
+  }
 });

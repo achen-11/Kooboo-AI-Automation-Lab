@@ -5,10 +5,19 @@ import { resolve } from 'node:path';
 import { chromium, type Frame, type Page } from 'playwright';
 import { z } from 'zod';
 import type { MaterialFile } from '../../shared/automation.js';
+import { pageScreenshotPolicy, takePageScreenshots, type ScreenshotPosition, type ScreenshotReadiness, type ScreenshotReceipt } from './page-screenshots.js';
 
-export const browserAction=z.object({action:z.enum(['snapshot','screenshot','navigate','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),key:z.string().min(1).max(100).optional(),fullPage:z.boolean().default(false)}).superRefine((input,ctx)=>{if(input.action==='press'&&!input.value&&!input.key)ctx.addIssue({code:'custom',message:'press 需要 value 或 key 指定按键，不能默认触发 Enter',path:['value']});if(input.action==='press'&&input.value&&input.key&&input.value!==input.key)ctx.addIssue({code:'custom',message:'value 与 key 指定了不同按键',path:['key']});});
-export const evaluationCapturePolicy='settled-visible-pc1440-mobile390-v2';
-export interface EvaluationBrowserBinding { taskId:string; siteRevision:string; inputVersionId?:string; sourceSnapshotId?:string }
+export const browserAction=z.object({action:z.enum(['snapshot','screenshot','navigate','take_page_screenshots','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),key:z.string().min(1).max(100).optional(),fullPage:z.boolean().default(false),scope:z.enum(['page','regions']).default('page'),selectors:z.array(z.string().min(1).max(500)).max(20).default([]),maxScreenshots:z.number().int().min(1).max(40).default(16),startY:z.number().int().min(0).max(10000000).default(0),startSelectorIndex:z.number().int().min(0).default(0),settleTimeoutMs:z.number().int().min(1000).max(10000).default(4000)}).superRefine((input,ctx)=>{
+  if(input.action==='press'&&!input.value&&!input.key)ctx.addIssue({code:'custom',message:'press 需要 value 或 key 指定按键，不能默认触发 Enter',path:['value']});
+  if(input.action==='press'&&input.value&&input.key&&input.value!==input.key)ctx.addIssue({code:'custom',message:'value 与 key 指定了不同按键',path:['key']});
+  if(input.action==='take_page_screenshots'){
+    if(input.fullPage)ctx.addIssue({code:'custom',message:'take_page_screenshots 不支持 fullPage',path:['fullPage']});
+    if(input.scope==='page'&&(input.selectors.length||input.startSelectorIndex))ctx.addIssue({code:'custom',message:'page 范围不能指定 selectors',path:['selectors']});
+    if(input.scope==='regions'&&(!input.selectors.length||input.startSelectorIndex>=input.selectors.length))ctx.addIssue({code:'custom',message:'regions 需要 selectors 和有效 startSelectorIndex',path:['selectors']});
+  }
+});
+export const evaluationCapturePolicy=pageScreenshotPolicy;
+export interface EvaluationBrowserBinding { taskId:string; siteRevision:string; inputVersionId?:string; sourceSnapshotId?:string; viewportEvidence?:boolean }
 export interface VisibleBrowserFrame { url:string; text:string }
 
 /** Runs in the containing frame, including ancestors outside a shadow root. */
@@ -68,6 +77,19 @@ export async function settlePage(page:Page,scroll:boolean,quick=false):Promise<P
   await page.waitForTimeout(1000);
   return {settled:loaded&&stats.pending===0,loaded,networkIdle,images:stats.images,pendingImages:stats.pending,blankImageRatio:stats.images?Math.round(stats.blank/stats.images*100)/100:0};
 }
+/** Popup / new-tab navigation requests arrive before Playwright creates their Frame, so request.frame() throws. */
+export function shouldAbortNavigation(request:{isNavigationRequest():boolean;frame():Frame;url():string},allowedOrigin:string,mainFrame?:Frame|null):boolean {
+  if(!request.isNavigationRequest())return false;
+  let frame:Frame|null=null;
+  try{frame=request.frame();}catch{frame=null;}
+  const isTopLevel=frame===null||(mainFrame?frame===mainFrame:frame.parentFrame()===null);
+  if(!isTopLevel)return false;
+  try{
+    const parsed=new URL(request.url());
+    return (parsed.protocol!=='http:'&&parsed.protocol!=='https:')||parsed.origin!==allowedOrigin;
+  }catch{return true;}
+}
+
 /** A per-run browser session, kept outside the management UI and closed with the worker. */
 export async function evaluationBrowser(urls:{target:string;reference:string;content:string},directory:string,signal:AbortSignal,initial:MaterialFile[]=[],checkpoint:(files:MaterialFile[])=>void=()=>{},binding?:EvaluationBrowserBinding){
   const allowed=new Set(Object.values(urls).filter(Boolean).map(u=>new URL(u).origin));
@@ -82,15 +104,19 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
       if(busy)throw new Error('上一浏览器操作仍在执行，请顺序调用');busy=true;
       try{const input=browserAction.parse(raw);signal.throwIfAborted();
       if(!urls[input.role])throw new Error('没有提供此角色的站点');
+      if(binding?.viewportEvidence&&input.fullPage)throw new Error('AI Site 模板只允许逐屏取证，请使用 take_page_screenshots；禁止 fullPage');
+      if(input.url){const url=new URL(input.url,urls[input.role]);if(url.origin!==new URL(urls[input.role]).origin||url.username||url.password)throw new Error('只能访问当前任务的站点');input.url=url.href;}
       const key=input.role+'-'+input.viewport;let page=pages.get(key),navigated=false,navigationStatus:number|undefined;
-      if(!page){navigated=true;const mobile=input.viewport==='mobile';const context=await browser.newContext({viewport:{width:mobile?390:1440,height:mobile?844:1000},isMobile:mobile,hasTouch:mobile});
+      if(!page){navigated=true;const mobile=input.viewport==='mobile',roleOrigin=new URL(urls[input.role]).origin;const context=await browser.newContext({viewport:{width:mobile?390:1440,height:mobile?844:1000},isMobile:mobile,hasTouch:mobile});
         await context.route('**/*',route=>{
-          const request=route.request();
-          if(request.isNavigationRequest()&&request.frame()===page?.mainFrame()&&new URL(request.url()).origin!==new URL(urls[input.role]).origin)return route.abort();
-          return route.continue();
+          if(shouldAbortNavigation(route.request(),roleOrigin,page?.mainFrame()))return route.abort().catch(()=>{});
+          return route.continue().catch(()=>{});
         });
-        page=await context.newPage();pages.set(key,page);navigationStatus=(await page.goto(urls[input.role],{waitUntil:'domcontentloaded',timeout:45000}))?.status();}
-      if(input.action==='navigate'){if(!input.url||new URL(input.url).origin!==new URL(urls[input.role]).origin)throw new Error('只能访问当前任务的站点');navigationStatus=(await page.goto(input.url,{waitUntil:'domcontentloaded',timeout:45000}))?.status();navigated=true;}
+        page=await context.newPage();pages.set(key,page);const initialUrl=['navigate','take_page_screenshots'].includes(input.action)&&input.url?input.url:urls[input.role];navigationStatus=(await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}))?.status();}
+      if(input.action==='navigate'||input.action==='take_page_screenshots'){
+        const url=input.url||(input.action==='take_page_screenshots'?page.url():undefined);if(!url)throw new Error('navigate 需要 url');
+        if((input.action==='navigate'||input.startY===0||page.url()!==url)&&(!navigated||page.url()!==url)){navigationStatus=(await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000}))?.status();navigated=true;}
+      }
       else if(['click','fill','select','press'].includes(input.action)){
         if(!input.element||!input.name)throw new Error('请提供可访问角色 element 和名称 name');
         const locator=page.getByRole(input.element as Parameters<Page['getByRole']>[0],{name:input.name,exact:true});
@@ -99,19 +125,31 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
         if(input.action==='select')await locator.selectOption(input.value||'',{timeout:15000});
         if(input.action==='press')await locator.press(input.value||input.key!,{timeout:15000});
       }
-      let settlement=await settlePage(page,navigated);
-      // A reference capture can drive negative repair instructions, so it gets extra time before being labelled unsettled.
-      for(let retry=0;input.role==='reference'&&!settlement.settled&&retry<2;retry++){await page.waitForTimeout(3000);settlement=await settlePage(page,false,true);}
-      const file=randomUUID()+'.png';const pixels=await page.screenshot({path:resolve(directory,'evidence',file),fullPage:input.fullPage,timeout:20000});
-      const snapshot=await page.locator('body').ariaSnapshot({timeout:15000});
-      const text=await page.locator('body').innerText({timeout:15000});
-      const frameEvidence=await visibleFrames(page);
-      const observation={action:input.action,role:input.role,viewport:input.viewport,url:page.url(),title:await page.title(),file,capturedAt:Date.now(),navigationStatus,snapshot:snapshot.slice(0,30000),text:text.slice(0,30000),textTruncated:text.length>30000,...frameEvidence,settlement,...(trustedBinding?{binding:trustedBinding}:{})};
+      const saveObservation=async(pixels:Buffer,settlement:PageSettlement,extra:Record<string,unknown>={})=>{
+      const file=randomUUID()+'.png';writeFileSync(resolve(directory,'evidence',file),pixels,{mode:0o600});
+      const snapshot=await page!.locator('body').ariaSnapshot({timeout:15000});
+      const text=await page!.locator('body').innerText({timeout:15000});
+      const frameEvidence=await visibleFrames(page!);
+      const observation={action:input.action,role:input.role,viewport:input.viewport,url:page!.url(),title:await page!.title(),file,capturedAt:Date.now(),navigationStatus,snapshot:snapshot.slice(0,30000),text:text.slice(0,30000),textTruncated:text.length>30000,...frameEvidence,settlement,...extra,...(trustedBinding?{binding:trustedBinding}:{})};
       const textEvidence=Buffer.from(JSON.stringify(observation));const jsonFile=file.replace('.png','.json');
       writeFileSync(resolve(directory,'evidence',jsonFile),textEvidence,{mode:0o600});
       artifacts.push(...[{name:file,type:'image/png',bytes:pixels},{name:jsonFile,type:'application/json',bytes:textEvidence}].map(f=>({id:randomUUID(),name:f.name,type:f.type,size:f.bytes.length,sha256:createHash('sha256').update(f.bytes).digest('hex'),role:input.role,viewport:input.viewport,settled:settlement.settled})));
       checkpoint(structuredClone(artifacts));
-      return {...observation,imagePath:resolve(directory,'evidence',file),...(settlement.settled?{}:{warning:`页面未稳定（仍有 ${settlement.pendingImages} 张可见图片未加载${settlement.loaded?'':'，load 未完成'}）：此截图不能作为“参考站没有某区段/图片”的依据，可稍后对同一页面重新 screenshot。`})};
+      return {...observation,imagePath:resolve(directory,'evidence',file),...(settlement.settled?{}:{warning:`页面未稳定（仍有 ${settlement.pendingImages} 张可见图片未加载${settlement.loaded?'':'，load 未完成'}）：不能据此判断参考站缺少区段或图片。`})};
+      };
+      if(input.action==='take_page_screenshots'){
+        const loaded=await page.waitForLoadState('load',{timeout:5000}).then(()=>true,()=>false);
+        return await takePageScreenshots(page,input,signal,async(bytes:Buffer,position:ScreenshotPosition,readiness:ScreenshotReadiness,capture:ScreenshotReceipt['capture'])=>{
+          const settlement:PageSettlement={settled:readiness.settled,loaded,networkIdle:false,images:readiness.images,pendingImages:readiness.pendingImages,blankImageRatio:readiness.images?readiness.brokenImages/readiness.images:0};
+          const saved=await saveObservation(bytes,settlement,{position,readiness,capture});
+          return {file:saved.file,url:saved.url,imagePath:saved.imagePath,role:saved.role,viewport:saved.viewport,position,readiness,settlement,capture};
+        });
+      }
+      let settlement=await settlePage(page,navigated);
+      // A reference capture can drive negative repair instructions, so it gets extra time before being labelled unsettled.
+      for(let retry=0;input.role==='reference'&&!settlement.settled&&retry<2;retry++){await page.waitForTimeout(3000);settlement=await settlePage(page,false,true);}
+      const pixels=await page.screenshot({fullPage:input.fullPage,timeout:20000});
+      return await saveObservation(pixels,settlement);
       }finally{busy=false;}
   };
   const server=createServer(async(req,res)=>{

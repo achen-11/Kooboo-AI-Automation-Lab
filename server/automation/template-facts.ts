@@ -4,6 +4,7 @@ import { resolve } from 'node:path';
 import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
 import type { Requirement, RequirementManifest } from '../../shared/completeness.js';
 import { templateTargetPath } from './template-path.js';
+import { pageScreenshotPolicy } from './page-screenshots.js';
 
 export function canonicalValue(value:unknown):string {
   if(Array.isArray(value))return '['+value.map(canonicalValue).join(',')+']';
@@ -22,7 +23,7 @@ export interface TemplateRecordFacts {
 }
 export interface TemplateFacts {
   version:1;taskId:string;siteRevision:string;manifestId:string|null;
-  pages:{id:string;paths:{path:string;viewports:{viewport:string;image?:string;observation?:string;navigationStatus:number|null;settled:boolean;state:'captured'|'missing'}[]}[]}[];
+  pages:{id:string;paths:{path:string;viewports:{viewport:string;image?:string;observation?:string;images?:string[];observations?:string[];coverageComplete?:boolean;gaps?:string[];navigationStatus:number|null;settled:boolean;state:'captured'|'missing'}[]}[]}[];
   records:TemplateRecordFacts[];
 }
 type ImplementationReader=(request:unknown)=>Promise<{evidence:string;result:unknown}>;
@@ -84,14 +85,21 @@ export async function templateRecordFacts(item:Requirement,read:ImplementationRe
 export async function prepareTemplateFacts(input:{task:AutomationTask;manifest?:RequirementManifest;work:string;files:MaterialFile[];target:string;source:string;read:ImplementationReader;signal:AbortSignal}):Promise<TemplateFacts>{
   const {task,manifest,work,files,target,source,read,signal}=input;
   const facts:TemplateFacts={version:1,taskId:task.id,siteRevision:task.siteRevision||'',manifestId:manifest?.id||null,pages:[],records:[]};
+  let capturePlan:{policy:string;progress:{slot:{role:string;viewport:string;url:string};files:string[];coverageComplete:boolean;gaps:string[];error?:string}[]}|undefined;
+  try{capturePlan=JSON.parse(readFileSync(resolve(work,'capture-plan.json'),'utf8'));}catch{/* Missing coverage remains unverified for the live template path. */}
   const observations=files.filter(f=>f.type==='application/json'&&f.role==='target'&&/^[a-f0-9-]{36}\.json$/.test(f.name)).flatMap(file=>{try{return [{file,value:JSON.parse(readRegisteredEvidence(work,file).toString())}];}catch{return [];}});
   for(const item of manifest?.items||[]){
     if(['page','template'].includes(item.kind))facts.pages.push({id:item.id,paths:(item.kind==='page'?item.paths:item.samples||[]).map(path=>({path,viewports:item.viewports.filter(v=>v!=='business').map(viewport=>{
       let url:string;try{url=new URL(templateTargetPath(path,target,source),target).href;}catch{return {viewport,navigationStatus:null,settled:false,state:'missing' as const};}
       const matches=observations.filter(({value:o})=>o.binding?.taskId===task.id&&o.binding?.siteRevision===(task.siteRevision||'')&&o.role==='target'&&o.viewport===viewport&&o.url===url).sort((a,b)=>(b.value.capturedAt||0)-(a.value.capturedAt||0));
-      const found=matches[0],image=found&&files.find(f=>f.name===found.value.file&&f.type==='image/png'&&f.role==='target'&&f.viewport===viewport);
-      if(!found||!image)return {viewport,navigationStatus:null,settled:false,state:'missing' as const};
-      return {viewport,image:image.name,observation:found.file.name,navigationStatus:Number.isInteger(found.value.navigationStatus)?found.value.navigationStatus:null,settled:found.value.settlement?.settled===true,state:'captured' as const};
+      const slot=capturePlan?.policy===pageScreenshotPolicy?capturePlan.progress.find(p=>p.slot.role==='target'&&p.slot.viewport===viewport&&p.slot.url===url):undefined;
+      const selected=slot?matches.filter(m=>slot.files.includes(m.file.name)):matches.slice(0,1);
+      const pairs=selected.flatMap(found=>{const image=files.find(f=>f.name===found.value.file&&f.type==='image/png'&&f.role==='target'&&f.viewport===viewport);return image?[{found,image}]:[];});
+      if(!pairs.length)return {viewport,navigationStatus:null,settled:false,state:'missing' as const};
+      const coverageComplete=slot?slot.coverageComplete&&slot.files.length===pairs.length*2:!(task.kind==='evaluation'&&task.scenario==='site-template');
+      const images=pairs.map(p=>p.image.name),jsons=pairs.map(p=>p.found.file.name),status=pairs.find(p=>Number.isInteger(p.found.value.navigationStatus))?.found.value.navigationStatus;
+      const gaps=[...(slot?.gaps||[]),...(slot?.error?[slot.error]:[])];
+      return {viewport,image:images[0],observation:jsons[0],images,observations:jsons,coverageComplete,gaps,navigationStatus:status??null,settled:coverageComplete&&pairs.every(p=>p.found.value.settlement?.settled===true),state:'captured' as const};
     })}))});
     if(item.kind==='data')facts.records.push(await templateRecordFacts(item,read,signal));
   }
@@ -107,7 +115,7 @@ export function applyTemplateFacts(raw:unknown,facts:TemplateFacts|undefined,man
     const pages=facts.pages?.find(p=>p.id===check.id),item=manifest?.items.find(i=>i.id===check.id);
     if(pages){
       const wanted=item?(item.kind==='template'?item.samples||[]:item.paths):undefined,paths=pages.paths.filter(p=>!wanted||wanted.includes(p.path));
-      const views=paths.flatMap(p=>p.viewports),evidence=views.flatMap(v=>v.image&&v.observation?[v.image,v.observation]:[]);
+      const views=paths.flatMap(p=>p.viewports),evidence=views.flatMap(v=>v.images&&v.observations?[...v.images,...v.observations]:v.image&&v.observation?[v.image,v.observation]:[]);
       check.evidence=[...new Set([...(Array.isArray(check.evidence)?check.evidence as string[]:[]),...evidence])];
       check.sampledPaths=paths.filter(p=>p.viewports.length&&p.viewports.every(v=>v.state==='captured'&&v.settled)).map(p=>p.path);
       check.checkedViewports=[...new Set(views.map(v=>v.viewport))].filter(viewport=>paths.length&&paths.every(p=>p.viewports.some(v=>v.viewport===viewport&&v.state==='captured'&&v.settled)));

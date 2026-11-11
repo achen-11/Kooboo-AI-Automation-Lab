@@ -1,16 +1,17 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import { randomUUID } from 'node:crypto';
-import { mkdtempSync, readFileSync, rmSync } from 'node:fs';
+import { existsSync, mkdirSync, mkdtempSync, readFileSync, rmSync, writeFileSync } from 'node:fs';
 import { tmpdir } from 'node:os';
-import { join } from 'node:path';
+import { join, resolve } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { chromium } from 'playwright';
 import { createApp } from '../server/app.js';
 import { Vault } from '../server/lib/vault.js';
 import { defaultAutomationSettings } from '../shared/automation.js';
 import { generationSession } from '../server/automation/generation-session.js';
-import { UnconfirmedStop } from '../server/automation/errors.js';
+import { trimTaskGenerationBrowserCache } from '../server/automation/generation-cache.js';
+import { Pending, UnconfirmedStop } from '../server/automation/errors.js';
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'generation-browser-settings-'));
@@ -95,5 +96,56 @@ test('occupied generation profile never falls back to another browser or silentl
     const before = JSON.stringify(f.automationStore.task(f.task.id));
     await assert.rejects(generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal), UnconfirmedStop);
     assert.equal(attempts, 1); assert.equal(JSON.stringify(f.automationStore.task(f.task.id)), before);
+  } finally { t.mock.restoreAll(); await f.close(); }
+});
+
+test('generation session waits for canSend readiness, retains HTTP cache across retries, and diagnoses slow asset timeouts', async t => {
+  const f = await fixture();
+  let snapshots = 0, mode: 'normal' | 'slow-assets' | 'login-redirect' = 'normal';
+  t.mock.method(chromium, 'launchPersistentContext', async (profile: string) => {
+    const cacheFile = resolve(profile, 'Default/Cache/immutable-bundle.js');
+    mkdirSync(resolve(cacheFile, '..'), { recursive: true });
+    writeFileSync(cacheFile, 'cached-bundle');
+    const conversationId = f.task.generation!.conversationId!;
+    const bridge = {
+      snapshot: () => {
+        snapshots++;
+        return { version: 1, taskId: f.task.id, siteId: f.site.siteId, conversationId, runId: '', ready: true, running: false, canSend: snapshots >= 3, state: 'unknown', pending: null, observedAt: Date.now(), context: [], usage: [] };
+      },
+      selectConversation: () => {},
+      deliver: (input: any) => ({ id: input.id, state: 'accepted', conversationId }),
+    };
+    const evaluate = (fn: Function, arg?: unknown) => runInNewContext(`(${fn.toString()})(arg)`, {
+      window: mode === 'normal' ? { __koobooAutomation: bridge } : {},
+      location: { pathname: mode === 'login-redirect' ? '/_Admin/account/login' : '/_Admin/ai-chat/overview' },
+      document: { readyState: mode === 'slow-assets' ? 'interactive' : 'complete' },
+      arg,
+    });
+    const page = {
+      goto: async () => {},
+      waitForFunction: async (fn: Function, _arg: unknown, opts?: { timeout?: number }) => {
+        assert.ok((opts?.timeout ?? 0) >= 180000);
+        if (mode !== 'normal') throw new Error('Timeout exceeded');
+        assert.equal(evaluate(fn), true);
+      },
+      evaluate,
+    };
+    return { pages: () => [page], addCookies: async () => {}, close: async () => {} };
+  });
+  try {
+    const session = await generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal);
+    const state = await session.snapshot();
+    assert.equal(state.canSend, true);
+    assert.ok(snapshots >= 3);
+    await session.close();
+    const cacheFile = resolve(f.directory, 'generation-browsers', f.task.id, 'Default/Cache/immutable-bundle.js');
+    assert.equal(existsSync(cacheFile), true, 'closing session mid-task keeps immutable HTTP cache for follow-up/retry');
+    assert.equal(await trimTaskGenerationBrowserCache(f.directory, f.task.id), 1);
+    assert.equal(existsSync(cacheFile), false, 'terminal task cleanup removes regenerable browser cache');
+
+    mode = 'slow-assets';
+    await assert.rejects(generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal), (err: unknown) => err instanceof Pending && /静态资源加载超时/.test(err.message));
+    mode = 'login-redirect';
+    await assert.rejects(generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal), (err: unknown) => err instanceof Pending && /登录令牌/.test(err.message));
   } finally { t.mock.restoreAll(); await f.close(); }
 });

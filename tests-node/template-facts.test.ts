@@ -7,6 +7,7 @@ import { resolve } from 'node:path';
 import type { Requirement, RequirementManifest } from '../shared/completeness.js';
 import type { AutomationTask, MaterialFile } from '../shared/automation.js';
 import { templateRecordFacts, prepareTemplateFacts, applyTemplateFacts, type TemplateFacts } from '../server/automation/template-facts.js';
+import { pageScreenshotPolicy } from '../server/automation/page-screenshots.js';
 import { assertRequirementDataIdentityPreserved, manifestInput } from '../server/automation/completeness.js';
 
 const item:Requirement={id:'cars',title:'Cars',kind:'data',required:true,source:'frozen',expectation:'all identities and nonempty names; semantics independently reviewed',paths:[],viewports:['business'],expectedCount:3,expectedKeys:['a','b','c'],records:{storage:'sqlite',container:'Cars',keyField:'SourceId',requiredFields:['Name']}};
@@ -77,5 +78,27 @@ test('host page facts preserve source path queries, current revision, every view
     const raw={completeness:[{id:'pages',status:'verified',reason:'Model pass',evidence:[],sampledPaths:[],checkedViewports:[]}]};
     const merged=applyTemplateFacts(raw,next,manifest) as typeof raw;assert.equal(merged.completeness[0].status,'partial','HTTP404 overrides a model pass');assert.deepEqual(merged.completeness[0].sampledPaths,['https://source.test/about?lang=zh']);assert.deepEqual(merged.completeness[0].checkedViewports,['desktop','mobile']);
     const missing=applyTemplateFacts(raw,facts,manifest) as typeof raw;assert.equal(missing.completeness[0].status,'partial');assert.deepEqual(missing.completeness[0].checkedViewports,['desktop']);
+  }finally{rmSync(work,{recursive:true,force:true});}
+});
+
+test('template page facts require full viewport coverage and cite all frame pairs, not just a settled first screen',async()=>{
+  const work=mkdtempSync(resolve(tmpdir(),'template-frame-facts-'));mkdirSync(resolve(work,'evidence'));
+  try{
+    const task={id:randomUUID(),siteRevision:'now',kind:'evaluation',scenario:'site-template'} as AutomationTask,files:MaterialFile[]=[];
+    for(const scrollY of [0,850]){
+      const image=randomUUID()+'.png',value={file:image,role:'target',viewport:'desktop',url:'https://target.test/',position:{scrollY},settlement:{settled:true},binding:{taskId:task.id,siteRevision:'now'}};
+      for(const [name,bytes,type] of [[image,Buffer.from('viewport pixels'),'image/png'],[image.replace('.png','.json'),Buffer.from(JSON.stringify(value)),'application/json']] as const){writeFileSync(resolve(work,'evidence',name),bytes);files.push({id:randomUUID(),name,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),type,role:'target',viewport:'desktop'});}
+    }
+    const manifest={id:'manifest',items:[{...item,id:'pages',kind:'page',paths:['/'],viewports:['desktop'],records:undefined}]} as RequirementManifest;
+    const progress={slot:{role:'target',viewport:'desktop',url:'https://target.test/'},files:files.map(f=>f.name),coverageComplete:false,gaps:['limit reached']};
+    const save=()=>writeFileSync(resolve(work,'capture-plan.json'),JSON.stringify({policy:pageScreenshotPolicy,progress:[progress]}));save();
+    const input={task,manifest,work,files,target:'https://target.test/',source:'https://source.test/',read:read([[]]),signal:signal()};
+    const partial=await prepareTemplateFacts(input),raw={completeness:[{id:'pages',status:'verified',reason:'Model pass',evidence:[]}]};
+    const result=applyTemplateFacts(raw,partial,manifest) as typeof raw;
+    assert.equal(result.completeness[0].status,'unverified');assert.equal(result.completeness[0].evidence.length,4);
+    assert.equal(partial.pages[0].paths[0].viewports[0].coverageComplete,false);
+    progress.coverageComplete=true;progress.gaps=[];save();
+    const complete=await prepareTemplateFacts(input);assert.equal(complete.pages[0].paths[0].viewports[0].settled,true);assert.equal(complete.pages[0].paths[0].viewports[0].images!.length,2);
+    const missing=await prepareTemplateFacts({...input,files:files.slice(0,2)});assert.equal(missing.pages[0].paths[0].viewports[0].settled,false,'missing frame pairs invalidate coverage even with an old complete receipt');
   }finally{rmSync(work,{recursive:true,force:true});}
 });

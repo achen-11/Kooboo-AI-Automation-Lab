@@ -73,11 +73,16 @@ test('only a recognized interruption is resumable; a validated collection action
   }finally{f.close();}
 });
 
-for(const state of ['active','unknown'])test(`a historical ${state} request blocks a new window without clearing the ledger`,async()=>{
+for(const state of ['active','unknown'])test(`a historical ${state} request ${state==='active'?'blocks':'allows'} a new window without clearing the ledger`,async()=>{
   const f=fixture();try{
     await assert.rejects(review(f,async options=>{options.onThreadStarted!('same-thread');const budget=new RequestBudget(f.db,options.policy);budget.reserve('unsettled',Buffer.from('{}'));if(state==='unknown')budget.complete('unsettled',null);throw interrupted();}),LocalDecisionInterrupted);
     const before=f.db.prepare('SELECT * FROM auto_model_requests WHERE id=?').get('unsettled');let calls=0;
-    await assert.rejects(review(f,async()=>{calls++;return null;}),CollectionBlocked);assert.equal(calls,0);assert.deepEqual(f.db.prepare('SELECT * FROM auto_model_requests WHERE id=?').get('unsettled'),before);
+    if(state==='active'){
+      await assert.rejects(review(f,async()=>{calls++;return null;}),CollectionBlocked);assert.equal(calls,0);
+    }else{
+      await review(f,async options=>{calls++;await options.read!({kind:'file',path:rawPath},signal());return options.submit(blocked());});assert.equal(calls,1);
+    }
+    assert.deepEqual(f.db.prepare('SELECT * FROM auto_model_requests WHERE id=?').get('unsettled'),before);
   }finally{f.close();}
 });
 

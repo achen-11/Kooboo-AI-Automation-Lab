@@ -12,7 +12,7 @@ import { CollectionStore } from './collection/store.js';
 import { validateRecollectionAction, validateRecollectionScope } from './collection/recollection.js';
 import type { ReadinessReport, ReadinessTask } from './task-index.js';
 
-export function targetReached(task: ReadinessTask, report: ReadinessReport) {
+function qualityBarMet(task: ReadinessTask, report: ReadinessReport) {
   const target=report.collectionTarget;
   if(task.collectionVersionId&&(!target||target.state!=='complete'||target.collectionVersionId!==task.collectionVersionId||target.inputVersionId!==task.versionId||target.generatedSiteId!==task.generatedSiteId||target.siteRevision!==(task.optimization?.currentRevision||task.siteRevision)||!target.checks.length||target.checks.some(check=>check.status!=='verified')))return false;
   if(report.migrationCheck&&report.migrationCheck.state!=='complete')return false;
@@ -22,6 +22,9 @@ export function targetReached(task: ReadinessTask, report: ReadinessReport) {
   return ['desktop','mobile'].every(v=>{const value=report.scores.find(s=>s.viewport===v)?.value;return typeof value==='number'&&value>=policy.targetScore;})
     && criteria.every(c=>c.viewports.every(v=>{const a=report.assessments.find(a=>a.criterionId===c.id&&a.viewport===v);return !!a&&a.score!==null&&(!c.required||a.passed===true);}))
     && !report.issues.some(i=>i.severity==='critical'||i.severity==='major');
+}
+export function targetReached(task: ReadinessTask, report: ReadinessReport) {
+  return report.review?.scopeComplete!==false&&qualityBarMet(task,report);
 }
 export function stopOptimization(task: AutomationTask, store: AutomationStore, reason: string, nextSteps: string[]=[], reached=false) {
   const run=task.optimization!;run.state=reached?'completed':'stopped';run.reason=reason;run.nextSteps=nextSteps;run.stoppedAt=Date.now();
@@ -34,7 +37,7 @@ export function optimizationBudgetReason(task: AutomationTask, store: Automation
   if(!limits.length)return '';const max=Math.min(...limits);
   const usage=store.usage.summary(root.id,store.workflowIds(root).filter(id=>id!==root.id));
   if(usage.knownCny>=max)return '整个任务链已达到费用上限，停止启动新的模型阶段。';
-  if(usage.missing)return '已有请求费用尚未完整核算，无法确认费用预算余量，停止启动新的模型阶段。';
+  // Cost statistics are approximate. Missing entries stay missing and do not freeze execution.
   return '';
 }
 function roundLimit(task:AutomationTask) { return task.autonomy?task.autonomy.policy.hardMaxRounds:task.optimization?.policy.maxRounds; }
@@ -78,7 +81,50 @@ export function advanceOptimization(task: AutomationTask, store: AutomationStore
     if(target.state==='complete'&&!collectionTargetGate(target,evaluation,manifest))throw new Conflict('B段报告绑定已失效');
   }
   if(migrationRequired&&!migrationRun){stopOptimization(task,store,'当前版本缺少程序迁移检查，停止修复规划与达标判断。',['先对当前站点修订执行程序检查，再恢复原任务；保留累计预算。']);return;}
-  if((!migrationRequired||migrationRun?.state==='complete')&&targetReached(task,evaluation.report)){stopOptimization(task,store,'PC / 移动端均达到质量目标，适用必过项通过且无重大缺陷。',[],true);return;}
+  if((!migrationRequired||migrationRun?.state==='complete')&&qualityBarMet(task,evaluation.report)){
+    if(evaluation.report.review?.scopeComplete!==false){
+      stopOptimization(task,store,'PC / 移动端均达到质量目标，适用必过项通过且无重大缺陷。',[],true);return;
+    }
+    if(!evaluation.fullAuditRequired){
+      const budget=optimizationBudgetReason(task,store);
+      if(budget){stopOptimization(task,store,budget,['查看用量与当前版本报告，核算费用后再决定后续任务。']);return;}
+      store.db.transaction(()=>{
+        const audit=store.create({
+          resourceIds:[generation.resourceId],
+          kind:'evaluation',
+          scope:generation.scope,
+          environmentId:generation.environmentId,
+          generatedSiteId:generation.generatedSiteId!,
+          versionId:generation.versionId,
+          requirements:'中间轮增量复评已达标，对当前站点修订执行终审全站复核。',
+          parentId:evaluation.id,
+          ruleSnapshot:generation.rule||task.rule||undefined,
+          optimizationRootId:task.id,
+          optimizationRound:round.number,
+        },settings)[0];
+        audit.optimizationRootId=task.id;
+        audit.optimizationRound=round.number;
+        audit.siteRevision=generation.siteRevision;
+        audit.requirementsId=evaluation.requirementsId||generation.requirementsId;
+        audit.model=task.model||evaluation.model;
+        audit.fullAuditRequired=true;
+        store.put(audit);
+        if(generation.id!==task.id){
+          generation.evaluationTaskId=audit.id;
+          store.put(generation);
+        }
+        round.previousEvaluationTaskIds=[...new Set([...(round.previousEvaluationTaskIds||[]),evaluation.id])];
+        round.evaluationTaskId=audit.id;
+        run.reportId=null;
+        run.activeTaskId=audit.id;
+        task.evaluationTaskId=audit.id;
+        run.state='waiting-evaluation';
+        store.put(task);
+        store.event(task.id,`第 ${round.number} 轮增量复评已达标，启动终审全站复核：${audit.id}`);
+      });
+      return;
+    }
+  }
   const budget=optimizationBudgetReason(task,store);
   if(budget){stopOptimization(task,store,budget,['查看用量与当前版本报告，核算费用后再决定后续任务。']);return;}
   const limit=roundLimit(task);

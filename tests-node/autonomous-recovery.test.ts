@@ -137,7 +137,7 @@ test('stopping an existing pre-create collection followup returns to collection 
   worker=new AutomationWorker(f.store,f.vault,f.directory,{generation:idle,evaluation:idle},()=>true,async(_task,_store,_vault,_dir,signal)=>{decisions++;await new Promise((_resolve,reject)=>signal.addEventListener('abort',()=>reject(signal.reason),{once:true}));return action('interrupt');});await worker.tick();assert.equal(decisions,1);await worker.stop();const saved=f.store.task(task.id)!;assert.equal(saved.status,'queued');assert.equal(saved.followup!.state,'resolved');assert.equal(saved.followup!.attempts,1);assert.equal(saved.followup!.tokens,125);assert.ok(saved.followup!.elapsedMs!>=321);assert.equal(saved.autonomy!.history.failures.length,0);
 }finally{await worker?.stop();f.close();}});
 
-test('window rotation retains ledger usage and stopped estimates, while historical unknown requests stay blocked',()=>{
+test('window rotation retains ledger usage and historical missing usage estimates',()=>{
   const f=fixture();try{
     const task=f.create();f.store.scheduleFollowup(task,f.settings.followup);const policy=followupRequestPolicy(task),budget=new RequestBudget(f.db,policy);
     budget.reserve('old-request',Buffer.from('{}'));budget.complete('old-request',null);const spent=budget.state().spent;
@@ -150,10 +150,24 @@ test('window rotation retains ledger usage and stopped estimates, while historic
   }finally{f.close();}
 });
 
-test('an exhausted window cannot bypass an unresolved historical reservation',async()=>{
+test('missing usage does not prevent the worker from continuing the same followup account',async()=>{
   const f=fixture();let worker:AutomationWorker|undefined;
   try{
-    const task=f.create();f.store.scheduleFollowup(task,f.settings.followup);const budget=new RequestBudget(f.db,followupRequestPolicy(task));budget.reserve('orphan',Buffer.from('{}'));budget.complete('orphan',null);
+    const task=f.create();f.store.scheduleFollowup(task,f.settings.followup);
+    const budget=new RequestBudget(f.db,followupRequestPolicy(task));budget.reserve('ended',Buffer.from('{}'));budget.complete('ended',null);
+    f.store.usage.record(task.id,{id:'ended',source:'codex',stage:'followup',model:'test',endpoint:'https://model.invalid',startedAt:1,endedAt:2,status:'failed',basis:'request',raw:null});
+    const original=task.followup!.budgetId,spent=budget.state().spent;f.store.put(task);let calls=0;
+    worker=new AutomationWorker(f.store,f.vault,f.directory,{generation:idle,evaluation:idle},()=>true,async()=>{calls++;return action('interrupt');});
+    await worker.tick();await settled(worker,task.id);
+    assert.equal(calls,1);assert.equal(f.store.task(task.id)!.followup!.budgetId,original);assert.equal(budget.state().spent,spent);
+    assert.equal(f.store.usage.summary(task.id).missing,1);assert.equal(budget.activeRequests(),0);
+  }finally{await worker?.stop();f.close();}
+});
+
+test('an exhausted window cannot bypass an active historical request',async()=>{
+  const f=fixture();let worker:AutomationWorker|undefined;
+  try{
+    const task=f.create();f.store.scheduleFollowup(task,f.settings.followup);const budget=new RequestBudget(f.db,followupRequestPolicy(task));budget.reserve('orphan',Buffer.from('{}'));
     task.followup!.attempts=task.followup!.policy.maxAttempts;task.followup!.tokens=task.followup!.policy.maxTokens;const original=task.followup!.budgetId;f.store.put(task);let calls=0;
     worker=new AutomationWorker(f.store,f.vault,f.directory,{generation:idle,evaluation:idle},()=>true,async()=>{calls++;return action('wait');});await worker.tick();await settled(worker,task.id);
     const saved=f.store.task(task.id)!;assert.equal(calls,0);assert.equal(saved.status,'interrupted');assert.equal(saved.followup!.budgetId,original);assert.equal(saved.autonomy!.window.index,0);assert.equal(budget.state().unknown,1);
@@ -197,10 +211,10 @@ test('a different diagnosed repair can run, but repeated independent failure exh
   }finally{f.close();}
 });
 
-test('unknown fees remain visible and block explicit hard costs across new windows',()=>{
+test('missing fees remain recorded without blocking approximate cost limits across windows',()=>{
   const f=optimizationFixture();try{
     f.task.autonomy!.policy.hardCostCny=1;f.store.put(f.task);f.store.usage.record(f.task.id,{id:'missing-cost',source:'codex',stage:'followup',model:'test',endpoint:'https://model.invalid',startedAt:1,endedAt:2,status:'failed',basis:'request',raw:null});
-    assert.match(optimizationBudgetReason(f.task,f.store),/费用尚未完整核算/);
+    assert.equal(optimizationBudgetReason(f.task,f.store),'');
     delete f.task.autonomy!.policy.hardCostCny;f.store.put(f.task);assert.equal(optimizationBudgetReason(f.task,f.store),'');assert.equal(f.store.usage.summary(f.task.id).missing,1);
   }finally{f.close();}
 });

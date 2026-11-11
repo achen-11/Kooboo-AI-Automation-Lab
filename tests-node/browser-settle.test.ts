@@ -1,7 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { chromium, type Route } from 'playwright';
-import { settlePage, settleVisibleImages, browserAction } from '../server/automation/browser.js';
+import { chromium, type Frame, type Route } from 'playwright';
+import { settlePage, settleVisibleImages, shouldAbortNavigation, browserAction } from '../server/automation/browser.js';
 import { runInNewContext } from 'node:vm';
 
 test('pending hidden or horizontally offscreen images never block visible settlement; visible pending and broken images stay distinct',async()=>{
@@ -15,6 +15,27 @@ test('pending hidden or horizontally offscreen images never block visible settle
 test('press accepts the documented value and common key alias, rejects missing or contradictory keys',()=>{
   assert.equal(browserAction.parse({action:'press',key:'Escape'}).key,'Escape');assert.equal(browserAction.parse({action:'press',value:'Escape'}).value,'Escape');
   assert.throws(()=>browserAction.parse({action:'press'}),/press 需要/);assert.throws(()=>browserAction.parse({action:'press',key:'Escape',value:'Enter'}),/不同按键/);
+});
+
+test('shouldAbortNavigation handles frameless popup navigations without throwing and preserves main-frame vs iframe rules',()=>{
+  const main={parentFrame:()=>null} as unknown as Frame;
+  const child={parentFrame:()=>main} as unknown as Frame;
+  const framelessError=()=>new Error('Frame for this navigation request is not available, because the request\nwas issued before the frame is created.');
+  const req=(url:string,isNav:boolean,frameImpl:()=>Frame)=>({url:()=>url,isNavigationRequest:()=>isNav,frame:frameImpl});
+
+  // Subresources never abort even across origins or frameless service-worker requests
+  assert.equal(shouldAbortNavigation(req('https://cdn.other.test/app.js',false,()=>{throw framelessError();}),'https://target.test',main),false);
+  // Embedded iframe navigations across origins remain allowed
+  assert.equal(shouldAbortNavigation(req('https://maps.other.test/embed',true,()=>child),'https://target.test',main),false);
+  assert.equal(shouldAbortNavigation(req('https://maps.other.test/embed',true,()=>child),'https://target.test'),false);
+  // Main-frame navigation: same-origin allowed, cross-origin aborted
+  assert.equal(shouldAbortNavigation(req('https://target.test/gallery',true,()=>main),'https://target.test',main),false);
+  assert.equal(shouldAbortNavigation(req('https://external.test/gallery',true,()=>main),'https://target.test',main),true);
+  // Frameless popup / target="_blank" navigation (Moxom gallery zoom crash reproducer): never throws; same-origin allowed, cross-origin aborted
+  assert.equal(shouldAbortNavigation(req('https://target.test/zoom.png',true,()=>{throw framelessError();}),'https://target.test',main),false);
+  assert.equal(shouldAbortNavigation(req('https://external.test/zoom.png',true,()=>{throw framelessError();}),'https://target.test',main),true);
+  // Non-HTTP(S) or invalid navigation URLs are blocked safely
+  assert.equal(shouldAbortNavigation(req('mailto:info@target.test',true,()=>{throw framelessError();}),'https://target.test',main),true);
 });
 
 const png=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=','base64');
@@ -41,5 +62,26 @@ test('real Chromium waits for slow hero and lazy images, and labels a never-load
     await tab.goto('https://fixture.test/stuck',{waitUntil:'domcontentloaded'});
     const stuck=await settlePage(tab,false);
     assert.equal(stuck.settled,false);assert.equal(stuck.pendingImages,1);
+
+    // Real Chromium popup navigation (target="_blank") with shouldAbortNavigation guard:
+    const guarded=await browser.newContext({viewport:{width:1440,height:1000}});
+    let crossOriginPopupAborted=false,sameOriginPopupAllowed=false;
+    await guarded.route('**/*',async route=>{
+      if(shouldAbortNavigation(route.request(),'https://fixture.test',popupTab?.mainFrame())){
+        crossOriginPopupAborted=true;
+        return route.abort().catch(()=>{});
+      }
+      const u=new URL(route.request().url());
+      if(u.pathname==='/zoom')sameOriginPopupAllowed=true;
+      return route.fulfill({contentType:'text/html',body:'<!doctype html><a id="same" href="https://fixture.test/zoom" target="_blank">Zoom</a><a id="ext" href="https://external.test/out" target="_blank">External</a>'});
+    });
+    var popupTab=await guarded.newPage();
+    await popupTab.goto('https://fixture.test/',{waitUntil:'domcontentloaded'});
+    await popupTab.click('#same');
+    await popupTab.click('#ext');
+    await popupTab.waitForTimeout(300);
+    assert.equal(sameOriginPopupAllowed,true);
+    assert.equal(crossOriginPopupAborted,true);
+    await guarded.close();
   }finally{for(const route of hanging)await route.abort().catch(()=>{});await browser.close();}
 });

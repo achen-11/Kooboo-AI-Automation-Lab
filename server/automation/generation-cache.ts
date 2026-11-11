@@ -31,3 +31,8 @@ export async function trimGenerationBrowserCache(profile: string) {
   for (const relative of entries) await rm(resolve(profile, relative), { recursive: true, force: true });
   return entries.length;
 }
+
+export async function trimTaskGenerationBrowserCache(directory: string, taskId: string, onError?: () => void) {
+  try { return await trimGenerationBrowserCache(resolve(directory, 'generation-browsers', taskId)); }
+  catch { onError?.(); return 0; }
+}

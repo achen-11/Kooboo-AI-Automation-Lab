@@ -46,6 +46,15 @@ test('trusted evaluation evidence keeps only current JSON/PNG pairs and preserve
   }finally{f.close();}
 });
 
+test('active AI Site evaluation rejects historical full-page capture policies',()=>{
+  const f=fixture();try{
+    f.task.kind='evaluation';
+    f.pair({binding:{taskId:f.task.id,siteRevision:f.task.siteRevision,capturePolicy:'settled-visible-pc1440-mobile390-v2'}});
+    const current=f.pair({binding:{taskId:f.task.id,siteRevision:f.task.siteRevision,capturePolicy:evaluationCapturePolicy}});
+    assert.deepEqual(f.trusted().files.map(file=>file.name),[current.image.name,current.json.name]);
+  }finally{f.close();}
+});
+
 test('template reference pixels require the same source snapshot, input, policy, origin and settled observation',()=>{
   const f=fixture();try{const snapshotId=randomUUID(),name=randomUUID()+'.png',image=f.write(name,png,{type:'image/png',role:'reference',viewport:'desktop'}),observation={role:'reference',viewport:'desktop',url:'https://source.invalid/',file:name,binding:{sourceSnapshotId:snapshotId,inputVersionId:f.task.versionId,capturePolicy:evaluationCapturePolicy},settlement:{settled:true}},json=f.write(name.replace('.png','.json'),Buffer.from(JSON.stringify(observation)),{role:'reference',viewport:'desktop'});
     const binding={snapshotId,inputVersionId:f.task.versionId,referenceUrl:'https://source.invalid/'};

@@ -7,9 +7,47 @@ import { GenerationContextStore, cleanupGenerationContext } from './generation-c
 import { koobooClient } from './kooboo.js';
 import { randomUUID } from 'node:crypto';
 import { retainStoppedFollowupReservations } from './budget-recovery.js';
+import { GenerationDeliveryStore, readDeliveryImage } from './generation-delivery.js';
 
-export function registerGenerationContextApi(app: FastifyInstance, store: AutomationStore, vault: Vault, owns: (id: string) => boolean) {
+export function registerGenerationContextApi(app: FastifyInstance, store: AutomationStore, vault: Vault, owns: (id: string) => boolean, directory: string) {
   const params = z.object({ id: z.string().uuid() });
+  const deliveries = new GenerationDeliveryStore(store);
+  new GenerationContextStore(store);
+  function generationTasks(id: string) {
+    const task = store.header(id);
+    if (!task || task.kind !== 'generation') throw new Conflict('生成任务不存在');
+    return task.workflowIds.filter(taskId => store.header(taskId)?.kind === 'generation');
+  }
+  function delivery(id: string, deliveryId: string) {
+    const value = deliveries.get(deliveryId);
+    if (!value || !generationTasks(id).includes(value.taskId)) throw new Conflict('发送快照不属于当前任务');
+    return value;
+  }
+  app.get('/api/automation/tasks/:id/generation-deliveries', async request => {
+    const { id } = params.parse(request.params), taskIds = generationTasks(id);
+    return { items: taskIds.flatMap(taskId => deliveries.list(taskId)).sort((a, b) => b.createdAt - a.createdAt),
+      packages: taskIds.flatMap(taskId => store.db.prepare(`SELECT id,task_id AS taskId,
+        json_extract(json,'$.createdAt') AS createdAt,json_extract(json,'$.transport') AS transport
+        FROM auto_generation_context WHERE task_id=? ORDER BY createdAt DESC`).all(taskId)) };
+  });
+  app.get('/api/automation/tasks/:id/generation-deliveries/:deliveryId', async request => {
+    const { id, deliveryId } = params.extend({ deliveryId: z.string().uuid() }).parse(request.params);
+    return delivery(id, deliveryId);
+  });
+  app.get('/api/automation/tasks/:id/generation-deliveries/:deliveryId/images/:index', async (request, reply) => {
+    const { id, deliveryId, index } = params.extend({ deliveryId: z.string().uuid(), index: z.coerce.number().int().min(0) }).parse(request.params);
+    const image = delivery(id, deliveryId).images[index];
+    if (!image) return reply.code(404).send({ error: '图片快照不存在' });
+    return reply.type(image.mediaType).header('X-Content-Type-Options', 'nosniff').send(readDeliveryImage(directory, image));
+  });
+  app.get('/api/automation/tasks/:id/generation-context/:packageId', async request => {
+    const { id, packageId } = params.extend({ packageId: z.string().uuid() }).parse(request.params);
+    const taskIds = generationTasks(id), row = store.db.prepare(`SELECT task_id AS taskId,
+      json_extract(json,'$.createdAt') AS createdAt,json_extract(json,'$.transport') AS transport,
+      json_extract(json,'$.original') AS original FROM auto_generation_context WHERE id=?`).get(packageId);
+    if (!row || !taskIds.includes(row.taskId)) throw new Conflict('任务资料不存在或不属于当前任务');
+    return { id: packageId, taskId: row.taskId, createdAt: row.createdAt, transport: row.transport, sections: JSON.parse(row.original) };
+  });
   const handoffs=new Set<string>();
   app.post('/api/automation/tasks/:id/generation-context/handoff',async request=>{
     const {id}=params.parse(request.params),task=store.task(id);

@@ -200,3 +200,81 @@ test('final envelope checks images, answers and combined bytes, and overflow sig
   assert.throws(() => assertGenerationInput(undefined, undefined, { result: 'x'.repeat(25 * 1024 * 1024) }), GenerationInputError);
   assert.equal(isContextOverflow('maximum context length exceeded'), true); assert.equal(isContextOverflow('context_length_exceeded'), true); assert.equal(isContextOverflow('上下文已经溢出'), true); assert.equal(isContextOverflow('network timeout'), false);
 });
+
+test('automationRead with path/paging options lazily reads target nodes, bounds large entries, and composes with automationSummary', async () => {
+  const f = await fixture(); try {
+    const entries = Array.from({ length: 18 }, (_, i) => ({
+      name: `source-entry-${i}.json`,
+      taskId: f.task.id,
+      sha256: String(i).padStart(64, '0'),
+      value: {
+        url: `https://fixonic.test/page-${i}`,
+        status: 200,
+        body: `<!DOCTYPE html><section data-entry="${i}">` + `内容片段-${i}-`.repeat(5000) + '</section>',
+      },
+    }));
+    const source = {
+      instructions: '在 Sandbox 克隆来源站并构建模板。',
+      manifest: { id: f.task.requirementsId, revision: 1, limitations: ['局部动态接口未抓包'], items: Array.from({ length: 5 }, (_, i) => ({ id: `req-${i}`, title: `页面 ${i}` })) },
+      sourceEvidence: { entries, limitations: ['静态快照'], unavailable: [] },
+    };
+    const prepared = await prepareGenerationContext(f.task, f.store, f.request, f.siteId, source);
+    assert.equal(prepared.mode, 'kfile');
+    const pkg = new GenerationContextStore(f.store).packages(f.task.id)[0];
+    const base = pkg.index.slice(0, pkg.index.lastIndexOf('/') + 1);
+    const reader = f.remote.get(base + 'reader.js')!;
+    let reads: string[] = [];
+    const execute = (code: string) => {
+      reads = [];
+      return JSON.parse(runInNewContext(
+        `${reader};JSON.stringify((function(){${code}})());`,
+        { k: { file: { read: (path: string) => { reads.push(path); return f.remote.get(path) ?? null; } } } },
+      ));
+    };
+
+    // 1. Exact Fixonic loop: reading all 18 entry names never opens any source-*.json HTML document
+    const loopOut = execute(`
+      var names = [];
+      for (var i = 0; i < 18; i++) {
+        names.push({ i: i, name: automationRead("sourceEvidence", { path: ["entries", i, "name"] }) });
+      }
+      return {
+        names: names,
+        lim: automationRead("sourceEvidence", { path: ["limitations"] }),
+        unav: automationRead("sourceEvidence", { path: ["unavailable"] }),
+        item0: automationRead("manifest", { path: ["items", 0] })
+      };
+    `);
+    assert.equal(loopOut.names.length, 18);
+    assert.equal(loopOut.names[0].name, 'source-entry-0.json');
+    assert.equal(loopOut.names[17].name, 'source-entry-17.json');
+    assert.deepEqual(loopOut.lim, ['静态快照']);
+    assert.deepEqual(loopOut.unav, []);
+    assert.deepEqual(loopOut.item0, { id: 'req-0', title: '页面 0' });
+    assert.equal(reads.filter(p => /\/source-[a-f0-9]{64}\.json$/.test(p)).length, 0, 'lazy path walk must not read whole HTML source documents');
+
+    // 2. Unwrapped automationRead on a large entry or HTML body stays bounded <= resultChars
+    const entrySummary = execute(`return automationRead("sourceEvidence", { path: ["entries", 0], offset: 0 });`);
+    assert.equal(entrySummary.valueType, 'object');
+    assert.ok(JSON.stringify(entrySummary).length <= generationReaderLimits.resultChars);
+    assert.deepEqual(entrySummary.items.map((x: any) => x.key), ['name', 'taskId', 'sha256', 'value']);
+
+    const bodySlice = execute(`return automationRead("sourceEvidence", { path: ["entries", 2, "value", "body"], offset: 0, chars: 1200 });`);
+    assert.equal(bodySlice.valueType, 'string');
+    assert.equal(bodySlice.text, entries[2].value.body.slice(0, 1200));
+    assert.equal(reads.filter(p => /\/source-[a-f0-9]{64}\.json$/.test(p)).length, 1, 'only entry 2 source document is read');
+
+    // 3. Nested automationSummary(automationRead(..., { path }), outerOptions) unwraps cleanly
+    const nestedObj = execute(`return automationSummary(automationRead("sourceEvidence", { path: ["entries", 2, "value"] }), { offset: 0, chars: 1500 });`);
+    assert.equal(nestedObj.valueType, 'object');
+    assert.deepEqual(nestedObj.items.map((x: any) => x.key), ['url', 'status', 'body']);
+
+    const nestedBody = execute(`return automationSummary(automationRead("sourceEvidence", { path: ["entries", 2, "value", "body"] }), { offset: 2500, chars: 1000 });`);
+    assert.equal(nestedBody.valueType, 'string');
+    assert.equal(nestedBody.text, entries[2].value.body.slice(2500, 3500));
+
+    // 4. Invalid options / unknown paths reject explicitly instead of dumping full section
+    assert.throws(() => execute(`return automationRead("sourceEvidence", { path: ["entries", 99] });`), /Unknown JSON path/);
+    assert.throws(() => execute(`return automationRead("sourceEvidence", "bad");`), /Invalid reader options/);
+  } finally { await f.close(); }
+});

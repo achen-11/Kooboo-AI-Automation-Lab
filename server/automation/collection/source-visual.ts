@@ -2,7 +2,7 @@ import { mkdirSync, rmSync, writeFileSync } from 'node:fs';
 import { chromium, type Browser } from 'playwright';
 import type { CollectionRun } from '../../../shared/collection.js';
 import type { InputVersion } from '../../../shared/automation.js';
-import { settlePage, type PageSettlement } from '../browser.js';
+import { settlePage, shouldAbortNavigation, type PageSettlement } from '../browser.js';
 import { collectionHash, safeCollectionPath } from './runtime.js';
 import type { CollectionStore } from './store.js';
 
@@ -91,7 +91,7 @@ export async function captureSourceVisualBaseline(collections:CollectionStore,ru
     browser=await (options.launch||(()=>chromium.launch({headless:true})))();
     for(const viewport of ['desktop','mobile'] as const){
       const mobile=viewport==='mobile',context=await browser.newContext({viewport:{width:mobile?390:1440,height:mobile?844:1000},isMobile:mobile,hasTouch:mobile});
-      await context.route('**/*',route=>{const request=route.request();if(request.isNavigationRequest()&&request.frame().parentFrame()===null&&new URL(request.url()).origin!==source.origin)return route.abort();return route.continue();});
+      await context.route('**/*',route=>{if(shouldAbortNavigation(route.request(),source.origin))return route.abort().catch(()=>{});return route.continue().catch(()=>{});});
       try{
         for(const template of screened){
           options.signal.throwIfAborted();

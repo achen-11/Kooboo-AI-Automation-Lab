@@ -6,6 +6,7 @@ import type { RequirementManifest } from '../../shared/completeness.js';
 import type { Requirement, RequirementCheck } from '../../shared/completeness.js';
 import type { AutomationStore } from './store.js';
 import type { RecheckTarget, TemplateReassessment } from './template-reassessment.js';
+import { EvaluationSliceYield } from './errors.js';
 
 export interface TemplateReviewBatch { id:string; task:AutomationTask; manifest?:RequirementManifest; rechecks?:RecheckTarget[] }
 export function templateReviewBatches(task:AutomationTask,manifest?:RequirementManifest):TemplateReviewBatch[]{
@@ -39,25 +40,52 @@ export function mergeTemplateReports(reports:AutomationReport[],manifest?:Requir
 }
 
 /** Only host-validated batch results are checkpointed. Any change of the frozen contract invalidates them. */
-export async function reviewTemplateBatches(input:{task:AutomationTask;store:AutomationStore;work:string;evidenceBinding?:string;sourceBaseUrl?:string;manifest:()=>RequirementManifest|undefined;validate:(raw:unknown,batch:TemplateReviewBatch)=>AutomationReport;review:(batch:TemplateReviewBatch)=>Promise<AutomationReport>;prepare:()=>Promise<void>;plan?:(batches:TemplateReviewBatch[])=>Promise<TemplateReassessment|undefined>}){
+export async function reviewTemplateBatches(input:{task:AutomationTask;store:AutomationStore;work:string;evidenceBinding?:string;sourceBaseUrl?:string;maxSliceMs?:number;manifest:()=>RequirementManifest|undefined;validate:(raw:unknown,batch:TemplateReviewBatch)=>AutomationReport;review:(batch:TemplateReviewBatch)=>Promise<AutomationReport>;prepare:()=>Promise<void>;plan?:(batches:TemplateReviewBatch[])=>Promise<TemplateReassessment|undefined>}){
   const {task,store,work}=input;
-  store.db.exec('CREATE TABLE IF NOT EXISTS auto_template_review_batches(key TEXT PRIMARY KEY,task_id TEXT NOT NULL,json TEXT NOT NULL)');
+  store.db.exec("CREATE TABLE IF NOT EXISTS auto_template_review_batches(key TEXT PRIMARY KEY,task_id TEXT NOT NULL,json TEXT NOT NULL,updated_at INTEGER NOT NULL DEFAULT 0,manifest_id TEXT NOT NULL DEFAULT '')");
+  const columns=store.db.prepare('PRAGMA table_info(auto_template_review_batches)').all() as {name?:string}[];
+  if(!columns.some(column=>column.name==='updated_at'))store.db.exec('ALTER TABLE auto_template_review_batches ADD COLUMN updated_at INTEGER NOT NULL DEFAULT 0');
+  if(!columns.some(column=>column.name==='manifest_id'))store.db.exec("ALTER TABLE auto_template_review_batches ADD COLUMN manifest_id TEXT NOT NULL DEFAULT ''");
+  const startedAt=Date.now(),sliceLimitMs=input.maxSliceMs??25*60_000;
+  let freshReviews=0;
+  const sourceOrigin=(()=>{try{return input.sourceBaseUrl?new URL(input.sourceBaseUrl).origin:'';}catch{return '';}})();
   for(let pass=0;pass<3;pass++){
     const manifest=input.manifest(),original=templateReviewBatches(task,manifest),plan=await input.plan?.(original);
-    const contract=JSON.stringify([plan?'template-batches-v3':'template-batches-v2',input.evidenceBinding,task.id,task.versionId,task.siteRevision,task.scope,task.rule,manifest,...(plan?[[plan.baseline.id,plan.inheritedAssessments,plan.inheritedRequirements,plan.inheritedPagePaths,plan.targets]]:[])]);
+    const version=plan?'template-batches-v4':'template-batches-v3';
     const batches=plan?.batches||original,reports:AutomationReport[]=[...(plan?.seeds||[])],progress:{id:string;state:string;assessments:number;requirements:number}[]=[];
     const save=()=>writeFileSync(resolve(work,'review-batches.json'),JSON.stringify({version:1,siteRevision:task.siteRevision,manifestId:manifest?.id,pass,progress},null,2),{mode:0o600});save();
     let changed=false;
     for(const batch of batches){
-      const mappedPaths=!!input.sourceBaseUrl&&batch.manifest?.items.some(item=>['page','template'].includes(item.kind)&&(item.kind==='page'?item.paths:item.samples||[]).some(path=>{try{return new URL(path).origin===new URL(input.sourceBaseUrl!).origin;}catch{return false;}}));
-      const key=createHash('sha256').update(contract+batch.id+(mappedPaths?'mapped-template-paths-v1':'')).digest('hex');let report:AutomationReport|undefined;
-      const saved=store.db.prepare('SELECT json FROM auto_template_review_batches WHERE key=? AND task_id=?').get(key,task.id);
-      if(saved)try{report=input.validate(JSON.parse(saved.json),batch);}catch{/* Recheck bytes and binding on every resume. */}
+      const batchMappedPaths=sourceOrigin&&batch.manifest?batch.manifest.items.filter(item=>['page','template'].includes(item.kind)).flatMap(item=>[...item.paths,...(item.samples||[])].flatMap(path=>{try{const url=new URL(path);return url.origin===sourceOrigin?[`${item.id}:${path}->${url.pathname}${url.search}`]:[];}catch{return [];}})):[];
+      const batchContract=batch.rechecks
+        ?[version,'rechecks',batch.id,input.evidenceBinding||null,task.id,task.versionId,task.siteRevision||null,task.scope,batch.rechecks,...(plan?[[plan.baseline.id,plan.targets.map(t=>t.id)]]:[])]
+        :batch.manifest
+        ?[version,'completeness',input.evidenceBinding||null,task.id,task.versionId,task.siteRevision||null,task.scope,batch.task.rule,{sourceComplete:batch.manifest.sourceComplete,limitations:batch.manifest.limitations,items:batch.manifest.items},batchMappedPaths,...(plan?[[plan.baseline.id,plan.inheritedRequirements,plan.inheritedPagePaths]]:[])]
+        :[version,'criteria',batch.id,input.evidenceBinding||null,task.id,task.versionId,task.siteRevision||null,task.scope,batch.task.rule,...(plan?[[plan.baseline.id,plan.inheritedAssessments]]:[])];
+      const key=createHash('sha256').update(JSON.stringify(batchContract)).digest('hex');let report:AutomationReport|undefined;
+      const saved=store.db.prepare('SELECT json,manifest_id FROM auto_template_review_batches WHERE key=? AND task_id=?').get(key,task.id) as {json:string;manifest_id?:string}|undefined;
+      if(saved)try{
+        const rawSaved=JSON.parse(saved.json);
+        const currentManifestId=manifest?.id||'',sameManifest=(saved.manifest_id||'')===currentManifestId;
+        const savedChecks=Array.isArray(rawSaved?.completeness)?rawSaved.completeness:Array.isArray(rawSaved?.completeness?.checks)?rawSaved.completeness.checks:[];
+        const dirtyAcrossManifest=!sameManifest&&Boolean(
+          rawSaved?.coverage?.unverified?.length
+          ||rawSaved?.coverage?.outOfScope?.length
+          ||(batch.manifest&&(rawSaved?.issues?.length||savedChecks.length<batch.manifest.items.length||savedChecks.some((c:{status?:string})=>c?.status!=='verified')))
+        );
+        if(!dirtyAcrossManifest)report=input.validate(rawSaved,batch);
+      }catch{/* Recheck bytes and binding on every resume. */}
       const reused=!!report;
-      if(!report)report=await input.review(batch);
+      if(!report){
+        if(freshReviews>0&&Date.now()-startedAt>=sliceLimitMs)throw new EvaluationSliceYield('已完成本时间片评测批次并保存检查点，自动接续剩余批次');
+        report=await input.review(batch);
+      }
       if(input.manifest()?.id!==manifest?.id){changed=true;store.event(task.id,'评测独立补充了清单；保留取证并按新完整范围重新分批，不发布旧范围的部分结果。');await input.prepare();break;}
-      const raw=rawBatchReport(report);input.validate(raw,batch);
-      store.db.prepare('INSERT OR REPLACE INTO auto_template_review_batches VALUES(?,?,?)').run(key,task.id,JSON.stringify(raw));
+      if(!reused){
+        const raw=rawBatchReport(report);input.validate(raw,batch);
+        store.db.prepare('INSERT OR REPLACE INTO auto_template_review_batches(key,task_id,json,updated_at,manifest_id) VALUES(?,?,?,?,?)').run(key,task.id,JSON.stringify(raw),Date.now(),manifest?.id||'');
+        freshReviews++;
+      }
       reports.push(report);progress.push({id:batch.id,state:reused?'reused':'validated',assessments:report.assessments.length,requirements:report.completeness?.checks.length||0});save();
       store.event(task.id,`分批评测 ${progress.length}/${batches.length} ${batch.id}：${reused?'复用经当前证据重新校验的结果':'已保存独立结果检查点'}`);
     }

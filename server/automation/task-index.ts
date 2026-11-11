@@ -8,6 +8,7 @@ export type ReadinessReport = Pick<AutomationReport, 'quality' | 'scores' | 'sum
   issues: Pick<AutomationReport['issues'][number], 'severity'>[];
   completeness?: Pick<NonNullable<AutomationReport['completeness']>, 'state' | 'sourceComplete'>;
   migrationCheck?: Pick<NonNullable<AutomationReport['migrationCheck']>, 'state'>;
+  review?: Pick<NonNullable<AutomationReport['review']>, 'mode' | 'scopeComplete'>;
   collectionTarget?: Pick<NonNullable<AutomationReport['collectionTarget']>, 'state' | 'collectionVersionId' | 'inputVersionId' | 'generatedSiteId' | 'siteRevision'> & {
     checks: Pick<NonNullable<AutomationReport['collectionTarget']>['checks'][number], 'status'>[];
   };
@@ -32,7 +33,7 @@ export function taskHeader(task: AutomationTask): TaskHeader {
   const reflection = task.learningPolicy?.collect && task.stopped && (report && task.status === 'completed' || task.interruption && task.status === 'interrupted');
   return {
     ...summary, summary, versionId: task.versionId, siteRevision: task.siteRevision,
-    workflowIds: [...new Set([task.id, ...(task.evaluationTaskId ? [task.evaluationTaskId] : []), ...(optimization?.rounds.flatMap(round => [round.generationTaskId, ...(round.evaluationTaskId ? [round.evaluationTaskId] : [])]) || [])])],
+    workflowIds: [...new Set([task.id, ...(task.evaluationTaskId ? [task.evaluationTaskId] : []), ...(optimization?.rounds.flatMap(round => [round.generationTaskId, ...(round.previousEvaluationTaskIds || []), ...(round.evaluationTaskId ? [round.evaluationTaskId] : [])]) || [])])],
     collectionVersionId: task.collectionVersionId, requirementsEnabled: task.requirementsEnabled,
     error: brief(task.error),
     rule: task.rule ? { criteria: (task.rule.criteria || []).map(({ id, required, scopes, viewports }) => ({ id, required, scopes, viewports })) } : null,
@@ -47,6 +48,7 @@ export function taskHeader(task: AutomationTask): TaskHeader {
       issues: report.issues.map(({ severity }) => ({ severity })),
       completeness: report.completeness ? { state: report.completeness.state, sourceComplete: report.completeness.sourceComplete } : undefined,
       migrationCheck: report.migrationCheck ? { state: report.migrationCheck.state } : undefined,
+      review: report.review ? { mode: report.review.mode, scopeComplete: report.review.scopeComplete } : undefined,
       collectionTarget: report.collectionTarget ? {
         state: report.collectionTarget.state, collectionVersionId: report.collectionTarget.collectionVersionId,
         inputVersionId: report.collectionTarget.inputVersionId, generatedSiteId: report.collectionTarget.generatedSiteId,

@@ -21,6 +21,7 @@ import { targetReached } from '../server/automation/optimization.js';
 import type { Requirement, RequirementCheck } from '../shared/completeness.js';
 import { inspectionTools } from '../server/automation/inspection-tools.js';
 import { createAutonomousExecution } from '../shared/autonomy.js';
+import { retainStoppedLearningReservations } from '../server/automation/budget-recovery.js';
 
 const experience:ExperienceInput={title:'先查交付记录',scenarios:['site-template'],stages:['generation','followup','evaluation'],conditions:'续建前不确定原会话状态',exclusions:'没有原会话',guidance:'查询实际交付回执后再决定，不重复发送。'};
 test('a stopped collection decision retains only its own unknown reservation and preserves historical blockers and charges',async()=>{
@@ -44,14 +45,15 @@ async function fixture(){
   const create=(scope:'homepage'|'site'='homepage',parentId?:string)=>f.automationStore.create({resourceIds:[r.id],environmentId,kind:'generation',scope,requirements:'',parentId},f.vault.automation())[0];
   return {...f,directory,headers,environmentId,resource:r,create,async close(){await f.app.close();rmSync(directory,{recursive:true,force:true});}};
 }
-test('request admission clamps output, persists cumulative use across sessions and stops unknown or repeated requests',()=>{
+test('request admission retains missing usage estimates across sessions and stops active or repeated requests',()=>{
   const db=new Database(':memory:');try{
     const policy={key:'shared',runKey:'one',maxTokens:10000,maxRequests:3},b=new RequestBudget(db,policy);
     const outgoing=JSON.parse(b.reserve('a',Buffer.from(JSON.stringify({input:'Hello',max_output_tokens:90000}))).toString());assert.equal(outgoing.max_output_tokens,8192);
     assert.throws(()=>b.reserve('parallel',Buffer.from('{}')),ModelBudgetExceeded);b.complete('a',{input_tokens:1000,output_tokens:100});
     assert.equal(new RequestBudget(db,{...policy,runKey:'two'}).state().spent,1100);
     b.reserve('b',Buffer.from('{}'));b.complete('b',null);assert.equal(b.state().unknown,1);assert.ok(b.state().spent>1100);
-    assert.throws(()=>new RequestBudget(db,{...policy,runKey:'new',maxTokens:20000}).reserve('c',Buffer.from('{}')),/缺少完整 usage/);
+    const recovered=new RequestBudget(db,{...policy,runKey:'new',maxTokens:20000}),spent=b.state().spent;
+    recovered.reserve('c',Buffer.from('{}'));assert.ok(recovered.state().spent>spent);recovered.complete('c',{input_tokens:5,output_tokens:2});
     const repeat=new RequestBudget(db,{key:'repeat',runKey:'one',maxTokens:100000,maxRequests:20});for(let i=0;i<3;i++){repeat.reserve(String(i),Buffer.from('{}'));repeat.complete(String(i),{input_tokens:1,output_tokens:1});}assert.throws(()=>repeat.reserve('four',Buffer.from('{}')),/无进展循环/);
     const compact=new RequestBudget(db,{key:'compact',runKey:'one',maxTokens:10000,maxRequests:2});assert.throws(()=>compact.reserve('compact',Buffer.from('{"__compact":true}')),/压缩接口/);assert.equal(compact.state().requests,0);
   }finally{db.close();}
@@ -186,6 +188,81 @@ test('relay records an actionable transport failure while preserving unknown usa
     const entries=f.automationStore.usage.entries(task.id);assert.equal(entries.length,1);assert.equal(entries[0].tokens,null);assert.match(entries[0].note,/模型上游连接失败/);assert.ok(!entries[0].note.includes('fake-key'));const state=new RequestBudget(f.automationStore.db,policy).state();assert.equal(state.unknown,1);assert.ok(state.spent>0);
   }finally{await relay?.close();await close(upstream);await f.close();}
 });
+test('HTTP 402 stops SDK retries but missing usage does not block a recovered relay session',async()=>{
+  const f=await fixture();let calls=0,rejected=true;
+  const upstream=createServer((_req,res)=>{calls++;if(rejected){res.writeHead(402,{'content-type':'application/json'});res.end(JSON.stringify({error:{message:'provider-private-detail'}}));}else{res.writeHead(200,{'content-type':'text/event-stream'});res.end('data: '+JSON.stringify({type:'response.completed',response:{usage:{input_tokens:10,output_tokens:2}}})+'\n\n');}});
+  let relay:Awaited<ReturnType<typeof usageCapture>>|undefined;
+  try{
+    const endpoint=await listen(upstream);f.vault.update({...f.vault.get(),model:{endpoint,name:'test',apiKey:'fake-key'}});
+    const task=f.create(),policy={key:'http-rejection',runKey:'one',maxTokens:100000,maxRequests:5};
+    relay=await usageCapture(task.id,'experience',f.automationStore,f.vault,new AbortController().signal,policy);
+    const call=()=>fetch(relay!.env.AUTOMATION_RESPONSES_URL+'/responses',{method:'POST',headers:{authorization:'Bearer '+relay!.env.EVALUATOR_MODEL_KEY,'content-type':'application/json'},body:'{}'});
+    let response=await call();assert.equal(response.status,402);await response.text();
+    response=await call();assert.equal(response.status,429);assert.match(await response.text(),/HTTP 402/);assert.match(relay.error!.message,/HTTP 402/);
+    await relay.close();rejected=false;relay=await usageCapture(task.id,'experience',f.automationStore,f.vault,new AbortController().signal,policy);
+    response=await call();assert.equal(response.status,200);await response.text();
+    assert.equal(calls,2);const state=new RequestBudget(f.automationStore.db,policy).state();assert.equal(state.unknown,1);assert.equal(state.requests,2);assert.ok(state.spent>12);
+    const entry=f.automationStore.usage.entries(task.id)[0];assert.equal(entry.status,'failed');assert.equal(entry.tokens,null);assert.equal(entry.cny,null);assert.doesNotMatch(entry.note,/provider-private-detail|fake-key/);
+  }finally{await relay?.close();await close(upstream);await f.close();}
+});
+test('only active requests block admission and ended requests retain their missing-usage estimate',()=>{
+  const db=new Database(':memory:');try{
+    const budget=new RequestBudget(db,{key:'active',runKey:'one',maxTokens:100000,maxRequests:5});budget.reserve('running',Buffer.from('{}'));
+    assert.throws(()=>budget.reserve('next',Buffer.from('{}')),/执行中/);
+    const reserved=budget.state().spent;budget.complete('running',null);budget.reserve('next',Buffer.from('{}'));
+    assert.ok(budget.state().spent>reserved);assert.equal(budget.state().requests,2);assert.equal(budget.activeRequests(),1);
+  }finally{db.close();}
+});
+test('explicit reflection retry retains shared stopped learning reservations and preserves budget, timing and missing costs',async()=>{
+  for(const state of ['active','unknown'] as const){
+    const f=await fixture();try{
+      const store=f.automationStore,es=new ExperienceStore(store),root=f.create(),child=f.create('homepage',root.id);
+      for(const task of [root,child]){task.status='interrupted';task.stopped=true;store.put(task);}
+      const run=es.enqueue(child,'followup','reflection',randomUUID());run.status='failed';run.reason='旧请求用量缺失';es.put(run);
+      const policy={key:run.budgetId,runKey:run.id,maxTokens:100000,maxRequests:5},budget=new RequestBudget(store.db,policy),id=randomUUID();
+      budget.reserve(id,Buffer.from('{}'));if(state==='unknown')budget.complete(id,null);
+      store.usage.record(root.id,{id,source:'codex',stage:'experience',model:'test',endpoint:'https://models.invalid',startedAt:1,endedAt:2,status:state==='active'?'unknown':'failed',basis:'request',raw:null,note:'模型服务返回 HTTP 402'});
+      store.db.exec('CREATE TABLE auto_decision_clock(id TEXT PRIMARY KEY,elapsed_ms INTEGER NOT NULL,active_at INTEGER,heartbeat INTEGER)');
+      store.db.prepare('INSERT INTO auto_decision_clock VALUES(?,?,NULL,NULL)').run(run.id,1234);
+      const other=new RequestBudget(store.db,{...policy,key:'other-workflow'});other.reserve('other',Buffer.from('{}'));other.complete('other',null);
+      const spent=budget.state().spent,beforeTask=structuredClone(store.task(child.id)),before=structuredClone(es.run(run.id));
+      const listed=await f.app.inject({url:`/api/automation/tasks/${child.id}/budget`,headers:f.headers});assert.equal(listed.json().items.length,1);assert.match(listed.json().items[0].reason,/HTTP 402/);
+      const url=`/api/automation/learning/${run.id}/retry`;
+      assert.equal((await f.app.inject({method:'POST',url})).statusCode,401);assert.equal(budget.state().unknown,1);
+      const result=await f.app.inject({method:'POST',url,headers:f.headers,payload:{useCurrentPolicy:true}});assert.equal(result.statusCode,200,result.body);
+      assert.deepEqual(result.json().retained,{count:1,tokens:spent});assert.equal(result.json().run.status,'queued');
+      assert.equal(result.json().run.id,before!.id);assert.equal(result.json().run.budgetId,before!.budgetId);assert.deepEqual(result.json().run.policy,f.vault.automation().learning);
+      assert.deepEqual(budget.state(),{spent,unknown:0,requests:1});assert.equal(other.state().unknown,1);
+      assert.equal(store.db.prepare('SELECT elapsed_ms FROM auto_decision_clock WHERE id=?').get(run.id).elapsed_ms,1234);
+      assert.deepEqual(store.task(child.id),beforeTask);const entry=store.usage.entries(root.id)[0];assert.equal(entry.tokens,null);assert.equal(entry.cny,null);
+      assert.equal((await f.app.inject({url:`/api/automation/tasks/${root.id}/budget`,headers:f.headers})).json().items.length,0);
+      assert.equal((await f.app.inject({method:'POST',url,headers:f.headers})).statusCode,409);
+      budget.reserve('continued',Buffer.from('{"input":"continue"}'));assert.equal(budget.state().requests,2);assert.ok(budget.state().spent>spent);
+    }finally{await f.close();}
+  }
+});
+test('reflection recovery cannot release another active task, delivery or learning request in the workflow',async()=>{
+  const f=await fixture();try{
+    const store=f.automationStore,es=new ExperienceStore(store),root=f.create(),child=f.create('homepage',root.id);
+    for(const task of [root,child]){task.status='interrupted';task.stopped=true;store.put(task);}
+    const run=es.enqueue(root,'followup','reflection',randomUUID());run.status='failed';es.put(run);
+    const budget=new RequestBudget(store.db,{key:run.budgetId,runKey:run.id,maxTokens:100000,maxRequests:5});budget.reserve('blocked',Buffer.from('{}'));budget.complete('blocked',null);
+    const otherRun=es.enqueue(child,'evaluation','selection',randomUUID());otherRun.status='failed';es.put(otherRun);
+    const before=structuredClone(es.run(run.id));
+    for(const activity of ['task','delivery','learning','task-owner','learning-owner'] as const){
+      const sibling=store.task(child.id)!;sibling.stopped=activity!=='task';
+      if(activity==='delivery')sibling.delivery={stopped:false} as typeof sibling.delivery;else delete sibling.delivery;
+      store.put(sibling);otherRun.status=activity==='learning'?'running':'failed';es.put(otherRun);
+      const owns=(id:string)=>activity==='task-owner'?id===child.id:activity==='learning-owner'?id===otherRun.id:false;
+      assert.throws(()=>retainStoppedLearningReservations(run,store,owns),/同工作流仍有活动执行/);
+      if(activity!=='task-owner'&&activity!=='learning-owner'){
+        const response=await f.app.inject({method:'POST',url:`/api/automation/learning/${run.id}/retry`,headers:f.headers,payload:{useCurrentPolicy:true}});
+        assert.equal(response.statusCode,409,response.body);
+      }
+      assert.equal(budget.state().unknown,1);assert.deepEqual(es.run(run.id),before);
+    }
+  }finally{await f.close();}
+});
 test('implementation inspection uses fixed read-only contracts and rejects arbitrary methods, SQL, origins and paths',async()=>{
   const f=await fixture();const requests:string[]=[];const server=createServer((req,res)=>{requests.push(req.method+' '+req.url);res.setHeader('content-type','application/json');res.end(JSON.stringify({totalCount:2,list:[{id:'a'},{id:'b'}]}));});
   try{const endpoint=await listen(server);f.vault.update({...f.vault.get(),environments:f.vault.get().environments.map(e=>({...e,apiOrigin:endpoint}))});const task=f.create('site');task.generatedSiteId=randomUUID();f.automationStore.saveSite({id:task.generatedSiteId,resourceId:task.resourceId,versionId:task.versionId,environmentId:task.environmentId,siteId:randomUUID(),name:'target',url:endpoint,createdAt:Date.now()});
@@ -219,6 +296,20 @@ test('manual unknown-usage acknowledgement retains the reservation and missing b
     const endpoint=`/api/automation/tasks/${t.id}/budget/acknowledge`,payload={requestId:id,reason:'人工已核查原请求停止，保留估算占用'};
     assert.equal((await f.app.inject({method:'POST',url:endpoint,payload})).statusCode,401);
     const result=await f.app.inject({method:'POST',url:endpoint,headers:f.headers,payload});assert.equal(result.statusCode,200);assert.equal(result.json().retainedTokens,spent);assert.equal(budget.state().spent,spent);assert.equal(budget.state().unknown,0);assert.equal(f.automationStore.task(t.id)!.usage!.missing,1);
+  }finally{await f.close();}
+});
+test('a child can inspect and acknowledge its workflow blocker but cannot touch another workflow or active delivery',async()=>{
+  const f=await fixture();try{
+    const store=f.automationStore,root=f.create(),child=f.create('homepage',root.id),unrelated=f.create();
+    for(const task of [root,child]){task.status='interrupted';task.stopped=true;store.put(task);}
+    const budget=new RequestBudget(store.db,{key:'experience:'+root.id,runKey:'same',maxTokens:100000,maxRequests:5}),id=randomUUID();budget.reserve(id,Buffer.from('{}'));budget.complete(id,null);
+    store.usage.record(root.id,{id,source:'codex',stage:'experience',model:'test',endpoint:'https://models.invalid',startedAt:1,endedAt:2,status:'failed',basis:'request',raw:null,note:'模型服务返回 HTTP 402'});
+    const acknowledge=(taskId:string)=>f.app.inject({method:'POST',url:`/api/automation/tasks/${taskId}/budget/acknowledge`,headers:f.headers,payload:{requestId:id,reason:'确认同工作流原执行已经停止，保留预占'}});
+    assert.equal((await acknowledge(unrelated.id)).statusCode,409);assert.equal(budget.state().unknown,1);
+    root.delivery={stopped:false} as typeof root.delivery;store.put(root);assert.equal((await acknowledge(child.id)).statusCode,409);assert.equal(budget.state().unknown,1);
+    delete root.delivery;store.put(root);assert.equal((await acknowledge(child.id)).statusCode,200);assert.equal(budget.state().unknown,0);assert.ok(budget.state().spent>0);
+    assert.equal((await f.app.inject({url:`/api/automation/tasks/${child.id}/budget`,headers:f.headers})).json().items.length,0);
+    assert.equal(store.usage.entries(root.id)[0].tokens,null);
   }finally{await f.close();}
 });
 test('explicit read aliases preserve host validation and cannot submit a decision',async()=>{

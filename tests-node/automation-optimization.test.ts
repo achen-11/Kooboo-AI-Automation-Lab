@@ -190,12 +190,12 @@ test('recovery keeps an incomplete round and site reservations; cancelled/failed
   }finally{await f.close();}
 });
 
-test('workflow cost covers all unique rounds and unknown usage is not a free pass under a monetary cap',async()=>{
+test('workflow cost covers all unique rounds and missing usage does not freeze approximate spending',async()=>{
   const f=await fixture();try{
     const initial=f.finish(f.root);f.advance();const child=f.repair();const root=f.store.task(f.root.id)!;root.optimization!.policy.maxCostCny=0.001;f.store.put(root);
     const observation={id:'x',source:'codex' as const,stage:'evaluation' as const,endpoint:'https://api.deepseek.com',model:'deepseek-flash-1017',startedAt:Date.parse('2026-11-07T01:00:00Z'),endedAt:Date.parse('2026-11-07T01:00:01Z'),status:'completed' as const,basis:'request' as const,raw:{input_tokens:10000,output_tokens:10000,cached_input_tokens:0}};
     f.store.usage.record(initial.id,observation);f.store.usage.record(initial.id,observation);assert.equal(f.store.task(root.id)!.usage!.requests,1);assert.match(optimizationBudgetReason(child,f.store),/费用上限/);
-    root.optimization!.policy.maxCostCny=100;f.store.put(root);f.store.usage.record(child.id,{...observation,id:'missing',raw:null});assert.match(optimizationBudgetReason(child,f.store),/未完整核算/);
+    root.optimization!.policy.maxCostCny=100;f.store.put(root);f.store.usage.record(child.id,{...observation,id:'missing',raw:null});assert.equal(optimizationBudgetReason(child,f.store),'');assert.equal(f.store.usage.summary(child.id).missing,1);
     const page=(await f.app.inject({url:`/api/automation/tasks/${root.id}/usage?round=0`,headers:f.headers})).json();assert.equal(page.total,1);
   }finally{await f.close();}
 });
@@ -354,5 +354,74 @@ test('resumed planner threads do not resend pixels and oversized requests releas
     assert.equal(f.store.task(root.id)!.followup!.threadId,'');
     await assert.rejects(attempt('stream disconnected'),/stream disconnected/);
     assert.deepEqual(runs,[{mode:'start',pixels:4,resentLabels:0},{mode:'resume',pixels:0,resentLabels:4},{mode:'start',pixels:4,resentLabels:0}]);
+  }finally{await f.close();}
+});
+
+test('incremental intermediate pass requires a final full-site audit on the same revision before optimization completes',async()=>{
+  const f=await fixture(1,'site-template','site');try{
+    const initial=f.finish(f.root,76,78);
+    initial.report!.completeness={manifestId:randomUUID(),manifestRevision:1,sourceComplete:true,state:'complete',checks:[]};
+    f.store.put(initial);
+    f.advance();
+    const child=f.repair();
+    f.store.beginSiteChange(child);child.status='completed';child.stopped=true;f.store.put(child);
+    f.advance();
+    const incEval=f.store.ensureEvaluation(child,f.settings);
+    incEval.status='completed';incEval.stopped=true;
+    incEval.report={...f.report(incEval,91,89),completeness:{manifestId:randomUUID(),manifestRevision:1,sourceComplete:true,state:'complete',checks:[]},review:{mode:'incremental',scopeComplete:false,baselineTaskId:initial.id,baselineRevision:initial.siteRevision!,inheritedAssessments:['visual:mobile'],inheritedRequirements:[],inheritedPagePaths:[{id:'pages',paths:['/about']}],deferredAssessments:['visual:mobile'],deferredRequirements:[],deferredPagePaths:[{id:'pages',paths:['/about']}],reviewedAssessments:['visual:desktop'],reviewedRequirements:['pages'],targets:[{id:'issue-1',title:'Desktop hero',kind:'issue'}]}};
+    f.store.publishSiteReport(incEval);f.store.put(incEval);
+    const incObservation={id:'inc-eval-usage',source:'codex' as const,stage:'evaluation' as const,endpoint:'https://api.deepseek.com',model:'deepseek-flash-1017',startedAt:Date.parse('2026-11-07T02:00:00Z'),endedAt:Date.parse('2026-11-07T02:00:02Z'),status:'completed' as const,basis:'request' as const,raw:{input_tokens:4000,output_tokens:1200,cached_input_tokens:0}};
+    f.store.usage.record(incEval.id,incObservation);
+    const usageBeforeAudit=f.store.summaries([f.store.header(f.root.id)!])[0].usage!;
+    assert.equal(usageBeforeAudit.requests,1);
+    assert.equal(usageBeforeAudit.input,4000);
+    assert.ok(usageBeforeAudit.knownCny>0);
+
+    let root=f.store.task(f.root.id)!;
+    assert.equal(targetReached(root,incEval.report!),false,'unaudited incremental report cannot satisfy targetReached');
+    assert.equal(targetReached(f.store.header(root.id)!,f.store.header(incEval.id)!.report!),false,'compact task header preserves review.scopeComplete=false');
+
+    // Even when round.number === maxRounds (1 === 1), advanceOptimization enqueues a final full-site audit on the same revision.
+    root=f.advance();
+    assert.equal(root.optimization!.state,'waiting-evaluation');
+    assert.equal(root.optimization!.rounds.length,2);
+    assert.equal(root.optimization!.currentRevision,child.siteRevision);
+    const audit=f.store.task(root.optimization!.activeTaskId)!;
+    assert.notEqual(audit.id,incEval.id);
+    assert.equal(audit.kind,'evaluation');
+    assert.equal(audit.fullAuditRequired,true);
+    assert.equal(audit.siteRevision,child.siteRevision);
+    assert.equal(audit.parentId,incEval.id);
+    assert.deepEqual(root.optimization!.rounds.at(-1)!.previousEvaluationTaskIds,[incEval.id]);
+    assert.equal(root.optimization!.rounds.at(-1)!.evaluationTaskId,audit.id);
+    assert.ok(f.store.workflowIds(root).includes(incEval.id),'workflowIds retains replaced incremental evaluation task');
+    assert.ok(f.store.workflowIds(root).includes(audit.id));
+    assert.ok(f.store.header(root.id)!.workflowIds.includes(incEval.id),'compact taskHeader.workflowIds retains replaced incremental evaluation task');
+    const summaryDuringAudit=f.store.summaries([f.store.header(root.id)!])[0].usage!;
+    assert.equal(summaryDuringAudit.requests,1);
+    assert.equal(summaryDuringAudit.input,4000);
+    assert.equal(summaryDuringAudit.knownCny,usageBeforeAudit.knownCny);
+    assert.equal(f.store.task(root.id)!.usage!.requests,1);
+    assert.equal(f.store.task(root.id)!.usage!.knownCny,usageBeforeAudit.knownCny);
+    const taskCountBeforeTick=f.store.tasks().length;
+    f.advance();
+    assert.equal(f.store.tasks().length,taskCountBeforeTick,'repeated ticks while waiting for full audit are idempotent');
+
+    // Once the final full-site audit completes with passed scores and scopeComplete !== false, optimization completes and retains cumulative usage.
+    f.store.usage.record(audit.id,{...incObservation,id:'audit-usage',raw:{input_tokens:2500,output_tokens:800,cached_input_tokens:0}});
+    audit.status='completed';audit.stopped=true;
+    audit.report={...f.report(audit,90,88),completeness:{manifestId:randomUUID(),manifestRevision:1,sourceComplete:true,state:'complete',checks:[]},review:{...incEval.report!.review!,mode:'targeted',scopeComplete:true,deferredAssessments:[],deferredRequirements:[],deferredPagePaths:[]}};
+    f.store.publishSiteReport(audit);f.store.put(audit);
+    assert.equal(targetReached(f.store.header(root.id)!,f.store.header(audit.id)!.report!),true);
+
+    root=f.advance();
+    assert.equal(root.optimization!.state,'completed');
+    assert.equal(f.store.currentReport(root)!.id,audit.id);
+    const finalSummaryUsage=f.store.summaries([f.store.header(root.id)!])[0].usage!;
+    assert.equal(finalSummaryUsage.requests,2,'workflow summary combines incremental evaluation and final audit usage');
+    assert.equal(finalSummaryUsage.input,6500);
+    assert.ok(finalSummaryUsage.knownCny>usageBeforeAudit.knownCny);
+    const result=(await f.app.inject({url:`/api/v1/automation/tasks/${root.id}/result`,headers:f.headers})).json();
+    assert.equal(result.ready,true);assert.equal(result.targetReached,true);assert.equal(result.reportId,audit.id);
   }finally{await f.close();}
 });

@@ -4,6 +4,7 @@ import { brief } from '../../shared/task-presentation.js';
 import type { TaskHeader } from './task-index.js';
 import { mergeUsage } from './billing.js';
 import { siteDeliveryStates, usageStageNames, type SiteDeliverySummary } from '../../shared/site-delivery.js';
+import { matchesDispositionFilter } from '../../shared/dispositions.js';
 import type { UsageBreakdownStage } from '../../shared/billing.js';
 import { generationStage } from '../../shared/generation-stage.js';
 import type { AutomationStore } from './store.js';
@@ -18,7 +19,7 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
   const tasks = store.headers(siteId), groups = new Map<string, TaskHeader[]>();
   if(siteId&&!tasks.length){const pending=store.header(siteId);if(pending&&!pending.generatedSiteId)tasks.push(pending);}
   const sites=store.sites().filter(site=>!siteId||site.id===siteId), resources=new Map(store.resources().map(resource=>[resource.id,resource]));
-  const siteMap=new Map(sites.map(site=>[site.id,site]));
+  const siteMap=new Map(sites.map(site=>[site.id,site])), dispositions=store.dispositions.map('delivery');
   const ledger=store.usage.grouped(siteId?tasks.map(task=>task.id):undefined);
   for (const task of tasks) {
     const key = task.generatedSiteId || task.id;
@@ -62,11 +63,13 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
     const ids = members.map(task => task.id), entries=ids.flatMap(taskId=>[...(ledger.get(taskId)?.values()||[])]), usage = mergeUsage(entries,ids.slice(1));
     const stages = (Object.keys(usageStageNames) as UsageBreakdownStage[]).map(stage => ({ stage, usage: mergeUsage(members.flatMap(task=>[...(ledger.get(task.id)?.entries()||[])].filter(([raw])=>generationStage(raw,task.optimizationRound)===stage).map(([,value])=>value)),ids.slice(1)) }));
     const detail = controller?.optimization ? controller : latest?.kind === 'evaluation' && latestGeneration?.evaluationTaskId !== latest.id ? latest : latestGeneration || latest;
+    const disposition = dispositions.get(id), resourceDisposition = resource?.disposition;
     return { id, generatedSiteId: site?.id || latest?.generatedSiteId || null, resourceId: resource?.id || latest!.resourceId,
       resourceName: resource?.name || latest?.resourceName || site?.name || '生成站', siteUrl: site?.url || latest?.siteUrl || '',
+      environmentId: site?.environmentId || latest?.environmentId || '',
       scenario: latest?.scenario || resource!.scenario, scope, detailTaskId: busy?.id && !controller?.optimization ? (busy.optimizationRootId || busy.id) : detail?.id || null,
       state, reason: brief(reason, 220), targetScore, report: report ? { ...report.summary, usage:mergeUsage(report.workflowIds.flatMap(taskId=>[...(ledger.get(taskId)?.values()||[])]),report.workflowIds.filter(taskId=>taskId!==report.id)), reportCurrent: true } : null,
-      usage, stages, taskCount: members.length, createdAt: site?.createdAt || latest!.createdAt,
+      usage, stages, ...(disposition ? { disposition } : {}), ...(resourceDisposition ? { resourceDisposition } : {}), taskCount: members.length, createdAt: site?.createdAt || latest!.createdAt,
       updatedAt: Math.max(site?.createdAt || 0, ...members.map(task => task.updatedAt)),
     };
   }).sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
@@ -76,11 +79,13 @@ export function registerSiteDeliveryApi(app: FastifyInstance, store: AutomationS
   registerSiteReportApi(app, store, threshold);
   const pagination = z.object({ page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20) });
   app.get('/api/automation/site-deliveries', async request => {
-    const query = pagination.extend({ q: z.string().max(300).default(''), state: z.enum(Object.keys(siteDeliveryStates) as [keyof typeof siteDeliveryStates, ...Array<keyof typeof siteDeliveryStates>]).optional(), site: z.string().uuid().optional() }).parse(request.query);
+    const query = pagination.extend({ q: z.string().max(300).default(''), state: z.enum(Object.keys(siteDeliveryStates) as [keyof typeof siteDeliveryStates, ...Array<keyof typeof siteDeliveryStates>]).optional(), disposition: z.enum(['active', 'completed', 'discarded', 'all']).default('active'), site: z.string().uuid().optional() }).parse(request.query);
     const needle = query.q.toLowerCase();
-    const rows = siteDeliveries(store, threshold(),query.site).filter(row => (!query.site || row.generatedSiteId === query.site) && (!query.state || row.state === query.state) && (!needle || [row.resourceName, row.siteUrl, row.id].join(' ').toLowerCase().includes(needle)));
+    const allRows = siteDeliveries(store, threshold(), query.site);
+    const activeTotal = allRows.filter(row => !row.disposition).length;
+    const rows = allRows.filter(row => matchesDispositionFilter(row.disposition, query.disposition) && (!query.site || row.generatedSiteId === query.site) && (!query.state || row.state === query.state) && (!needle || [row.resourceName, row.siteUrl, row.id].join(' ').toLowerCase().includes(needle)));
     const pages = Math.max(1, Math.ceil(rows.length / query.pageSize)), page = Math.min(query.page, pages);
-    return { items: rows.slice((page - 1) * query.pageSize, page * query.pageSize), page, pages, pageSize: query.pageSize, total: rows.length };
+    return { items: rows.slice((page - 1) * query.pageSize, page * query.pageSize), page, pages, pageSize: query.pageSize, total: rows.length, activeTotal };
   });
   app.get('/api/automation/site-deliveries/:id', async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);

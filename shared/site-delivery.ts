@@ -1,5 +1,6 @@
 import type { Scenario, Scope } from './automation.js';
 import type { UsageBreakdownStage, UsageSummary } from './billing.js';
+import type { ItemDisposition } from './dispositions.js';
 import { generationStageNames } from './generation-stage.js';
 import type { TaskSummary } from './task-presentation.js';
 
@@ -13,10 +14,12 @@ export const usageStageNames: Record<UsageBreakdownStage, string> = {
 };
 export interface SiteDeliverySummary {
   id: string; generatedSiteId: string | null; resourceId: string; resourceName: string;
-  siteUrl: string; scenario: Scenario; scope: Scope; detailTaskId: string | null;
+  siteUrl: string; environmentId: string; scenario: Scenario; scope: Scope; detailTaskId: string | null;
   state: keyof typeof siteDeliveryStates; reason: string; targetScore: number;
   report: TaskSummary | null; usage: UsageSummary;
   stages: { stage: UsageBreakdownStage; usage: UsageSummary }[];
+  disposition?: ItemDisposition;
+  resourceDisposition?: ItemDisposition;
   taskCount: number; createdAt: number; updatedAt: number;
 }
-export interface SiteDeliveryPage { items: SiteDeliverySummary[]; page: number; pages: number; total: number; pageSize: number }
+export interface SiteDeliveryPage { items: SiteDeliverySummary[]; page: number; pages: number; total: number; pageSize: number; activeTotal?: number }

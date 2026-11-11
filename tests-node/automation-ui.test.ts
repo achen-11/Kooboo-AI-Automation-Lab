@@ -91,6 +91,26 @@ test('execution history is paginated newest first and compact notices retain his
   } finally { await f.close(); }
 });
 
+test('execution recovery metadata follows the selected task and stop confirmation does not resume it', async () => {
+  const f = await fixture();
+  try {
+    f.child.stopped = false;
+    f.automationStore.interrupt(f.child, { reason: 'Original execution needs stop confirmation', evidence: ['retained'], attempted: [], nextSteps: ['Confirm stop then resume'], resumeFrom: 'Retain current site' });
+    const url = `/api/automation/tasks/${f.parent.id}/sections/execution?taskId=${f.child.id}`;
+    let result = (await f.app.inject({ url, headers: f.headers })).json();
+    assert.deepEqual(result.task, { id: f.child.id, status: 'interrupted', stopped: false });
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${f.child.id}/resume`, headers: f.headers })).statusCode, 409);
+    const confirmed = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${f.child.id}/confirm-stopped`, headers: f.headers });
+    assert.equal(confirmed.statusCode, 200, confirmed.body);
+    result = (await f.app.inject({ url, headers: f.headers })).json();
+    assert.deepEqual(result.task, { id: f.child.id, status: 'interrupted', stopped: true });
+    assert.equal(result.interruption.reason, 'Original execution needs stop confirmation');
+    const parent = (await f.app.inject({ url: `/api/automation/tasks/${f.parent.id}/sections/execution`, headers: f.headers })).json();
+    assert.deepEqual(parent.task, { id: f.parent.id, status: 'completed', stopped: true });
+    assert.equal((await f.app.inject({ url: url.replace(f.child.id, randomUUID()), headers: f.headers })).statusCode, 409);
+  } finally { await f.close(); }
+});
+
 test('a new full-site run preserves the earlier homepage scores as history without making them current-site results', async () => {
   const f = await fixture();
   try {

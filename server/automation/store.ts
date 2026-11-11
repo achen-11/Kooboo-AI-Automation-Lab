@@ -13,6 +13,7 @@ import { createAutonomousExecution } from '../../shared/autonomy.js';
 import { TimingLedger } from './timing.js';
 import { EvaluationExecutions } from './evaluation-execution.js';
 import { ResourceFolders } from './resource-folders.js';
+import { Dispositions } from './dispositions.js';
 
 const initialSop = `你是独立评测员，只做审查与取证，不修改目标站。
 先读取任务范围、资料和规则，形成应检查清单。PC 与移动端分别采集、查看截图并实际检查交互。
@@ -24,11 +25,13 @@ App 从需求提炼用户目标与实际流程，检查 UI 的合理性、信息
 
 export class AutomationStore {
   readonly resourceFolders:ResourceFolders;
+  readonly dispositions:Dispositions;
   readonly usage:UsageLedger;
   readonly timing:TimingLedger;
   readonly evaluations:EvaluationExecutions;
   constructor(readonly db: Database,private redact:(value:string)=>string=value=>value) {
     this.resourceFolders=new ResourceFolders(db);
+    this.dispositions=new Dispositions(db,redact);
     this.usage=new UsageLedger(db,id => this.header(id)?.optimizationRound || 0);
     this.timing=new TimingLedger(db,id => this.header(id)?.optimizationRound || 0);
     this.evaluations=new EvaluationExecutions(db);
@@ -75,8 +78,8 @@ export class AutomationStore {
     }
   }
   private all<T>(table: string, suffix = '', args: unknown[] = []): T[] { return this.db.prepare(`SELECT json FROM ${table} ${suffix}`).all(...args).map(row => JSON.parse(row.json)); }
-  resources() { const folders=this.resourceFolders.assignments();return this.all<Resource>('auto_resources').map(item=>({...item,folderId:folders.get(item.id)??null})).sort((a,b) => b.updatedAt-a.updatedAt); }
-  resource(id: string) { const item=this.all<Resource>('auto_resources','WHERE id=?',[id])[0];return item?{...item,folderId:this.resourceFolders.folderId(id)}:undefined; }
+  resources() { const folders=this.resourceFolders.assignments(),dispositions=this.dispositions.map('resource');return this.all<Resource>('auto_resources').map(item=>{const disposition=dispositions.get(item.id);return {...item,folderId:folders.get(item.id)??null,...(disposition?{disposition}:{})};}).sort((a,b) => b.updatedAt-a.updatedAt); }
+  resource(id: string) { const item=this.all<Resource>('auto_resources','WHERE id=?',[id])[0];if(!item)return undefined;const disposition=this.dispositions.get('resource',id);return {...item,folderId:this.resourceFolders.folderId(id),...(disposition?{disposition}:{})}; }
   versions(resourceId: string) { return this.all<InputVersion>('auto_versions','WHERE resource_id=?',[resourceId]).sort((a,b)=>b.revision-a.revision); }
   version(id: string) { return this.all<InputVersion>('auto_versions','WHERE id=?',[id])[0]; }
   saveResource(input: ResourceInput, id?: string, revision?: number): Resource {
@@ -96,18 +99,19 @@ export class AutomationStore {
       return resource;
     });
   }
-  sites(resourceId?: string) { return this.all<GeneratedSite>('auto_sites', resourceId?'WHERE resource_id=?':'',resourceId?[resourceId]:[]); }
-  site(id: string) { return this.all<GeneratedSite>('auto_sites','WHERE id=?',[id])[0]; }
+  sites(resourceId?: string) { const dispositions=this.dispositions.map('delivery');return this.all<GeneratedSite>('auto_sites', resourceId?'WHERE resource_id=?':'',resourceId?[resourceId]:[]).map(item=>{const disposition=dispositions.get(item.id);return disposition?{...item,disposition}:item;}); }
+  site(id: string) { const item=this.all<GeneratedSite>('auto_sites','WHERE id=?',[id])[0];if(!item)return undefined;const disposition=this.dispositions.get('delivery',id);return disposition?{...item,disposition}:item; }
   saveSite(site: GeneratedSite) {
     if(this.sites().some(s=>s.id!==site.id&&s.environmentId===site.environmentId&&s.siteId.toLowerCase()===site.siteId.toLowerCase()))throw new Conflict('这个 Kooboo 站点已经关联，不能重复绑定为另一个生成站');
-    this.db.prepare('INSERT INTO auto_sites VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(site.id,site.resourceId,JSON.stringify(site));
+    const {disposition:_ignored,...stored}=site;
+    this.db.prepare('INSERT INTO auto_sites VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(site.id,site.resourceId,JSON.stringify(stored));
   }
   rules() { return this.all<AutomationRule>('auto_rules').sort((a,b)=>a.createdAt-b.createdAt); }
   publish(input: Omit<AutomationRule,'id'|'createdAt'|'hash'>): AutomationRule {
     const rule = { ...input, id: randomUUID(), createdAt: Date.now(), hash: createHash('sha256').update(JSON.stringify(input)).digest('hex') };
     this.db.prepare('INSERT INTO auto_rules VALUES(?,?)').run(rule.id,JSON.stringify(rule)); return rule;
   }
-  workflowIds(task: AutomationTask): string[] { return [...new Set([task.id,...(task.evaluationTaskId?[task.evaluationTaskId]:[]),...(task.optimization?.rounds.flatMap(r=>[r.generationTaskId,...(r.evaluationTaskId?[r.evaluationTaskId]:[])])||[])])]; }
+  workflowIds(task: AutomationTask): string[] { return [...new Set([task.id,...(task.evaluationTaskId?[task.evaluationTaskId]:[]),...(task.optimization?.rounds.flatMap(r=>[r.generationTaskId,...(r.previousEvaluationTaskIds||[]),...(r.evaluationTaskId?[r.evaluationTaskId]:[])])||[])])]; }
   tasks() { const tasks=this.all<AutomationTask>('auto_tasks','ORDER BY created_at DESC, rowid DESC');return tasks.map(t=>({...t,usage:this.usage.summary(t.id,this.workflowIds(t).filter(id=>id!==t.id))})); }
   task(id: string, includeUsage=true) { const task=this.all<AutomationTask>('auto_tasks','WHERE id=?',[id])[0];if(task&&includeUsage)task.usage=this.usage.summary(id,this.workflowIds(task).filter(value=>value!==id));return task; }
   headers(siteId?: string) { return this.all<TaskHeader>('auto_task_index',`${siteId ? 'WHERE site_key=? ' : ''}ORDER BY created_at DESC, rowid DESC`,siteId?[siteId]:[]); }
@@ -121,10 +125,10 @@ export class AutomationStore {
     // Workflow membership is persisted in the compact projection, including every repair round.
     const children=new Map(headers.map(h=>[h.id,h.workflowIds]));
     for(const values of children.values())for(const id of values)ids.add(id);
-    const usage=this.usage.grouped([...ids]);
+    const usage=this.usage.grouped([...ids]),dispositions=this.dispositions.map('delivery');
     return headers.map(header=>{
-      const members=children.get(header.id)!;
-      return {...header.summary,usage:mergeUsage(members.flatMap(id=>[...(usage.get(id)?.values()||[])]),members.filter(id=>id!==header.id))};
+      const members=children.get(header.id)!,disposition=dispositions.get(header.generatedSiteId||header.id);
+      return {...header.summary,...(disposition?{disposition}:{}),usage:mergeUsage(members.flatMap(id=>[...(usage.get(id)?.values()||[])]),members.filter(id=>id!==header.id))};
     });
   }
   currentReportHeader(task: TaskHeader) {
@@ -136,7 +140,7 @@ export class AutomationStore {
     return source;
   }
   reflectionCandidates() {
-    return this.db.prepare('SELECT h.id FROM auto_task_index h WHERE h.reflection_key IS NOT NULL AND NOT EXISTS(SELECT 1 FROM auto_learning_runs r WHERE r.key=h.reflection_key)').all().map(row=>row.id as string);
+    return this.db.prepare("SELECT h.id FROM auto_task_index h WHERE h.reflection_key IS NOT NULL AND NOT EXISTS(SELECT 1 FROM auto_learning_runs r WHERE r.key=h.reflection_key) AND NOT EXISTS(SELECT 1 FROM auto_dispositions d WHERE d.kind='delivery' AND d.target_id=COALESCE(h.site_key,h.id) AND d.state='discarded')").all().map(row=>row.id as string);
   }
   root(task: AutomationTask) {
     if(task.optimizationRootId)return this.task(task.optimizationRootId);
@@ -181,7 +185,7 @@ export class AutomationStore {
   domainReserved(siteId: string | null) {
     return !!siteId&&!!this.db.prepare('SELECT site_id FROM auto_site_domain_locks WHERE site_id=? AND expires_at>?').get(siteId,Date.now());
   }
-  migrationReadReserved(task: AutomationTask) {
+  migrationReadReserved(task: Pick<AutomationTask, 'generatedSiteId'>) {
     return !!task.generatedSiteId&&!!this.db.prepare('SELECT site_id FROM auto_migration_read_locks WHERE site_id=? AND expires_at>?').get(task.generatedSiteId,Date.now());
   }
   put(task: AutomationTask, resumeOptimization=false) {
@@ -209,6 +213,8 @@ export class AutomationStore {
       if(!version||version.resourceId!==id)throw new Conflict('输入版本不属于当前资源');
       const site = input.generatedSiteId ? this.site(input.generatedSiteId) : undefined;
       if (input.generatedSiteId && (!site || site.resourceId !== id)) throw new Conflict('所选生成站不属于当前资源');
+      if (site?.disposition) throw new Conflict('所选生成站已归档，请先移回在列后再发起任务');
+      if (!site && !input.parentId && resource.disposition) throw new Conflict('所选资源已归档，请先移回在列后再创建任务');
       if (input.kind==='evaluation' && !site) throw new Conflict('评测必须选择一个已有生成站');
       if(input.optimization&&(input.kind!=='generation'||!supportsAutomaticOptimization(version.scenario)))throw new Conflict('自动优化仅支持 AI Site 模板、迁移与升级生成');
       const kind = version.scenario==='app-template'?'app':'site';
@@ -294,6 +300,15 @@ export class AutomationStore {
   readAllNotices() {
     const readAt=Date.now();
     this.db.prepare("UPDATE auto_notifications SET json=json_set(json,'$.readAt',?) WHERE json_extract(json,'$.readAt') IS NULL").run(readAt);
+    return readAt;
+  }
+  readTaskNotices(taskIds: readonly string[]) {
+    if(!taskIds.length)return 0;
+    const readAt=Date.now();
+    for(let i=0;i<taskIds.length;i+=400){
+      const chunk=taskIds.slice(i,i+400),marks=chunk.map(()=>'?').join(',');
+      this.db.prepare(`UPDATE auto_notifications SET json=json_set(json,'$.readAt',?) WHERE task_id IN (${marks}) AND json_extract(json,'$.readAt') IS NULL`).run(readAt,...chunk);
+    }
     return readAt;
   }
   scheduleFollowup(task:AutomationTask,policy:FollowupSettings,reset=false) {

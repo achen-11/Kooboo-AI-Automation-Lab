@@ -1,7 +1,16 @@
 import type { AutomationReport, AutomationTask, TaskStatus, OptimizationPolicy, OptimizationRun } from './automation.js';
+import type { ItemDisposition } from './dispositions.js';
 export interface OptimizationSummary { state: OptimizationRun['state']; policy: Omit<OptimizationPolicy,'sop'>; round: number; activeTaskId: string; reportId: string | null; reason: string; nextStep: string }
 
 export type TaskTab = 'overview' | 'report' | 'execution' | 'usage' | 'input' | 'delivery';
+export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'>;
+export type TaskRecoveryAction = 'resume' | 'confirm-stopped';
+export function taskRecoveryAction(task?: TaskRecoveryTarget): TaskRecoveryAction | null {
+  if (!task) return null;
+  if (task.stopped === true && ['pending', 'failed', 'interrupted', 'cancelled'].includes(task.status)) return 'resume';
+  if (task.stopped === false && ['pending', 'interrupted'].includes(task.status)) return 'confirm-stopped';
+  return null;
+}
 export type DeliveryTask = Pick<AutomationTask, 'id' | 'kind' | 'environmentId' | 'status' | 'delivery'> & { report: Pick<AutomationReport, 'quality'> | null };
 export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'resourceName' | 'scenario' | 'scope' | 'environmentId' | 'generatedSiteId' | 'parentId' | 'evaluationTaskId' | 'stage' | 'status' | 'stopped' | 'createdAt' | 'updatedAt' | 'siteUrl' | 'usage'> & {
   report: (Pick<AutomationReport, 'quality' | 'scores'> & { issueCount: number; unverifiedCount: number }) | null;
@@ -16,8 +25,9 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   completionFirst?: boolean;
   hardMaxRounds?: number;
   delivery?: Pick<NonNullable<AutomationTask['delivery']>, 'status'>;
+  disposition?: ItemDisposition;
 };
-export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; latest: { seq: number; time: number; message: string; taskId: string } | null }
+export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; disposition?: ItemDisposition; resourceDisposition?: ItemDisposition; latest: { seq: number; time: number; message: string; taskId: string } | null }
 export interface CompactNotice { id: string; taskId: string; resourceName: string; title: string; summary: string; tab: TaskTab; createdAt: number; readAt: number | null; currentStatus?: TaskStatus; superseded: boolean }
 export interface NoticePage<T = CompactNotice> { items: T[]; total: number; unread: number; page: number; pages: number; pageSize: number }
 

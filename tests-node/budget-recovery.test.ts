@@ -161,7 +161,7 @@ test('recovery rejects active execution and learning before altering reservation
   } finally { await f.close(); }
 });
 
-test('retaining unknown requests never hides missing costs or bypasses a workflow monetary cap', async () => {
+test('missing costs stay recorded without blocking approximate workflow spending', async () => {
   const f = await fixture();
   try {
     f.reserve();
@@ -169,7 +169,50 @@ test('retaining unknown requests never hides missing costs or bypasses a workflo
     task.optimization.policy.maxCostCny = 100; f.store.put(task);
     const result = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${task.id}/resume`, headers: f.headers });
     assert.equal(result.statusCode, 200);
-    assert.match(optimizationBudgetReason(f.store.task(task.id)!, f.store), /费用尚未完整核算/);
+    assert.equal(optimizationBudgetReason(f.store.task(task.id)!, f.store), '');
     assert.equal(f.store.usage.summary(task.id).missing, 1);
+  } finally { await f.close(); }
+});
+
+test('cancelled tasks restart cleanly: never-started generations queue directly, delivered generations inspect via followup, and same-site conflicts or stale revisions reject', async () => {
+  const f = await fixture();
+  try {
+    const fresh = f.store.create({ resourceIds: [f.task.resourceId], kind: 'generation', scope: 'homepage', environmentId: '', rootDomain: 'localkooboo.com', requirements: '' }, f.vault.automation())[0];
+    const cancelled = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${fresh.id}/cancel`, headers: f.headers });
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+    assert.equal(f.store.task(fresh.id)!.status, 'cancelled');
+    const restarted = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${fresh.id}/resume`, headers: f.headers });
+    assert.equal(restarted.statusCode, 200, restarted.body);
+    const savedFresh = f.store.task(fresh.id)!;
+    assert.equal(savedFresh.status, 'queued');
+    assert.equal(savedFresh.followup, undefined);
+    assert.equal(savedFresh.generation?.rootDomain, 'localkooboo.com');
+
+    // Delivered generation cancelled after stopping must go through followup inspection, never blind initial replay:
+    const delivered = f.store.task(f.task.id)!;
+    delivered.status = 'cancelled'; delivered.stopped = true;
+    delivered.optimization!.state = 'stopped'; delivered.optimization!.stoppedAt = Date.now();
+    delivered.generation = { prepared: true, createAttempted: true, deliveryId: randomUUID(), deliveryState: 'accepted', conversationId: randomUUID() };
+    delete delivered.followup;
+    f.store.put(delivered, true);
+
+    // Conflict if another unstopped execution exists on the same site:
+    const publishedRule = f.store.publish({ name: 'Rule', kind: 'site', scenarios: ['upgrade'], sop: 'check', references: '', criteria: [{ id: 'layout', label: 'Layout', weight: 100, instruction: 'check', required: true, viewports: ['desktop'], scopes: ['homepage'] }] });
+    const blocker = f.store.create({ resourceIds: [f.task.resourceId], kind: 'evaluation', scope: 'homepage', environmentId: '', generatedSiteId: delivered.generatedSiteId!, ruleId: publishedRule.id, requirements: '' }, f.vault.automation())[0];
+    blocker.status = 'running'; blocker.stopped = false; f.store.put(blocker);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${delivered.id}/resume`, headers: f.headers })).statusCode, 409);
+    blocker.status = 'cancelled'; blocker.stopped = true; blocker.siteRevision = 'old-revision'; f.store.put(blocker);
+
+    // Delivered generation resumes into following-up:
+    const resumedDelivered = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${delivered.id}/resume`, headers: f.headers });
+    assert.equal(resumedDelivered.statusCode, 200, resumedDelivered.body);
+    assert.equal(f.store.task(delivered.id)!.status, 'following-up');
+    const afterResume = f.store.task(delivered.id)!;
+    afterResume.status = 'completed'; afterResume.stopped = true; afterResume.followup!.state = 'resolved';
+    afterResume.optimization!.state = 'stopped'; afterResume.optimization!.stoppedAt = Date.now();
+    afterResume.siteRevision = 'newer-revision'; f.store.beginSiteChange(afterResume); f.store.put(afterResume, true);
+
+    // Stale cancelled evaluation cannot resume after siteRevision advanced:
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${blocker.id}/resume`, headers: f.headers })).statusCode, 409);
   } finally { await f.close(); }
 });

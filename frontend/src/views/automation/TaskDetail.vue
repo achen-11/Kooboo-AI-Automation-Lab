@@ -1,14 +1,17 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { ArrowLeft, ArrowUpRight, ExternalLink, Ban, Play, FileText, Send, X, LoaderCircle, MoreHorizontal, CircleAlert, Check, Clock3, Download, Link } from '@lucide/vue';
+import { ArrowLeft, ArrowUpRight, ExternalLink, Ban, Play, FileText, Send, X, LoaderCircle, MoreHorizontal, CircleAlert, Check, Clock3, Download, Link, RotateCcw, Trash2 } from '@lucide/vue';
 import { scenarios, taskStatusNames, optimizationStateNames, supportsAutomaticOptimization, type AutomationTask, type AutomationSettings, type Resource, type GeneratedSite } from '../../../../shared/automation';
-import { initialTaskTab, stageNames, type TaskSnapshot, type TaskTab } from '../../../../shared/task-presentation';
+import { dispositionStateNames, type DispositionState } from '../../../../shared/dispositions';
+import { initialTaskTab, stageNames, taskRecoveryAction, type TaskSnapshot, type TaskTab } from '../../../../shared/task-presentation';
 import { api, formatDate, go, message } from '../../api';
 import { notify } from '../../lib/notifications';
 import { siteReportLink } from '../../lib/site-reports';
 import TaskUsage from '../../components/TaskUsage.vue';
+import EnvironmentName from '../../components/EnvironmentName.vue';
 import SiteTaskUsage from './SiteTaskUsage.vue';
 import TaskExecution from './TaskExecution.vue';
+import TaskRecoveryActions from './TaskRecoveryActions.vue';
 import TaskInput from './TaskInput.vue';
 import TaskReport from './TaskReport.vue';
 import SiteReports from './SiteReports.vue';
@@ -18,6 +21,7 @@ import TaskCollection from './TaskCollection.vue';
 import CreateTaskDialog from './CreateTaskDialog.vue';
 import DiagnosticExportDialog from './DiagnosticExportDialog.vue';
 import SiteDomainDialog from './SiteDomainDialog.vue';
+import DispositionDialog from './DispositionDialog.vue';
 import { useTaskSection } from './use-task-section';
 import { scopeName, workspace } from './common';
 const props = defineProps<{ id: string }>();
@@ -36,12 +40,36 @@ async function openOptimization(){more.value?.removeAttribute('open');if(busy.va
 async function enableOptimization(){if(!task.value||busy.value)return;busy.value=true;actionError.value='';try{await api(`/automation/tasks/${task.value.id}/optimize`,{method:'POST',body:JSON.stringify({targetScore:optimizeScore.value,maxRounds:optimizeRounds.value,maxCostCny:optimizeCost.value===''?null:Number(optimizeCost.value)})});optimizeDialog.value?.close();notify.success('已开启自动优化');await load();}catch(reason){actionError.value=message(reason);}finally{busy.value=false;}}
 const followDialog = ref<HTMLDialogElement>(), more = ref<HTMLDetailsElement>();
 const diagnosticDialog = ref<InstanceType<typeof DiagnosticExportDialog>>();
+const execution = ref<InstanceType<typeof TaskExecution>>();
 const domainDialog = ref<InstanceType<typeof SiteDomainDialog>>();
+const dispositionDialog = ref<InstanceType<typeof DispositionDialog>>();
+const disposition = computed(() => data.value?.disposition);
+const resourceDisposition = computed(() => data.value?.resourceDisposition);
+const deliveryUnitId = computed(() => task.value ? (task.value.generatedSiteId || task.value.id) : '');
 function openDomain() { more.value?.removeAttribute('open'); if(task.value?.generatedSiteId)void domainDialog.value?.open(task.value.generatedSiteId); }
 function openDiagnostic() { more.value?.removeAttribute('open'); void diagnosticDialog.value?.open(); }
-const canRecover = computed(() => current.value?.stopped && ['pending', 'failed', 'interrupted'].includes(current.value.status));
+function openDisposition(nextState: DispositionState) {
+  more.value?.removeAttribute('open');
+  if (!task.value || !deliveryUnitId.value) return;
+  dispositionDialog.value?.open({
+    kind: 'delivery',
+    ids: [deliveryUnitId.value],
+    state: nextState,
+    label: task.value.resourceName,
+    canCascadeResources: nextState === 'completed'
+      ? resourceDisposition.value?.state !== 'completed'
+      : nextState === 'active'
+        ? Boolean(resourceDisposition.value)
+        : false,
+    defaultCascadeResources: nextState === 'completed' || (disposition.value?.state === 'completed' && resourceDisposition.value?.state === 'completed'),
+  });
+}
+async function onDispositionSaved() { await load(); siteRefresh.value++; }
+const canRecover = computed(() => !disposition.value && taskRecoveryAction(current.value) === 'resume');
 const canCancel = computed(() => current.value && (!current.value.stopped || ['queued', 'following-up'].includes(current.value.status)) && !['completed', 'failed', 'cancelled', 'interrupted'].includes(current.value.status));
-const canCreateRound = computed(() => !optimizationActive.value && (!data.value?.active||data.value.active.stopped&&!['queued','running','following-up','cancelling'].includes(data.value.active.status)) && task.value?.stopped && task.value.generatedSiteId && !['queued', 'running', 'following-up', 'cancelling'].includes(task.value.status) && (!evaluation.value || evaluation.value.stopped && !['queued', 'running', 'following-up', 'cancelling'].includes(evaluation.value.status)));
+const canCreateRound = computed(() => !disposition.value && !optimizationActive.value && (!data.value?.active||data.value.active.stopped&&!['queued','running','following-up','cancelling'].includes(data.value.active.status)) && task.value?.stopped && task.value.generatedSiteId && !['queued', 'running', 'following-up', 'cancelling'].includes(task.value.status) && (!evaluation.value || evaluation.value.stopped && !['queued', 'running', 'following-up', 'cancelling'].includes(evaluation.value.status)));
+const canArchiveComplete = computed(() => disposition.value?.state !== 'completed' && !optimizationActive.value && !canCancel.value && Boolean(task.value?.stopped && (!evaluation.value || evaluation.value.stopped) && (!data.value?.active || data.value.active.stopped)));
+const canArchiveDiscard = computed(() => disposition.value?.state !== 'discarded' && Boolean(task.value && (task.value.stopped || task.value.status === 'queued') && current.value?.stopped !== false && !['running', 'cancelling', 'following-up'].includes(current.value?.status || '')));
 const canContinue = computed(() => canCreateRound.value && !canRecover.value && task.value?.kind === 'generation' && task.value.status === 'completed');
 const continueDialog = ref<InstanceType<typeof CreateTaskDialog>>();
 const continueResources = ref<Resource[]>([]), continueSite = ref<GeneratedSite>();
@@ -86,8 +114,9 @@ async function tabKey(event: KeyboardEvent, index: number) {
 }
 async function action(suffix: string, id = current.value?.id) {
   if (!id || busy.value) return;
+  const restarting = suffix === 'resume' && current.value?.id === id && current.value?.status === 'cancelled';
   busy.value = true; actionError.value = '';
-  try { await api(`/automation/tasks/${id}/${suffix}`, { method: 'POST' }); notify.success(suffix === 'resume' ? '已交给 AI 继续跟进' : ['cancel','optimization/stop'].includes(suffix) ? '已提交停止请求' : '已确认原执行停止'); await load(); }
+  try { await api(`/automation/tasks/${id}/${suffix}`, { method: 'POST' }); notify.success(suffix === 'resume' ? (restarting ? '已重新启动任务' : '已提交恢复请求') : ['cancel','optimization/stop'].includes(suffix) ? '已提交停止请求' : '已确认原执行停止'); await load(); if (suffix === 'resume' || suffix === 'confirm-stopped') await execution.value?.refresh(); }
   catch (reason) { actionError.value = message(reason); }
   finally { busy.value = false; }
 }
@@ -112,16 +141,18 @@ onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange
   <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
   <p v-if="loading && !task" class="section-loading"><LoaderCircle class="spin" :size="18" />正在加载任务…</p>
   <template v-if="task">
-    <header class="page-header task-detail-header"><div class="task-heading"><h1>{{ task.resourceName }}</h1><p>{{ scenarios[task.scenario] }} · {{ task.kind === 'generation' ? '生成任务' : '评测任务' }} · {{ scopeName(task.scope) }} <span class="status-badge task-header-status" :class="current?.status">{{ task.optimization && !(task.optimization.state==='waiting-evaluation'&&task.optimization.activeTaskId===task.id) ? optimizationStateNames[task.optimization.state] : current ? taskStatusNames[current.status] : taskStatusNames[task.status] }}</span></p></div><div class="toolbar-actions task-header-actions">
+    <header class="page-header task-detail-header"><div class="task-heading"><h1>{{ task.resourceName }}</h1><div class="task-metadata"><span class="task-meta-tag">{{ scenarios[task.scenario] }}</span><span class="task-meta-tag">{{ task.kind === 'generation' ? '生成任务' : '评测任务' }}</span><span class="task-meta-tag">{{ scopeName(task.scope) }}</span><EnvironmentName class="task-meta-tag" :environment-id="task.environmentId" /><span class="status-badge task-header-status" :class="current?.status">{{ task.optimization && !(task.optimization.state==='waiting-evaluation'&&task.optimization.activeTaskId===task.id) ? optimizationStateNames[task.optimization.state] : current ? taskStatusNames[current.status] : taskStatusNames[task.status] }}</span><span v-if="disposition" class="task-meta-tag disposition-tag" :class="disposition.state" :title="disposition.note ? `${dispositionStateNames[disposition.state]}：${disposition.note}` : dispositionStateNames[disposition.state]">已归档 · {{ dispositionStateNames[disposition.state] }}</span></div><p v-if="disposition?.note" class="task-disposition-note">归档说明：{{ disposition.note }}</p></div><div class="toolbar-actions task-header-actions">
       <a v-if="task.siteUrl" class="button secondary" :href="task.siteUrl" target="_blank" rel="noopener noreferrer"><ExternalLink :size="16" />打开站点</a>
-      <button v-if="canRecover" class="button primary" :disabled="busy" @click="action('resume')"><Play :size="16" />恢复任务</button>
+      <button v-if="disposition" class="button secondary" :disabled="busy" @click="openDisposition('active')"><RotateCcw :size="16" />移回在列</button>
+      <TaskRecoveryActions v-if="!disposition || current?.stopped === false" :task="current" :busy="busy" @action="action" />
       <button v-if="canContinue" class="button primary" :disabled="busy" @click="openContinuation"><LoaderCircle v-if="busy" class="spin" :size="16" /><Send v-else :size="16" />{{ task.scope === 'homepage' ? '补全全站' : '继续生成' }}</button>
       <button v-if="!canRecover && report && tab !== 'report'" class="button" :class="canContinue ? 'secondary' : 'primary'" @click="selectTab('report')"><FileText :size="16" />查看评测结果</button>
       <button v-else-if="!canRecover && canCreateRound && !evaluation && task.kind === 'generation'" class="button" :class="canContinue ? 'secondary' : 'primary'" :disabled="busy || !task.siteUrl" @click="followup('evaluation')"><FileText :size="16" />发起评测</button>
       <button v-if="optimizationActive" class="button secondary" :disabled="busy||current?.status==='cancelling'" @click="action('optimization/stop',task.id)"><Ban :size="16" />停止优化</button>
       <button v-else-if="canCancel" class="button secondary" :disabled="busy || current?.status === 'cancelling'" @click="action('cancel')"><Ban :size="16" />{{ current?.status === 'cancelling' ? '正在停止' : '取消任务' }}</button>
-      <details ref="more" class="task-more"><summary class="button secondary"><MoreHorizontal :size="17" /><span>更多</span></summary><div class="task-action-menu"><template v-if="canCreateRound"><button v-if="canEnableOptimization" @click="openOptimization"><Play :size="15" />自动优化到目标</button><button v-if="!canContinue" @click="followup('generation')"><Send :size="15" />提交生成跟进</button><button :disabled="!task.siteUrl" @click="followup('evaluation')"><FileText :size="15" />{{ report ? '重新评测' : '发起评测' }}</button></template><button v-if="task.generatedSiteId" @click="openDomain"><Link :size="15" />换绑域名</button><button @click="openDiagnostic"><Download :size="15" />导出排障包</button></div></details>
+      <details ref="more" class="task-more"><summary class="button secondary"><MoreHorizontal :size="17" /><span>更多</span></summary><div class="task-action-menu"><template v-if="canCreateRound"><button v-if="canEnableOptimization" @click="openOptimization"><Play :size="15" />自动优化到目标</button><button v-if="!canContinue" @click="followup('generation')"><Send :size="15" />提交生成跟进</button><button :disabled="!task.siteUrl" @click="followup('evaluation')"><FileText :size="15" />{{ report ? '重新评测' : '发起评测' }}</button></template><button v-if="canArchiveComplete" @click="openDisposition('completed')"><Check :size="15" />标记为已完成</button><button v-if="canArchiveDiscard" @click="openDisposition('discarded')"><Trash2 :size="15" />舍弃此任务</button><button v-if="disposition" @click="openDisposition('active')"><RotateCcw :size="15" />移回在列</button><button v-if="task.generatedSiteId && !disposition" @click="openDomain"><Link :size="15" />换绑域名</button><button @click="openDiagnostic"><Download :size="15" />导出排障包</button></div></details>
     </div></header>
+    <DispositionDialog ref="dispositionDialog" @saved="onDispositionSaved" />
     <SiteDomainDialog ref="domainDialog" @saved="load" />
     <CreateTaskDialog ref="continueDialog" :resources="continueResources" :site="continueSite" />
     <DiagnosticExportDialog :key="task.id" ref="diagnosticDialog" :task-id="task.id" />
@@ -133,17 +164,17 @@ onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange
         <SiteDeliveryPanel v-if="task.generatedSiteId" :site-id="task.generatedSiteId" :revision="revision + ':' + siteRefresh" />
         <section v-if="task.optimization" class="panel settings-panel"><div class="section-heading"><h2>{{optimizationStateNames[task.optimization.state]}}</h2><span>修复 {{task.optimization.round}}<template v-if="!task.completionFirst || task.hardMaxRounds"> / {{task.hardMaxRounds ?? task.optimization.policy.maxRounds}}</template><template v-else> · 持续至质量达标</template></span></div><p class="task-prose">双端目标 {{task.optimization.policy.targetScore}} 分<span v-if="task.optimization.policy.maxCostCny!==null"> · 费用上限 ¥ {{task.optimization.policy.maxCostCny}}</span></p><p v-if="!report" class="task-prose">当前版本待完成独立评测，历史分数请在评测结果中查看。</p><p v-if="task.optimization.reason" class="task-prose">{{task.optimization.reason}}</p><p v-if="task.optimization.nextStep" class="task-prose">下一步：{{task.optimization.nextStep}}</p></section>
         <section class="panel settings-panel"><div class="section-heading"><h2>流程进展</h2><span class="text-muted small-text">{{ formatDate(task.createdAt) }} 创建</span></div><div class="task-workflow"><div class="workflow-stage"><span class="workflow-stage-icon" :class="task.status"><Check v-if="task.status === 'completed'" :size="18" /><LoaderCircle v-else-if="['running', 'following-up'].includes(task.status)" class="spin" :size="18" /><CircleAlert v-else-if="task.attention" :size="18" /><Clock3 v-else :size="18" /></span><div><strong>{{ task.kind === 'generation' ? '站点生成' : '独立评测' }}</strong><p>{{ taskStatusNames[task.status] }}</p></div></div><template v-if="task.kind === 'generation'"><div class="workflow-connector" /><div class="workflow-stage"><span class="workflow-stage-icon" :class="evaluation?.status"><Check v-if="evaluation?.status === 'completed'" :size="18" /><LoaderCircle v-else-if="evaluation && ['running', 'following-up'].includes(evaluation.status)" class="spin" :size="18" /><CircleAlert v-else-if="evaluation?.attention" :size="18" /><Clock3 v-else :size="18" /></span><div><strong>独立评测</strong><p>{{ evaluation ? taskStatusNames[evaluation.status] : task.status === 'completed' ? '尚未发起' : '等待生成完成' }}</p></div></div></template></div><p v-if="current?.status === 'following-up'" class="task-overview-note">AI 正在跟进{{ stageNames[current.stage || ''] || '当前阶段' }}，系统会继续执行并保留结果。</p></section>
-        <section v-if="current?.attention" class="panel settings-panel task-section-stack"><div class="section-heading"><h2>需要处理</h2><span class="status-badge" :class="current.status">{{ taskStatusNames[current.status] }}</span></div><p class="task-prose">{{ current.attention }}</p><p v-if="current.nextStep" class="task-prose"><strong>下一步：</strong>{{ current.nextStep }}</p><div class="task-actions"><button v-if="current.stopped" class="button primary" :disabled="busy" @click="action('resume')"><Play :size="16" />交给 AI 恢复</button><button v-else class="button secondary" :disabled="busy" @click="action('confirm-stopped')">已检查并确认原执行停止</button><a v-if="current.id !== task.id" class="text-action" :href="`#/tasks/${current.id}?tab=execution`">查看评测中断详情<ArrowUpRight :size="14" /></a><button v-else class="text-action" @click="selectTab('execution')">查看完整原因与处理记录<ArrowUpRight :size="14" /></button></div><p v-if="!current.stopped" class="text-muted small-text">请先检查原会话或执行进程，确认停止后再恢复。</p></section>
+        <section v-if="current?.attention" class="panel settings-panel task-section-stack"><div class="section-heading"><h2>需要处理</h2><span class="status-badge" :class="current.status">{{ taskStatusNames[current.status] }}</span></div><p class="task-prose">{{ current.attention }}</p><p v-if="current.nextStep" class="task-prose"><strong>下一步：</strong>{{ current.nextStep }}</p><div class="task-actions"><TaskRecoveryActions :task="current" :busy="busy" @action="action" /><a v-if="current.id !== task.id" class="text-action" :href="`#/tasks/${current.id}?tab=execution`">查看评测中断详情<ArrowUpRight :size="14" /></a><button v-else class="text-action" @click="selectTab('execution')">查看完整原因与处理记录<ArrowUpRight :size="14" /></button></div><p v-if="!current.stopped" class="text-muted small-text">请先检查原会话或执行进程，确认停止后再恢复。</p></section>
         <section v-if="report" class="panel settings-panel"><div class="section-heading"><h2>本次任务评测</h2><button class="text-action" @click="openTaskReport">查看完整报告<ArrowUpRight :size="14" /></button></div><div class="overview-results"><strong :class="report.quality === 'passed' ? 'success-text' : 'warning-text'">{{ qualities[report.quality] }}</strong><div v-for="score in report.scores" :key="score.viewport"><span>{{ viewportNames[score.viewport] || score.viewport }}</span><strong>{{ score.value ?? '未验证' }}</strong></div></div><p class="task-overview-note">{{ report.issueCount }} 个问题 · {{ report.unverifiedCount }} 项未验证</p></section>
         <section class="panel settings-panel"><div class="section-heading"><h2>最新进展</h2><a v-if="data?.latest && data.latest.taskId !== task.id" class="text-action" :href="'#/tasks/' + data.latest.taskId + '?tab=execution'">查看执行记录<ArrowUpRight :size="14" /></a><button v-else class="text-action" @click="selectTab('execution')">查看执行记录<ArrowUpRight :size="14" /></button></div><p class="task-prose">{{ task.optimization ? (task.optimization.reason||optimizationStateNames[task.optimization.state]) : evaluation?.status === 'completed' && report ? '生成与独立评测均已结束，报告和证据已保存。' : task.kind === 'evaluation' && report ? '本轮评测已结束，报告和证据已保存。' : data?.latest?.message || '任务已创建，等待执行。' }}</p><div class="task-related-links"><a :href="`#/resources/${task.resourceId}`">查看资源<ArrowUpRight :size="14" /></a><a v-if="evaluation" :href="`#/tasks/${evaluation.id}?tab=report`">关联评测任务<ArrowUpRight :size="14" /></a><a v-if="task.parentId" :href="`#/tasks/${task.parentId}`">上一轮任务<ArrowUpRight :size="14" /></a></div></section>
         <section v-if="!task.generatedSiteId" class="panel settings-panel"><div class="section-heading"><h2>费用摘要</h2><button class="text-action" @click="selectTab('usage')">查看用量费用<ArrowUpRight :size="14" /></button></div><p class="overview-cost">{{ task.usage?.priced ? '¥ ' + task.usage.knownCny.toFixed(4) : '—' }}<span>按用量估算</span></p></section>
       </template>
       <SiteReports v-else-if="tab === 'report' && task.generatedSiteId" :key="task.generatedSiteId" :task-id="task.id" :site-id="task.generatedSiteId" :task-kind="task.kind" :revision="revision + ':' + siteRefresh" :detail-revision="reportRevision" />
       <TaskReport v-else-if="tab === 'report'" :task-id="task.id" :revision="reportRevision" />
-      <TaskExecution v-else-if="tab === 'execution'" :task-id="task.id" :updated-at="data?.active?.updatedAt||task.updatedAt" />
+      <TaskExecution v-else-if="tab === 'execution'" ref="execution" :task-id="task.id" :task="task" :busy="busy" :updated-at="data?.active?.updatedAt||task.updatedAt" @action="action" />
       <SiteTaskUsage v-else-if="tab === 'usage' && task.generatedSiteId" :task-id="task.id" :site-id="task.generatedSiteId" :revision="revision + ':' + siteRefresh" />
       <TaskUsage v-else-if="tab === 'usage'" :task-id="task.id" :summary="task.usage" />
-      <TaskInput v-else-if="tab === 'input'" :task-id="task.id" :resource-id="task.resourceId" :scope="task.scope" />
+      <TaskInput v-else-if="tab === 'input'" :task-id="task.id" :resource-id="task.resourceId" :scope="task.scope" :kind="task.kind" :revision="revision" />
       <TaskDeliverySection v-else-if="tab === 'delivery' && data?.deliveryEnabled" :task-id="task.id" :revision="revision" @changed="load" />
       <section v-else class="panel empty-state"><h2>此任务未启用交付</h2><button class="text-action" @click="selectTab('overview')">返回概览</button></section>
     </div>
@@ -151,3 +182,12 @@ onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange
     <dialog ref="followDialog" class="modal"><form @submit.prevent="submit"><div class="modal-head"><h2>{{ followKind === 'evaluation' ? '发起新一轮评测' : '提交生成跟进' }}</h2><button type="button" class="icon-button" aria-label="关闭" :disabled="busy" @click="followDialog?.close()"><X :size="20" /></button></div><p class="text-muted">在当前生成站创建新一轮任务，保留原任务及报告。</p><label class="field"><span>{{ followKind === 'evaluation' ? '评测要求' : '跟进消息' }}</span><textarea v-model="requirements" class="input" rows="6" required /></label><p v-if="actionError" class="alert error">{{ actionError }}</p><div class="modal-actions"><button type="button" class="button secondary" :disabled="busy" @click="followDialog?.close()">取消</button><button class="button primary" :disabled="busy"><LoaderCircle v-if="busy" class="spin" :size="16" /><Send v-else :size="16" />加入队列</button></div></form></dialog>
   </template>
 </template>
+
+<style scoped>
+.task-metadata{display:flex;align-items:center;flex-wrap:wrap;gap:8px;margin-top:10px}
+.task-meta-tag{display:inline-flex;align-items:center;max-width:100%;padding:4px 9px;border:1px solid var(--line);border-radius:6px;background:var(--paper);color:var(--muted);font-size:12px;font-weight:500;line-height:1.5;overflow-wrap:anywhere}
+.task-metadata>.task-header-status{margin-left:0}
+.disposition-tag.completed{border-color:#bde6d5;background:#eaf7f1;color:#16765d}
+.disposition-tag.discarded{border-color:#dce2ec;background:#eef2f7;color:#526079}
+.task-disposition-note{margin:8px 0 0;font-size:12px;color:var(--muted);line-height:1.6;overflow-wrap:anywhere}
+</style>

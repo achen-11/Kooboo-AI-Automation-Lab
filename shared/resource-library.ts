@@ -1,3 +1,4 @@
+import { matchesDispositionFilter, type DispositionFilter, type ItemDisposition } from './dispositions.js';
 export interface ResourceFolder { id: string; name: string; parentId?: string | null; createdAt: number }
 export interface ResourceFolderNode extends ResourceFolder { depth: number; path: string; ancestors: string[]; hasChildren: boolean }
 
@@ -37,18 +38,22 @@ export function resourceFolderDescendants(folders: readonly ResourceFolder[], id
   return result;
 }
 
-export interface ResourceFilters { query: string; scenario: string; folder: string; generated: string }
+export interface ResourceFilters { query: string; scenario: string; folder: string; generated: string; disposition?: DispositionFilter | '' }
 
-export function resourceSiteCounts(sites: readonly { resourceId: string }[]) {
+export function resourceSiteCounts(sites: readonly { resourceId: string; disposition?: ItemDisposition }[]) {
   const counts = new Map<string, number>();
-  for (const site of sites) counts.set(site.resourceId, (counts.get(site.resourceId) || 0) + 1);
+  for (const site of sites) {
+    if (site.disposition?.state === 'discarded') continue;
+    counts.set(site.resourceId, (counts.get(site.resourceId) || 0) + 1);
+  }
   return counts;
 }
 
-export function filterResources<T extends { id: string; folderId?: string | null; scenario: string; name: string; description: string; contentUrl: string; externalId: string; externalSource: string }>(resources: readonly T[], counts: ReadonlyMap<string, number>, filters: ResourceFilters, folders: readonly ResourceFolder[] = []): T[] {
+export function filterResources<T extends { id: string; folderId?: string | null; disposition?: ItemDisposition; scenario: string; name: string; description: string; contentUrl: string; externalId: string; externalSource: string }>(resources: readonly T[], counts: ReadonlyMap<string, number>, filters: ResourceFilters, folders: readonly ResourceFolder[] = []): T[] {
   const query = filters.query.trim().toLocaleLowerCase();
   const folderIds = resourceFolderDescendants(folders, filters.folder);
   return resources.filter(item =>
+    matchesDispositionFilter(item.disposition, filters.disposition) &&
     (!filters.folder || (filters.folder === 'ungrouped' ? !item.folderId : folderIds.has(item.folderId || ''))) &&
     (!filters.scenario || item.scenario === filters.scenario) &&
     (!filters.generated || (filters.generated === 'yes' ? !!counts.get(item.id) : !counts.get(item.id))) &&

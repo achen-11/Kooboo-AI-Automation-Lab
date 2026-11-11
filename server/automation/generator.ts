@@ -19,7 +19,7 @@ import { frozenCollectionAssetGapGuidance, preflightCollectionTarget } from './c
 import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, type SourceVisualIndex } from './collection/source-visual.js';
 import { adaptRepairImages } from './repair-images.js';
 import { resolve } from 'node:path';
-import { generatedSiteName, normalizeRootDomain, parseRootDomains } from '../../shared/kooboo-domains.js';
+import { generatedSiteName, normalizeRootDomain, parseRootDomains, findRootDomain, bindingDomain } from '../../shared/kooboo-domains.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
@@ -53,16 +53,24 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     }
     const domains=parseRootDomains(await request('Domain/Available'));
     // Legacy tasks without a choice freeze it before the first creation attempt.
-    const root=normalizeRootDomain(task.generation.rootDomain||environment.defaultRootDomain||domains[0]?.domainName||'');
+    const selected=normalizeRootDomain(task.generation.rootDomain||environment.defaultRootDomain||domains[0]?.domainName||'');
+    const rootOption=findRootDomain(domains,selected),root=rootOption?.domainName||selected;
     if(!root)throw new Error('Kooboo 未返回可用根域名，请核对连接环境');
     task.generation.rootDomain=root;store.put(task);
-    if(!domains.some(domain=>domain.domainName===root))throw new FollowupRuntimeError(`建站根域名 ${root} 在当前 Kooboo 环境中已不可用，请核对环境域名后重试；不会自动改用其他域名。`,['在原 Kooboo 环境恢复所选根域名后重试；或停止本任务，选择可用根域名新建任务。']);
+    if(!rootOption)throw new FollowupRuntimeError(`建站根域名 ${root} 在当前 Kooboo 环境中已不可用，请核对环境域名后重试；不会自动改用其他域名。`,['在原 Kooboo 环境恢复所选根域名后重试；或停止本任务，选择可用根域名新建任务。']);
+    const subDomain=task.generation.subDomain||slug;
+    const host=bindingDomain(subDomain,rootOption);
+    if(host.length>253||host.split('.').some(label=>label.length>63))throw new GenerationInputError('完整域名过长，请缩短子域名');
+    if(task.generation.subDomain){
+      const [nameFree,domainFree]=await Promise.all([request(`Site/IsUniqueName?SiteName=${encodeURIComponent(slug)}`),request(`Site/IsSubdomainAvailable?RootDomain=${encodeURIComponent(root)}&SubDomain=${encodeURIComponent(subDomain)}`)]);
+      if(nameFree!==true||domainFree!==true)throw new GenerationInputError('自定义站点名或子域名已被占用或无法确认可用，请修改名称后新建任务');
+    }
     store.event(task.id,`准备新站 ${slug}；根域名 ${root}；创建结果不确定时停止，不自动重发创建请求`);
-    let created:any;task.generation.siteName=slug;task.generation.createAttempted=true;store.put(task);
+    let created:any;task.generation.siteName=slug;task.generation.subDomain=subDomain;task.generation.createAttempted=true;store.put(task);
     try{
       created=task.scenario==='upgrade'
-        ?await request('Transfer/ByLevel',{siteName:slug,subDomain:slug,rootDomain:root,url:input.contentUrl,headless:false,convertToRoot:false,TotalPages:20,Depth:2})
-        :await request('Site/Create',{SiteName:slug,SubDomain:slug,RootDomain:root,SiteType:'p'});
+        ?await request('Transfer/ByLevel',{siteName:slug,subDomain,rootDomain:root,url:input.contentUrl,headless:false,convertToRoot:false,TotalPages:20,Depth:2})
+        :await request('Site/Create',{SiteName:slug,SubDomain:subDomain,RootDomain:root,SiteType:'p'});
     }catch{throw new Pending(`新站 ${slug} 创建结果未确认，请在 Kooboo 检查后将实际站点关联到此资源，禁止自动重复建站。`);}
     const siteId=siteIdentity(created);
     if(!/^[a-f0-9-]{36}$/i.test(siteId)||/^00000000-0000-0000-0000-000000000000$/i.test(siteId))throw new Pending(`新站 ${slug} 未返回有效身份，请检查 Kooboo 实际站点。`);

@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { ArrowLeft, ArrowUpRight, ExternalLink, Ban, Play, FileText, Send, X, LoaderCircle, MoreHorizontal, CircleAlert, Check, Clock3, Download } from '@lucide/vue';
+import { ArrowLeft, ArrowUpRight, ExternalLink, Ban, Play, FileText, Send, X, LoaderCircle, MoreHorizontal, CircleAlert, Check, Clock3, Download, Link } from '@lucide/vue';
 import { scenarios, taskStatusNames, optimizationStateNames, supportsAutomaticOptimization, type AutomationTask, type AutomationSettings, type Resource, type GeneratedSite } from '../../../../shared/automation';
 import { initialTaskTab, stageNames, type TaskSnapshot, type TaskTab } from '../../../../shared/task-presentation';
 import { api, formatDate, go, message } from '../../api';
@@ -120,7 +120,7 @@ onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange
       <button v-else-if="!canRecover && canCreateRound && !evaluation && task.kind === 'generation'" class="button" :class="canContinue ? 'secondary' : 'primary'" :disabled="busy || !task.siteUrl" @click="followup('evaluation')"><FileText :size="16" />发起评测</button>
       <button v-if="optimizationActive" class="button secondary" :disabled="busy||current?.status==='cancelling'" @click="action('optimization/stop',task.id)"><Ban :size="16" />停止优化</button>
       <button v-else-if="canCancel" class="button secondary" :disabled="busy || current?.status === 'cancelling'" @click="action('cancel')"><Ban :size="16" />{{ current?.status === 'cancelling' ? '正在停止' : '取消任务' }}</button>
-      <details ref="more" class="task-more"><summary class="button secondary"><MoreHorizontal :size="17" /><span>更多</span></summary><div class="task-action-menu"><template v-if="canCreateRound"><button v-if="canEnableOptimization" @click="openOptimization"><Play :size="15" />自动优化到目标</button><button v-if="!canContinue" @click="followup('generation')"><Send :size="15" />提交生成跟进</button><button :disabled="!task.siteUrl" @click="followup('evaluation')"><FileText :size="15" />{{ report ? '重新评测' : '发起评测' }}</button></template><button v-if="task.generatedSiteId" @click="openDomain">换绑域名</button><button @click="openDiagnostic"><Download :size="15" />导出排障包</button></div></details>
+      <details ref="more" class="task-more"><summary class="button secondary"><MoreHorizontal :size="17" /><span>更多</span></summary><div class="task-action-menu"><template v-if="canCreateRound"><button v-if="canEnableOptimization" @click="openOptimization"><Play :size="15" />自动优化到目标</button><button v-if="!canContinue" @click="followup('generation')"><Send :size="15" />提交生成跟进</button><button :disabled="!task.siteUrl" @click="followup('evaluation')"><FileText :size="15" />{{ report ? '重新评测' : '发起评测' }}</button></template><button v-if="task.generatedSiteId" @click="openDomain"><Link :size="15" />换绑域名</button><button @click="openDiagnostic"><Download :size="15" />导出排障包</button></div></details>
     </div></header>
     <SiteDomainDialog ref="domainDialog" @saved="load" />
     <CreateTaskDialog ref="continueDialog" :resources="continueResources" :site="continueSite" />

@@ -10,10 +10,8 @@ import { siteDeliveryStates, type SiteDeliveryPage } from '../../../../shared/si
 import { scenarios } from '../../../../shared/automation';
 import { refreshStatus, workspace, scopeName } from './common';
 import { useTaskSection } from './use-task-section';
-import SiteDomainDialog from './SiteDomainDialog.vue';
 
 const query = ref(''), search = ref(''), state = ref(''), page = ref(1);
-const domainDialog = ref<InstanceType<typeof SiteDomainDialog>>();
 const site = new URLSearchParams(window.location.hash.split('?')[1] || '').get('site');
 const viewportNames: Record<string, string> = { desktop: 'PC', mobile: '移动端', business: '业务' };
 const { data, loading, error, load } = useTaskSection<SiteDeliveryPage>(() =>
@@ -50,13 +48,12 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
         <td><a v-if="row.report?.report" class="site-scores" :href="siteReportLink(row.detailTaskId || row.report.id, row.report.id)"><span v-for="score in row.report.report.scores" :key="score.viewport" class="site-score" :class="scoreTone(score.value,row.targetScore)" :title="`${viewportNames[score.viewport] || score.viewport}，目标 ${row.targetScore} 分`"><span>{{ viewportNames[score.viewport] || score.viewport }}</span><strong>{{ score.value ?? '—' }}</strong></span></a><span v-else class="text-muted">{{ row.state==='running' || row.state==='queued' ? '当前版本待评测' : '暂无有效报告' }}</span></td>
         <td class="site-cost"><a v-if="row.detailTaskId" :href="`#/tasks/${row.detailTaskId}?tab=usage`">{{ row.usage.priced ? '¥ ' + row.usage.knownCny.toFixed(4) : '—' }}</a><span v-else>—</span></td>
         <td class="date-cell">{{ formatDate(row.updatedAt) }}</td>
-        <td><div class="toolbar-actions"><a class="text-action" :href="row.detailTaskId ? '#/tasks/' + row.detailTaskId : '#/resources/' + row.resourceId">详情<ArrowUpRight :size="14" /></a><button v-if="row.generatedSiteId" class="text-action" @click="domainDialog?.open(row.generatedSiteId)">换绑域名</button></div></td>
+        <td><div class="toolbar-actions"><a class="text-action" :href="row.detailTaskId ? '#/tasks/' + row.detailTaskId : '#/resources/' + row.resourceId">详情<ArrowUpRight :size="14" /></a></div></td>
       </tr>
     </tbody></table></div>
     <div v-if="data && !data.items.length" class="empty-state"><Clock3 :size="30" /><h2>{{ query || state ? '没有匹配的生成站' : '暂无生成站' }}</h2><p>从资源库创建任务，生成、跟进、评测与后续修复会归入同一个生成站。</p></div>
     <TablePagination v-if="data" :page="data.page" :pages="data.pages" :total="data.total" :busy="loading" @change="page=$event" />
   </section>
-  <SiteDomainDialog ref="domainDialog" @saved="reload" />
 </template>
 
 <style scoped>

@@ -2,9 +2,9 @@
 import { computed, onBeforeUnmount, ref, shallowRef, watch } from 'vue';
 import BaseSelect from './BaseSelect.vue';
 import { api, message, platform } from '../api';
-import { rootDomainLabel, type KoobooRootDomain } from '../../../shared/kooboo-domains';
+import { rootDomainLabel, findRootDomain, type KoobooRootDomain } from '../../../shared/kooboo-domains';
 
-const props = defineProps<{ environmentId: string; disabled?: boolean; autoSelect?: boolean; required?: boolean }>();
+const props = defineProps<{ environmentId: string; disabled?: boolean; autoSelect?: boolean; required?: boolean; emptyLabel?: string }>();
 const model = defineModel<string>({ default: '' });
 const emit = defineEmits<{ ready: [value: boolean] }>();
 const domains = shallowRef<KoobooRootDomain[]>([]);
@@ -13,7 +13,7 @@ const environment = computed(() => platform.settings?.environments.find(env => e
 const missing = computed(() => !!model.value && !loading.value && !error.value && !domains.value.some(domain => domain.domainName === model.value));
 const ready = computed(() => !props.disabled && !!environment.value?.hasToken && !loading.value && !error.value && !missing.value && (!props.required || !!model.value));
 const options = computed(() => [
-  { value: '', label: props.required ? '选择根域名' : '每次建站时选择', disabled: !!props.required },
+  { value: '', label: props.required ? '选择根域名' : props.emptyLabel || '每次建站时选择', disabled: !!props.required },
   ...(missing.value ? [{ value: model.value, label: model.value + '（已不可用）', disabled: true }] : []),
   ...domains.value.map(domain => ({ value: domain.domainName, label: rootDomainLabel(domain) })),
 ]);
@@ -28,6 +28,8 @@ async function load() {
     if (current !== revision) return;
     domains.value = result.items;
     if (props.autoSelect && !model.value) model.value = environment.value?.defaultRootDomain || result.items[0]?.domainName || '';
+    const selected = findRootDomain(result.items, model.value);
+    if (selected) model.value = selected.domainName;
     if (!result.items.length) error.value = '此环境没有可用根域名，请先在 Kooboo 中配置';
   } catch (reason) { if (current === revision) error.value = message(reason); }
   finally { if (current === revision) loading.value = false; }

@@ -1,16 +1,16 @@
 import type { FastifyInstance } from 'fastify';
 import { randomUUID } from 'node:crypto';
 import { z } from 'zod';
-import { bindingDomain, generatedSiteName, parseRootDomains } from '../../shared/kooboo-domains.js';
+import { bindingDomain, generatedSiteName, parseRootDomains, findRootDomain, splitBindingDomain } from '../../shared/kooboo-domains.js';
 import type { GeneratedSite } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { Conflict } from '../lib/store.js';
-import { rootDomainSchema } from '../lib/validation.js';
+import { rootDomainSchema, siteNameSchema } from '../lib/validation.js';
 import { koobooClient, siteIdentity } from './kooboo.js';
 
 const params = z.object({ id: z.string().uuid() });
-const input = z.object({ rootDomain: rootDomainSchema, subDomain: z.string().trim().toLowerCase().regex(/^[a-z0-9_]{1,63}$/, '子域名只能使用英文字母、数字和下划线（_），不能使用连字符（-）') }).strict();
+const input = z.object({ rootDomain: rootDomainSchema, subDomain: siteNameSchema }).strict();
 const fullName = (binding: any): string => String(binding.fullName || binding.FullName || '').toLowerCase();
 const port = (binding: any): number => Number(binding.port ?? binding.Port ?? 0);
 
@@ -30,12 +30,8 @@ export function registerSiteDomainApi(app: FastifyInstance, store: AutomationSto
     let host = site.preferredDomain || '';
     if (!host && site.url) host = new URL(site.url).hostname.toLowerCase();
     const binding = bindings.find(item => fullName(item) === host && !port(item));
-    // Match the longest suffix first when an environment offers nested roots.
-    const root = [...domains].sort((a, b) => b.domainName.length - a.domainName.length).find(item => {
-      const suffix = bindingDomain('', item);
-      return host.endsWith(suffix) && host.length > suffix.length;
-    });
-    const sub = binding?.subDomain || binding?.SubDomain || (root ? host.slice(0, -bindingDomain('', root).length) : site.name);
+    const parsed = splitBindingDomain(host, domains), root = parsed?.root;
+    const sub = binding?.subDomain || binding?.SubDomain || parsed?.subDomain || site.name;
     const suggestion = String(sub).toLowerCase().replace(/-/g, '_');
     return { site: { id: site.id, name: site.name, url: site.url }, domains,
       rootDomain: root?.domainName || domains[0]?.domainName || '',
@@ -56,7 +52,7 @@ export function registerSiteDomainApi(app: FastifyInstance, store: AutomationSto
     try {
       const client = koobooClient(site, vault, AbortSignal.timeout(60000));
       const domains = parseRootDomains(await client.request('Domain/Available'));
-      const root = domains.find(item => item.domainName === choice.rootDomain);
+      const root = findRootDomain(domains, choice.rootDomain);
       if (!root) throw new Conflict('所选根域名已不可用，请重新选择');
       const host = bindingDomain(choice.subDomain, root);
       if (host.length > 253 || host.split('.').some(label => label.length > 63)) throw new Conflict('完整域名过长，请缩短子域名');

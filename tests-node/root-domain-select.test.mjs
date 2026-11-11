@@ -66,6 +66,15 @@ test('a missing configured default remains visible and blocks submission until a
   } finally { f.close(); }
 });
 
+test('selector reconciles an older saved Hong Kong root with its leading-separator form', async () => {
+  const f = await fixture({ model: 'shawnchen-hk.kooboo.io', request: async () => ({ items: [{ domainName: '-shawnchen-hk.kooboo.io', sudDomainUseDash: true }] }) }); try {
+    assert.equal(f.value.value, '-shawnchen-hk.kooboo.io');
+    assert.equal(f.ready.value, true);
+    assert.equal(f.select().props.options[1].label, '-shawnchen-hk.kooboo.io');
+    assert.doesNotMatch(f.text(), /已不可用/);
+  } finally { f.close(); }
+});
+
 test('settings can retain an empty default while a failed domain request keeps a new task blocked', async () => {
   const settings = await fixture({ autoSelect: false, required: false }); try { assert.equal(settings.value.value, ''); } finally { settings.close(); }
   const failed = await fixture({ request: async () => { throw new Error('连接失败'); } }); try {

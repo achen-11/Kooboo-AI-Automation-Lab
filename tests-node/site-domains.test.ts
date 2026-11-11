@@ -107,6 +107,26 @@ test('root separator metadata remains authoritative while custom subdomains reje
   } finally { await f.close(); }
 });
 
+test('Hong Kong roots round-trip through suggestions, rebinding and refresh without duplicate separators', async () => {
+  const f = await fixture(); try {
+    f.state.domains.push({ domainName: '-shawnchen-hk.kooboo.io', sudDomainUseDash: true });
+    f.site.url = 'https://salon_demo-shawnchen-hk.kooboo.io/landing'; f.store.saveSite(f.site);
+    const options = await f.app.inject({ url: f.path, headers: f.headers });
+    assert.equal(options.statusCode, 200, options.body);
+    assert.equal(options.json().rootDomain, '-shawnchen-hk.kooboo.io');
+    assert.equal(options.json().subDomain, 'salon_demo');
+    // Old saved roots may omit the separator; the Post must still use the available root's literal value.
+    const changed = await f.change({ rootDomain: 'shawnchen-hk.kooboo.io', subDomain: 'salon_updated' });
+    assert.equal(changed.statusCode, 200, changed.body);
+    assert.equal(changed.json().url, 'https://salon_updated-shawnchen-hk.kooboo.io/landing');
+    assert.equal(f.state.posts, 1);
+    await refreshSite(f.store.task(f.task.id)!, f.store, f.vault, AbortSignal.timeout(5000));
+    assert.equal(f.store.site(f.site.id)!.url, changed.json().url);
+    const refreshed = await f.app.inject({ url: f.path, headers: f.headers });
+    assert.equal(refreshed.json().subDomain, 'salon_updated');
+  } finally { await f.close(); }
+});
+
 test('occupied domains, missing sites and invalid receipts never replace the local address', async () => {
   const f = await fixture(); try {
     f.state.available = false;

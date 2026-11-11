@@ -77,6 +77,8 @@ export const environmentConnectionSchema = z.object({
 export const rootDomainSchema = z.string().trim().max(253).transform(normalizeRootDomain)
   .pipe(z.string().min(1, '请选择建站根域名').regex(/^[\p{L}\p{N}-]+(?:\.[\p{L}\p{N}-]+)*$/u, '根域名格式不正确'));
 
+export const siteNameSchema = z.string().trim().toLowerCase().regex(/^[a-z0-9_]{1,63}$/, '站点名和子域名只能使用英文字母、数字和下划线（_），最多 63 个字符');
+
 export const settingsSchema = z
   .object({
     threshold: z.number().min(0).max(100),

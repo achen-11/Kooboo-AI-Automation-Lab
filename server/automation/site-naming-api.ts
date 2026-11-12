@@ -1,7 +1,7 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
 import { canAdjustTaskSiteNames } from '../../shared/task-presentation.js';
-import { findRootDomain, parseRootDomains } from '../../shared/kooboo-domains.js';
+import { findRootDomain, parseRootDomains, rootDomainValue } from '../../shared/kooboo-domains.js';
 import type { AutomationTask } from '../../shared/automation.js';
 import { Conflict } from '../lib/store.js';
 import type { Vault } from '../lib/vault.js';
@@ -39,7 +39,7 @@ export function registerTaskNamingApi(app: FastifyInstance, store: AutomationSto
       const task = eligible(id);
       if (task.updatedAt !== original.updatedAt) throw new Conflict('任务已变化，请刷新后重试');
       retainStoppedFollowupReservations(task, store, owns);
-      task.generation = { ...task.generation, ...selected, rootDomain: root.domainName };
+      task.generation = { ...task.generation, ...selected, rootDomain: rootDomainValue(root) };
       task.status = 'queued'; task.stage = 'prepare'; task.error = ''; delete task.interruption;
       if (task.followup) { task.followup.state = 'resolved'; task.followup.executionStopped = true; }
       if (task.autonomy) { delete task.autonomy.stopReason; delete task.autonomy.checkpoint.nextAt; }

@@ -1,4 +1,4 @@
-import { bindingDomain, generationSiteNames, generatedSiteName, parseRootDomains, rootDomainLabel, siteNamingError, splitBindingDomain, type KoobooRootDomain } from '../../shared/kooboo-domains.js';
+import { bindingDomain, generationSiteNames, generatedSiteName, parseRootDomains, rootDomainLabel, rootDomainValue, siteNamingError, splitBindingDomain, type KoobooRootDomain } from '../../shared/kooboo-domains.js';
 import type { AutomationTask, GeneratedSite, InputVersion } from '../../shared/automation.js';
 import { GenerationInputError } from './errors.js';
 
@@ -17,7 +17,8 @@ export function taskSiteNaming(task: AutomationTask, version?: InputVersion, sit
   const pendingName = generation?.createAttempted ? `auto-${task.id.slice(0, 12)}` : generatedSiteName(task.id);
   const siteName = site?.name || generation?.siteName || (!task.generatedSiteId ? generation?.createAttempted ? pendingName : names.siteName || pendingName : undefined);
   const subDomain = parsed?.subDomain || generation?.subDomain || (!task.generatedSiteId ? generation?.createAttempted ? siteName : names.subDomain || siteName : undefined);
-  return { siteName, subDomain, rootDomain: parsed?.root.domainName || rootDomain };
+  const root = parsed?.root || (rootDomain ? parseRootDomains([rootDomain])[0] : undefined);
+  return { siteName, subDomain, rootDomain: root ? rootDomainValue(root) : rootDomain };
 }
 
 function suffixedName(base: string, index: number, limit: number) {

@@ -19,7 +19,7 @@ import { frozenCollectionAssetGapGuidance, preflightCollectionTarget } from './c
 import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, type SourceVisualIndex } from './collection/source-visual.js';
 import { adaptRepairImages } from './repair-images.js';
 import { resolve } from 'node:path';
-import { generatedSiteName, normalizeRootDomain, parseRootDomains, findRootDomain } from '../../shared/kooboo-domains.js';
+import { generatedSiteName, normalizeRootDomain, parseRootDomains, findRootDomain, rootDomainValue } from '../../shared/kooboo-domains.js';
 import { generationSourceEvidence } from './generation-reference.js';
 import { archiveDeliveryImages, GenerationDeliveryStore, isPreSendBridgeRejection } from './generation-delivery.js';
 import { assertSiteNaming, availableSiteNames } from './site-naming.js';
@@ -59,7 +59,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     const selected=normalizeRootDomain(task.generation.rootDomain||environment.defaultRootDomain||domains[0]?.domainName||'');
     const rootOption=findRootDomain(domains,selected),root=rootOption?.domainName||selected;
     if(!root)throw new Error('Kooboo 未返回可用根域名，请核对连接环境');
-    task.generation.rootDomain=root;store.put(task);
+    task.generation.rootDomain=rootOption?rootDomainValue(rootOption):root;store.put(task);
     if(!rootOption)throw new FollowupRuntimeError(`建站根域名 ${root} 在当前 Kooboo 环境中已不可用，请核对环境域名后重试；不会自动改用其他域名。`,['在原 Kooboo 环境恢复所选根域名后重试；或停止本任务，选择可用根域名新建任务。']);
     let subDomain=task.generation.subDomain||slug;
     assertSiteNaming(slug,subDomain,rootOption);

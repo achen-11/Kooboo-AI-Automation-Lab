@@ -23,8 +23,17 @@ export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vau
   const request=async(path:string,body?:unknown,siteId?:string):Promise<any>=>{
     const url=new URL(`/_api/v2/${path}`,apiOrigin);if(siteId)url.searchParams.set('SiteId',siteId);
     const result=await httpRead(url,{token:environment.token,body,signal:AbortSignal.any([signal,AbortSignal.timeout(120000)])});
+    // ApiManager converts bool returns into Success, and v2 renders true as 200/null.
+    // Decode this contract only for these read-only boolean checks; other null results stay null.
+    const availability=body===undefined&&!siteId&&['Site/IsUniqueName','Site/IsSubdomainAvailable'].includes(path.split('?')[0]!);
+    if(availability&&result.status===400){
+      let messages:unknown;try{messages=JSON.parse(result.body);}catch{ /* Unknown failures remain errors. */ }
+      if(Array.isArray(messages)&&messages.length===1&&typeof messages[0]==='string'
+        && ['Api method define a bool return type and return false','Api 返回不正确'].includes(messages[0].replace(/\s+/g,' ').trim()))return false;
+    }
     if(result.status<200||result.status>=300)throw new Error(`Kooboo ${path.split('?')[0]} 请求失败（${result.status}）`);
-    return JSON.parse(result.body);
+    const value=JSON.parse(result.body);
+    return availability&&result.status===200&&value===null?true:value;
   };
   return {origin,environment,request};
 }

@@ -27,6 +27,11 @@ export function rootDomainLabel(domain: KoobooRootDomain): string {
   return (domain.sudDomainUseDash ? '-' : '.') + domain.domainName;
 }
 
+/** Keep dash separators in saved choices, while ordinary roots retain their bare domain. */
+export function rootDomainValue(domain: KoobooRootDomain): string {
+  return domain.sudDomainUseDash ? rootDomainLabel(domain) : domain.domainName;
+}
+
 /** Match saved roots with or without Kooboo's leading separator; send the server's value back verbatim. */
 export function findRootDomain(domains: KoobooRootDomain[], value: string): KoobooRootDomain | undefined {
   const normalized = normalizeRootDomain(value);

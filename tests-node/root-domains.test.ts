@@ -9,8 +9,9 @@ import { createApp } from '../server/app.js';
 import { Vault } from '../server/lib/vault.js';
 import { executeGeneration } from '../server/automation/generator.js';
 import type { AutomationTask, Scenario } from '../shared/automation.js';
-import { bindingDomain, findRootDomain, parseRootDomains, rootDomainLabel, splitBindingDomain } from '../shared/kooboo-domains.js';
+import { bindingDomain, findRootDomain, parseRootDomains, rootDomainLabel, rootDomainValue, splitBindingDomain } from '../shared/kooboo-domains.js';
 import { availableSiteNames } from '../server/automation/site-naming.js';
+import { koobooClient } from '../server/automation/kooboo.js';
 import { AutomationStore } from '../server/automation/store.js';
 
 test('Hong Kong suffixes retain the server root and separator exactly once', () => {
@@ -18,6 +19,7 @@ test('Hong Kong suffixes retain the server root and separator exactly once', () 
     const domains = parseRootDomains([raw]);
     const root = findRootDomain(domains, 'shawnchen-hk.kooboo.io')!;
     assert.equal(rootDomainLabel(root), '-shawnchen-hk.kooboo.io');
+    assert.equal(rootDomainValue(root), '-shawnchen-hk.kooboo.io');
     assert.equal(bindingDomain('salon_demo', root), 'salon_demo-shawnchen-hk.kooboo.io');
     assert.deepEqual(splitBindingDomain('salon_demo-shawnchen-hk.kooboo.io', [...domains, { domainName: 'kooboo.io', sudDomainUseDash: false }]), { root, subDomain: 'salon_demo' });
     assert.equal(splitBindingDomain('salon_demoxshawnchen-hk.kooboo.io', domains), undefined);
@@ -40,6 +42,7 @@ test('conflict suffixes fit both the Kooboo name and the complete Hong Kong host
 async function fixture() {
   const state = { domains: [{ domainName: 'first.test', sudDomainUseDash: false }, { domainName: 'chosen.test', sudDomainUseDash: true }],
     domainStatus: 200, invalidJson: false, createStatus: 200, nameFree: true as unknown, domainFree: true as unknown,
+    v2Booleans: false, availabilityStatus: 200, availabilityError: ['unexpected validation failure'],
     occupiedNames: [] as string[], occupiedDomains: [] as string[], siteId: randomUUID(), reportedSiteName: 'unrelated', requests: [] as string[], creates: [] as { path: string; body: Record<string, unknown> }[] };
   const server = createServer(async (req, res) => {
     const url = new URL(req.url!, 'http://localhost'), path = url.pathname;
@@ -51,8 +54,16 @@ async function fixture() {
       res.statusCode = state.domainStatus;
       res.end(state.invalidJson ? 'private-test-token' : JSON.stringify(state.domains)); return;
     }
-    if (path.endsWith('/Site/IsUniqueName')) { res.end(JSON.stringify(state.occupiedNames.includes(url.searchParams.get('SiteName')!) ? false : state.nameFree)); return; }
-    if (path.endsWith('/Site/IsSubdomainAvailable')) { res.end(JSON.stringify(state.occupiedDomains.includes(url.searchParams.get('SubDomain')!) ? false : state.domainFree)); return; }
+    if (path.endsWith('/Site/IsUniqueName') || path.endsWith('/Site/IsSubdomainAvailable')) {
+      if(state.availabilityStatus!==200){res.statusCode=state.availabilityStatus;res.end(JSON.stringify(state.availabilityError));return;}
+      const value=path.endsWith('/Site/IsUniqueName')
+        ?state.occupiedNames.includes(url.searchParams.get('SiteName')!)?false:state.nameFree
+        :state.occupiedDomains.includes(url.searchParams.get('SubDomain')!)?false:state.domainFree;
+      if(state.v2Booleans&&typeof value==='boolean'){
+        res.statusCode=value?200:400;res.end(JSON.stringify(value?null:['Api 返回不正确']));return;
+      }
+      res.end(JSON.stringify(value));return;
+    }
     if (path.endsWith('/Site/Create') || path.endsWith('/Transfer/ByLevel')) {
       let text = ''; for await (const chunk of req) text += chunk;
       state.creates.push({ path, body: JSON.parse(text) }); res.statusCode = state.createStatus;
@@ -273,7 +284,7 @@ for (const field of ['siteName', 'subDomain'] as const) test(`only the occupied 
 test('unknown availability or exhausted suffixes never submits a create', async () => {
   const f = await fixture(); try {
     const task = (await f.create({ subDomain: 'salon' })).json().items[0] as AutomationTask;
-    f.state.nameFree = null;
+    f.state.nameFree = 'unknown';
     await assert.rejects(executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)), /无法确认/);
     f.state.nameFree = true; f.state.domainFree = { available: true };
     await assert.rejects(executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)), /无法确认/);
@@ -333,6 +344,59 @@ async function oldNamingConflict(f: Awaited<ReturnType<typeof fixture>>) {
   return task;
 }
 
+test('native v2 availability decodes null success and only recognized bool-false failures', async () => {
+  const f = await fixture(); try {
+    f.state.v2Booleans = true;
+    const client = koobooClient({ environmentId: f.environmentId }, f.vault, AbortSignal.timeout(5000));
+    assert.equal(await client.request('Site/IsUniqueName?SiteName=free'), true);
+    assert.equal(await client.request('Site/IsSubdomainAvailable?RootDomain=chosen.test&SubDomain=free'), true);
+    f.state.occupiedNames = ['taken'];
+    assert.equal(await client.request('Site/IsUniqueName?SiteName=taken'), false);
+    f.state.availabilityStatus = 400;
+    f.state.availabilityError = ['Api method define a bool return\n type and return false'];
+    assert.equal(await client.request('Site/IsUniqueName?SiteName=taken'), false);
+    f.state.availabilityError = ['unexpected validation failure'];
+    await assert.rejects(client.request('Site/IsUniqueName?SiteName=free'), /400/);
+    f.state.availabilityStatus = 401; f.state.availabilityError = ['Api 返回不正确'];
+    await assert.rejects(client.request('Site/IsUniqueName?SiteName=free'), /401/);
+    f.state.availabilityStatus = 503;
+    await assert.rejects(client.request('Site/IsSubdomainAvailable?RootDomain=chosen.test&SubDomain=free'), /503/);
+    assert.equal(f.state.creates.length, 0);
+  } finally { await f.close(); }
+});
+
+test('Hong Kong legacy recovery retains the dash root with native v2 null and occupied-name responses', async () => {
+  const f = await fixture(); try {
+    f.state.domains = [{ domainName: 'shawnchen-hk.kooboo.io', sudDomainUseDash: true }];
+    f.state.v2Booleans = true;
+    f.state.occupiedNames = ['salon_internal']; f.state.occupiedDomains = ['salon_public', 'salon_public_1'];
+    const task = await oldNamingConflict(f);
+    task.generation!.rootDomain = 'shawnchen-hk.kooboo.io'; f.automationStore.put(task);
+    const input = (await f.app.inject({ url: `/api/automation/tasks/${task.id}/sections/input`, headers: f.headers })).json();
+    assert.equal(input.rootDomain, '-shawnchen-hk.kooboo.io');
+    const result = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${task.id}/adjust-site-names`, headers: f.headers });
+    assert.equal(result.statusCode, 200, result.body);
+    assert.equal(result.json().id, task.id);
+    assert.deepEqual(result.json().generation, { siteName: 'salon_internal_1', subDomain: 'salon_public_2', rootDomain: '-shawnchen-hk.kooboo.io' });
+    assert.equal(f.automationStore.task(task.id)!.generation!.rootDomain, '-shawnchen-hk.kooboo.io');
+    assert.equal(f.state.creates.length, 0);
+  } finally { await f.close(); }
+});
+
+test('native v2 availability supports generation and saves a dash root supplied as separator metadata', async () => {
+  const f = await fixture(); try {
+    f.state.domains = [{ domainName: 'shawnchen-hk.kooboo.io', sudDomainUseDash: true }];
+    f.state.v2Booleans = true; f.state.occupiedNames = ['salon']; f.state.occupiedDomains = ['salon'];
+    const task = (await f.create({ siteName: 'salon', subDomain: 'salon', rootDomain: '-shawnchen-hk.kooboo.io' })).json().items[0] as AutomationTask;
+    task.generation = { ...task.generation, deliveryState: 'completed', transferComplete: true };
+    await executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000));
+    assert.equal(f.state.creates.length, 1);
+    assert.equal(f.state.creates[0].body.SiteName, 'salon_1');
+    assert.equal(f.state.creates[0].body.SubDomain, 'salon_1');
+    assert.equal(task.generation.rootDomain, '-shawnchen-hk.kooboo.io');
+  } finally { await f.close(); }
+});
+
 test('a legacy naming conflict exposes an action, persists available suffixes and queues the same task without creating a site', async () => {
   const f = await fixture(); try {
     const task = await oldNamingConflict(f), version = f.automationStore.version(task.versionId)!;
@@ -348,7 +412,7 @@ test('a legacy naming conflict exposes an action, persists available suffixes an
     const result = await f.app.inject({ method: 'POST', url: path, headers: f.headers });
     assert.equal(result.statusCode, 200, result.body);
     assert.equal(result.json().id, task.id); assert.equal(result.json().status, 'queued');
-    assert.deepEqual(result.json().generation, { siteName: 'salon_internal_1', subDomain: 'salon_public_2', rootDomain: 'chosen.test' });
+    assert.deepEqual(result.json().generation, { siteName: 'salon_internal_1', subDomain: 'salon_public_2', rootDomain: '-chosen.test' });
     assert.equal(result.json().followup, undefined); assert.equal(result.json().interruption, undefined);
     assert.deepEqual(f.automationStore.version(task.versionId), version); assert.equal(f.automationStore.tasks().length, 1);
     assert.equal(f.state.creates.length, 0);
@@ -368,7 +432,7 @@ test('naming recovery rejects unsafe states before contacting Kooboo and keeps f
       assert.equal(rejected.statusCode, 409, rejected.body);
     }
     assert.equal(f.state.requests.length, 0);
-    f.automationStore.put(task); f.state.domainFree = null;
+    f.automationStore.put(task); f.state.domainFree = {};
     const unknown = await f.app.inject({ method: 'POST', url: path, headers: f.headers });
     assert.equal(unknown.statusCode, 409); assert.match(unknown.json().error, /无法确认/); assert.equal(f.automationStore.task(task.id)!.status, 'interrupted');
     assert.deepEqual(f.automationStore.task(task.id)!.generation, task.generation); assert.equal(f.state.creates.length, 0);

@@ -53,7 +53,7 @@ async function fixture({ request = async () => ({ items: roots }), model = '', r
 
 test('selector loads the environment default, preserves dot/dash labels and permits a task override', async () => {
   const f = await fixture(); try {
-    assert.equal(f.value.value, 'chosen.test'); assert.equal(f.ready.value, true);
+    assert.equal(f.value.value, '-chosen.test'); assert.equal(f.ready.value, true);
     assert.deepEqual(f.select().props.options.slice(1).map(option => option.label), ['.first.test', '-chosen.test']);
     await f.choose('first.test'); assert.equal(f.value.value, 'first.test'); assert.equal(f.ready.value, true);
   } finally { f.close(); }
@@ -71,6 +71,15 @@ test('selector reconciles an older saved Hong Kong root with its leading-separat
     assert.equal(f.value.value, '-shawnchen-hk.kooboo.io');
     assert.equal(f.ready.value, true);
     assert.equal(f.select().props.options[1].label, '-shawnchen-hk.kooboo.io');
+    assert.doesNotMatch(f.text(), /已不可用/);
+  } finally { f.close(); }
+});
+
+test('selector retains the Hong Kong dash in its submitted value when the server returns separator metadata', async () => {
+  const f = await fixture({ model: '-shawnchen-hk.kooboo.io', request: async () => ({ items: [{ domainName: 'shawnchen-hk.kooboo.io', sudDomainUseDash: true }] }) }); try {
+    assert.equal(f.value.value, '-shawnchen-hk.kooboo.io');
+    assert.equal(f.select().props.options[1].value, '-shawnchen-hk.kooboo.io');
+    assert.equal(f.ready.value, true);
     assert.doesNotMatch(f.text(), /已不可用/);
   } finally { f.close(); }
 });

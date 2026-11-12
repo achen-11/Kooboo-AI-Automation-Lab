@@ -3,10 +3,19 @@ import type { ItemDisposition } from './dispositions.js';
 export interface OptimizationSummary { state: OptimizationRun['state']; policy: Omit<OptimizationPolicy,'sop'>; round: number; activeTaskId: string; reportId: string | null; reason: string; nextStep: string }
 
 export type TaskTab = 'overview' | 'report' | 'execution' | 'usage' | 'input' | 'delivery';
-export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'>;
-export type TaskRecoveryAction = 'resume' | 'confirm-stopped';
+export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { canAdjustSiteNames?: boolean };
+export type TaskRecoveryAction = 'resume' | 'confirm-stopped' | 'adjust-site-names';
+export function canAdjustTaskSiteNames(task: AutomationTask): boolean {
+  const generation = task.generation;
+  return task.kind === 'generation' && task.stopped === true && ['pending', 'failed', 'interrupted'].includes(task.status)
+    && !task.generatedSiteId && !task.threadId && !generation?.createAttempted && !generation?.legacySubmitted
+    && !generation?.deliveryId && !generation?.deliveryState && !generation?.conversationId && !generation?.runId && !generation?.previousRunId
+    && !generation?.prepared && !generation?.transferTaskId && !generation?.transferComplete && !generation?.repairBatch && !generation?.next && !task.delivery
+    && /自定义站点名或子域名已被占用|站点名称或子域名连续 \d+ 次被占用/.test(task.interruption?.reason || task.error || '');
+}
 export function taskRecoveryAction(task?: TaskRecoveryTarget): TaskRecoveryAction | null {
   if (!task) return null;
+  if (task.stopped === true && task.canAdjustSiteNames && ['pending', 'failed', 'interrupted'].includes(task.status)) return 'adjust-site-names';
   if (task.stopped === true && ['pending', 'failed', 'interrupted', 'cancelled'].includes(task.status)) return 'resume';
   if (task.stopped === false && ['pending', 'interrupted'].includes(task.status)) return 'confirm-stopped';
   return null;
@@ -18,6 +27,7 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   reportCurrent?: boolean;
   attention: string;
   nextStep: string;
+  canAdjustSiteNames?: boolean;
   deliveryStatus?: string;
   optimization?: OptimizationSummary;
   optimizationRootId?: string;
@@ -47,7 +57,8 @@ export function taskSummary(task: AutomationTask): TaskSummary {
     optimizationRootId: task.optimizationRootId, optimizationRound: task.optimizationRound,completionFirst:!!task.autonomy,hardMaxRounds:task.autonomy?.policy.hardMaxRounds,
     report: task.report ? { quality: task.report.quality, scores: task.report.scores, issueCount: task.report.issues.length, unverifiedCount: task.report.coverage.unverified.length } : null,
     attention: ['pending', 'failed', 'interrupted'].includes(status) ? brief(task.interruption?.reason || task.error || '当前阶段未完成，请查看执行记录。') : '',
-    nextStep: brief(task.interruption?.nextSteps[0] || ''), deliveryStatus: task.delivery?.status, delivery: task.delivery ? { status: task.delivery.status } : undefined };
+    nextStep: canAdjustTaskSiteNames(task) ? '自动调整被占用的站点名称或子域名后继续原任务。' : brief(task.interruption?.nextSteps[0] || ''),
+    canAdjustSiteNames: canAdjustTaskSiteNames(task), deliveryStatus: task.delivery?.status, delivery: task.delivery ? { status: task.delivery.status } : undefined };
 }
 export function initialTaskTab(search: string): TaskTab {
   const value = new URLSearchParams(search).get('tab');

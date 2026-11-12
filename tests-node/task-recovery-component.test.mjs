@@ -54,13 +54,14 @@ const descendants = node => node.children.flatMap(child => [child, ...descendant
 const text = node => ((node.tag === '#comment' ? '' : node.text) + node.children.map(text).join('')).trim();
 async function settle() { for (let i = 0; i < 4; i++) { await new Promise(resolve => setImmediate(resolve)); await nextTick(); } }
 const summary = (id, kind = 'evaluation') => ({ id, kind, resourceId: 'resource', resourceName: 'Car Repair', scenario: 'site-template', scope: 'site', environmentId: '', generatedSiteId: 'site', status: 'interrupted', stopped: false, createdAt: 1, updatedAt: 1, siteUrl: '', report: null, attention: '原评测执行尚未确认停止', nextStep: '确认停止后恢复' });
-async function fixture({ pair = false, fail = false, legacy = false, cancelled = false } = {}) {
+async function fixture({ pair = false, fail = false, legacy = false, cancelled = false, namingConflict = false } = {}) {
   const previous = new Map(['window', 'document', '__recoveryServices'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const document = Object.assign(new EventTarget(), { hidden: false });
   const window = Object.assign(new EventTarget(), { location: { hash: cancelled ? '#/tasks/root' : '#/tasks/root?tab=execution' }, history: { replaceState() {} } });
-  const root = summary('root', pair || cancelled ? 'generation' : 'evaluation'), child = summary('child');
+  const root = summary('root', pair || cancelled || namingConflict ? 'generation' : 'evaluation'), child = summary('child');
   if (pair) Object.assign(root, { status: 'completed', stopped: true, attention: '', evaluationTaskId: child.id });
   if (cancelled) Object.assign(root, { generatedSiteId: null, status: 'cancelled', stopped: true, attention: '', nextStep: '' });
+  if (namingConflict) Object.assign(root, { generatedSiteId: null, stopped: true, canAdjustSiteNames: true, attention: '自定义站点名或子域名已被占用' });
   const calls = [];
   const request = async (path, options = {}) => {
     calls.push({ path, method: options.method || 'GET' });
@@ -69,13 +70,14 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
       const task = path.includes('/child/') ? child : root;
       if (path.endsWith('/confirm-stopped')) task.stopped = true;
       if (path.endsWith('/resume')) { task.status = 'queued'; task.attention = ''; }
+      if (path.endsWith('/adjust-site-names')) { task.status = 'queued'; task.attention = ''; task.canAdjustSiteNames = false; }
       task.updatedAt++;
       return structuredClone(task);
     }
     if (path.endsWith('/summary')) return structuredClone({ task: path.includes('/child/') ? child : root, evaluation: pair ? child : null, active: null, deliveryEnabled: false, latest: null });
     if (path.includes('/sections/execution')) {
       const task = path.includes('taskId=child') ? child : root;
-      return structuredClone({ task: legacy ? undefined : { id: task.id, status: task.status, stopped: task.stopped }, context: '', error: '', interruption: task.status === 'interrupted' ? { reason: task.attention, nextSteps: ['先确认停止再恢复'], resumeFrom: '保留证据', attempted: [] } : undefined });
+      return structuredClone({ task: legacy ? undefined : { id: task.id, status: task.status, stopped: task.stopped, canAdjustSiteNames: task.canAdjustSiteNames }, context: '', error: '', interruption: task.status === 'interrupted' ? { reason: task.attention, nextSteps: ['先确认停止再恢复'], resumeFrom: '保留证据', attempted: [] } : undefined });
     }
     throw Error(`Unexpected request ${path}`);
   };
@@ -150,5 +152,24 @@ test('cancelled tasks expose restart button in header and execution tab and queu
     await f.buttons('重新启动')[0].props.onClick(); await settle();
     assert.equal(f.calls.filter(c => c.method === 'POST').at(-1).path, '/automation/tasks/root/resume');
     assert.equal(f.buttons('重新启动').length, 0);
+  } finally { f.close(); }
+});
+
+test('naming conflicts expose a dedicated action and continue the original task through its naming endpoint', async () => {
+  const f = await fixture({ namingConflict: true });
+  try {
+    assert.equal(f.buttons('自动调整名称并继续').length, 2); assert.equal(f.buttons('恢复任务').length, 0);
+    await f.buttons('自动调整名称并继续')[1].props.onClick(); await settle();
+    assert.deepEqual(f.calls.filter(call => call.method === 'POST').map(call => call.path), ['/automation/tasks/root/adjust-site-names']);
+    assert.equal(f.root.status, 'queued'); assert.equal(f.buttons('自动调整名称并继续').length, 0);
+  } finally { f.close(); }
+});
+
+test('a failed naming adjustment leaves the action available and shows the error', async () => {
+  const f = await fixture({ namingConflict: true, fail: true });
+  try {
+    await f.buttons('自动调整名称并继续')[0].props.onClick(); await settle();
+    assert.ok(f.text().includes('执行器仍有占用')); assert.equal(f.buttons('自动调整名称并继续').length, 2);
+    assert.equal(f.root.status, 'interrupted');
   } finally { f.close(); }
 });

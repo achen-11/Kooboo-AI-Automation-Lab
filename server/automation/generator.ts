@@ -19,9 +19,10 @@ import { frozenCollectionAssetGapGuidance, preflightCollectionTarget } from './c
 import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, type SourceVisualIndex } from './collection/source-visual.js';
 import { adaptRepairImages } from './repair-images.js';
 import { resolve } from 'node:path';
-import { generatedSiteName, normalizeRootDomain, parseRootDomains, findRootDomain, bindingDomain } from '../../shared/kooboo-domains.js';
+import { generatedSiteName, normalizeRootDomain, parseRootDomains, findRootDomain } from '../../shared/kooboo-domains.js';
 import { generationSourceEvidence } from './generation-reference.js';
 import { archiveDeliveryImages, GenerationDeliveryStore, isPreSendBridgeRejection } from './generation-delivery.js';
+import { assertSiteNaming, availableSiteNames } from './site-naming.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
@@ -46,7 +47,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   let site=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
   if(!site){
     // A pre-upgrade uncertain create must still reconcile the exact old name.
-    const slug=task.generation.siteName||(task.generation.createAttempted?`auto-${task.id.slice(0,12)}`:generatedSiteName(task.id));
+    let slug=task.generation.siteName||(task.generation.createAttempted?`auto-${task.id.slice(0,12)}`:generatedSiteName(task.id));
     if(task.generation.createAttempted){
       const list=await request('Site/List');const matches=(Array.isArray(list)?list:[]).filter((s:any)=>(s.siteName||s.SiteName)===slug);
       if(matches.length!==1)throw new Pending(`站点 ${slug} 创建结果尚未唯一确认，禁止重复创建；请检查 Kooboo 环境。`);
@@ -60,12 +61,13 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     if(!root)throw new Error('Kooboo 未返回可用根域名，请核对连接环境');
     task.generation.rootDomain=root;store.put(task);
     if(!rootOption)throw new FollowupRuntimeError(`建站根域名 ${root} 在当前 Kooboo 环境中已不可用，请核对环境域名后重试；不会自动改用其他域名。`,['在原 Kooboo 环境恢复所选根域名后重试；或停止本任务，选择可用根域名新建任务。']);
-    const subDomain=task.generation.subDomain||slug;
-    const host=bindingDomain(subDomain,rootOption);
-    if(host.length>253||host.split('.').some(label=>label.length>63))throw new GenerationInputError('完整域名过长，请缩短子域名');
-    if(task.generation.subDomain){
-      const [nameFree,domainFree]=await Promise.all([request(`Site/IsUniqueName?SiteName=${encodeURIComponent(slug)}`),request(`Site/IsSubdomainAvailable?RootDomain=${encodeURIComponent(root)}&SubDomain=${encodeURIComponent(subDomain)}`)]);
-      if(nameFree!==true||domainFree!==true)throw new GenerationInputError('自定义站点名或子域名已被占用或无法确认可用，请修改名称后新建任务');
+    let subDomain=task.generation.subDomain||slug;
+    assertSiteNaming(slug,subDomain,rootOption);
+    if(task.generation.subDomain||task.generation.siteName){
+      const selected=await availableSiteNames(slug,subDomain,rootOption,request);
+      if(selected.siteName!==slug||selected.subDomain!==subDomain)
+        store.event(task.id,`名称已占用，自动调整：站点名称 ${slug} → ${selected.siteName}；子域名 ${subDomain} → ${selected.subDomain}`);
+      slug=selected.siteName;subDomain=selected.subDomain;
     }
     store.event(task.id,`准备新站 ${slug}；根域名 ${root}；创建结果不确定时停止，不自动重发创建请求`);
     let created:any;task.generation.siteName=slug;task.generation.subDomain=subDomain;task.generation.createAttempted=true;store.put(task);

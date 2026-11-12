@@ -11,8 +11,8 @@ function act() {
 }
 </script>
 <template>
-  <button v-if="recovery" class="button" :class="recovery === 'resume' ? 'primary' : 'secondary'" :disabled="busy" @click="act">
-    <Play v-if="recovery === 'resume'" :size="16" /><Check v-else :size="16" />
-    {{ recovery === 'resume' ? (task?.status === 'cancelled' ? '重新启动' : '恢复任务') : '已检查并确认原执行停止' }}
+  <button v-if="recovery" class="button" :class="recovery === 'confirm-stopped' ? 'secondary' : 'primary'" :disabled="busy" @click="act">
+    <Check v-if="recovery === 'confirm-stopped'" :size="16" /><Play v-else :size="16" />
+    {{ recovery === 'adjust-site-names' ? '自动调整名称并继续' : recovery === 'resume' ? (task?.status === 'cancelled' ? '重新启动' : '恢复任务') : '已检查并确认原执行停止' }}
   </button>
 </template>

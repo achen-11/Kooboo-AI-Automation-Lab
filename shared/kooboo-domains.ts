@@ -3,6 +3,21 @@ export interface KoobooRootDomain {
   sudDomainUseDash: boolean;
 }
 
+type SiteNaming = { siteName?: string; subDomain?: string };
+
+export function generationSiteNames(input: SiteNaming, resource: SiteNaming): SiteNaming {
+  return {
+    siteName: (input.siteName || resource.siteName || input.subDomain || resource.subDomain)?.trim().toLowerCase(),
+    subDomain: (input.subDomain || resource.subDomain || input.siteName || resource.siteName)?.trim().toLowerCase(),
+  };
+}
+
+/** Validate only the supplied name, never a binding host or root-domain suffix. */
+export function siteNamingError(value: string, label: string): string {
+  if (value.includes('-')) return `${label}不能包含连字符（-），请改用下划线（_）`;
+  return /^[a-z0-9_]{1,63}$/i.test(value) ? '' : `${label}只能使用英文字母、数字和下划线（_），最多 63 个字符`;
+}
+
 export function normalizeRootDomain(value: string): string {
   return value.trim().replace(/^\./, '').toLowerCase();
 }

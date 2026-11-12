@@ -14,6 +14,7 @@ import { TimingLedger } from './timing.js';
 import { EvaluationExecutions } from './evaluation-execution.js';
 import { ResourceFolders } from './resource-folders.js';
 import { Dispositions } from './dispositions.js';
+import { generationSiteNames, siteNamingError } from '../../shared/kooboo-domains.js';
 
 const initialSop = `你是独立评测员，只做审查与取证，不修改目标站。
 先读取任务范围、资料和规则，形成应检查清单。PC 与移动端分别采集、查看截图并实际检查交互。
@@ -55,7 +56,7 @@ export class AutomationStore {
       CREATE INDEX IF NOT EXISTS auto_task_index_site ON auto_task_index(site_key,created_at DESC);`);
     // Backfill/repair after an upgrade or rollback; preserve original insertion ordering.
     db.transaction(() => {
-      for (const row of db.prepare("SELECT t.json FROM auto_tasks t LEFT JOIN auto_task_index h ON h.id=t.id WHERE h.id IS NULL OR t.status<>h.status OR json_extract(t.json,'$.updatedAt') IS NOT json_extract(h.json,'$.updatedAt') ORDER BY t.rowid").all()) this.indexTask(JSON.parse(row.json));
+      for (const row of db.prepare("SELECT t.json FROM auto_tasks t LEFT JOIN auto_task_index h ON h.id=t.id WHERE h.id IS NULL OR t.status<>h.status OR json_extract(t.json,'$.updatedAt') IS NOT json_extract(h.json,'$.updatedAt') OR json_type(h.json,'$.summary.canAdjustSiteNames') IS NULL ORDER BY t.rowid").all()) this.indexTask(JSON.parse(row.json));
     });
     if (!this.rules().length) {
       this.publish({ name: 'Site UI · 初始规则', kind: 'site', sop: initialSop, references: '', criteria: [
@@ -226,8 +227,10 @@ export class AutomationStore {
       const task: AutomationTask = { id:randomUUID(),kind:input.kind,resourceId:id,versionId:version.id,resourceName:version.name,scenario:version.scenario,scope:input.scope,environmentId:site?.environmentId||input.environmentId,generatedSiteId:site?.id||null,parentId:input.parentId||null,message,status:'queued',stopped:true,createdAt:now,updatedAt:now,error:'',context:'',threadId:'',rule:rule||null,stage:input.kind==='generation'?'prepare':'evaluation',report:null,siteUrl:site?.url||'',model:null };
       task.optimizationRootId=input.optimizationRootId;task.optimizationRound=input.optimizationRound;
       if(!site&&input.kind==='generation'){
-        const siteName=input.siteName||version.siteName||input.subDomain||version.subDomain;
-        const subDomain=input.subDomain||version.subDomain||input.siteName||version.siteName;
+        const {siteName,subDomain}=generationSiteNames(input,version);
+        for(const [value,label] of [[subDomain,'子域名'],[siteName,'站点名称']] as const){
+          if(value!==undefined){const error=siteNamingError(value,label);if(error)throw new Conflict(`${resource.name}：${error}`);}
+        }
         const rootDomain=input.rootDomain||version.rootDomain||input.defaultRootDomain;
         if(siteName||subDomain||rootDomain)task.generation={...(siteName?{siteName}:{}),...(subDomain?{subDomain}:{}),...(rootDomain?{rootDomain}:{})};
       }

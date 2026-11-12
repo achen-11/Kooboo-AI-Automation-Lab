@@ -65,7 +65,7 @@ function openDisposition(nextState: DispositionState) {
   });
 }
 async function onDispositionSaved() { await load(); siteRefresh.value++; }
-const canRecover = computed(() => !disposition.value && taskRecoveryAction(current.value) === 'resume');
+const canRecover = computed(() => !disposition.value && ['resume','adjust-site-names'].includes(taskRecoveryAction(current.value) || ''));
 const canCancel = computed(() => current.value && (!current.value.stopped || ['queued', 'following-up'].includes(current.value.status)) && !['completed', 'failed', 'cancelled', 'interrupted'].includes(current.value.status));
 const canCreateRound = computed(() => !disposition.value && !optimizationActive.value && (!data.value?.active||data.value.active.stopped&&!['queued','running','following-up','cancelling'].includes(data.value.active.status)) && task.value?.stopped && task.value.generatedSiteId && !['queued', 'running', 'following-up', 'cancelling'].includes(task.value.status) && (!evaluation.value || evaluation.value.stopped && !['queued', 'running', 'following-up', 'cancelling'].includes(evaluation.value.status)));
 const canArchiveComplete = computed(() => disposition.value?.state !== 'completed' && !optimizationActive.value && !canCancel.value && Boolean(task.value?.stopped && (!evaluation.value || evaluation.value.stopped) && (!data.value?.active || data.value.active.stopped)));
@@ -116,7 +116,7 @@ async function action(suffix: string, id = current.value?.id) {
   if (!id || busy.value) return;
   const restarting = suffix === 'resume' && current.value?.id === id && current.value?.status === 'cancelled';
   busy.value = true; actionError.value = '';
-  try { await api(`/automation/tasks/${id}/${suffix}`, { method: 'POST' }); notify.success(suffix === 'resume' ? (restarting ? '已重新启动任务' : '已提交恢复请求') : ['cancel','optimization/stop'].includes(suffix) ? '已提交停止请求' : '已确认原执行停止'); await load(); if (suffix === 'resume' || suffix === 'confirm-stopped') await execution.value?.refresh(); }
+  try { await api(`/automation/tasks/${id}/${suffix}`, { method: 'POST' }); notify.success(suffix === 'adjust-site-names' ? '已调整名称，原任务已重新加入队列' : suffix === 'resume' ? (restarting ? '已重新启动任务' : '已提交恢复请求') : ['cancel','optimization/stop'].includes(suffix) ? '已提交停止请求' : '已确认原执行停止'); await load(); if (['resume','confirm-stopped','adjust-site-names'].includes(suffix)) await execution.value?.refresh(); }
   catch (reason) { actionError.value = message(reason); }
   finally { busy.value = false; }
 }

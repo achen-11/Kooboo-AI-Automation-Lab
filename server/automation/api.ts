@@ -11,7 +11,7 @@ import { stopOptimization } from './optimization.js';
 import { Conflict } from '../lib/store.js';
 import { queueDelivery, deliveryReceipt } from './delivery.js';
 import { probeCodex } from './probe.js';
-import { brief, compactNotice, taskExecuting, taskSummary } from '../../shared/task-presentation.js';
+import { brief, compactNotice, taskExecuting, taskSummary, canAdjustTaskSiteNames } from '../../shared/task-presentation.js';
 import { registerExecutionLogApi } from './execution-log.js';
 import { completenessSettingsSchema } from './completeness.js';
 import { registerLearningApi } from './learning-api.js';
@@ -33,6 +33,8 @@ import { registerDispositionApi } from './dispositions.js';
 import { rootDomainSchema, siteNameSchema } from '../lib/validation.js';
 import { clearSiteRetry } from './retry-guard.js';
 import { registerSiteDomainApi } from './site-domains.js';
+import { registerTaskNamingApi } from './site-naming-api.js';
+import { taskSiteNaming } from './site-naming.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -66,6 +68,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerResourceFolderApi(app,store.resourceFolders);
   registerDispositionApi(app,store,()=>vault.get().threshold,cancel,owns);
   registerSiteDomainApi(app,store,vault,owns);
+  registerTaskNamingApi(app,store,vault,owns);
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
@@ -251,11 +254,19 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.get('/api/automation/tasks/:id/sections/:section',async(request,reply)=>{
     const {id,section}=params.extend({section:z.enum(['execution','input','report','delivery'])}).parse(request.params),task=store.task(id);
     if(!task)return reply.code(404).send({error:'任务不存在'});
-    if(section==='input')return {message:task.message,version:store.version(task.versionId),rule:task.rule,threadId:task.threadId,model:task.model,siteName:task.generation?.siteName,subDomain:task.generation?.subDomain,rootDomain:task.generation?.rootDomain,optimization:task.optimization?{policy:task.optimization.policy}:undefined};
+    if(section==='input'){
+      const version=store.version(task.versionId),site=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
+      const roots=site?store.db.prepare("SELECT DISTINCT json_extract(json,'$.generation.rootDomain') AS root FROM auto_tasks WHERE site_key=? AND kind='generation' AND json_extract(json,'$.generation.rootDomain') IS NOT NULL").all(site.id).map(row=>String(row.root)):[];
+      const defaultRoot=vault.get().environments.find(env=>env.id===task.environmentId)?.defaultRootDomain;
+      if(defaultRoot)roots.push(defaultRoot);
+      return {message:task.message,version,rule:task.rule,threadId:task.threadId,model:task.model,...taskSiteNaming(task,version,site,roots),optimization:task.optimization?{policy:task.optimization.policy}:undefined};
+    }
     if(section==='execution'){
       const q=pagination.extend({taskId:uuid.optional()}).parse(request.query);if(q.taskId&&!executionTaskIds(task).includes(q.taskId))throw new Conflict('执行记录不属于本工作流');const selected=q.taskId?store.task(q.taskId)!:task;const total=Number(store.db.prepare('SELECT COUNT(*) AS total FROM auto_events WHERE task_id=?').get(selected.id).total),pages=Math.max(1,Math.ceil(total/q.pageSize)),page=Math.min(q.page,pages);
       const items=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT ? OFFSET ?').all(selected.id,q.pageSize,(page-1)*q.pageSize);
-      return {task:{id:selected.id,status:selected.status,stopped:selected.stopped},context:selected.context,followup:selected.followup,interruption:selected.interruption,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
+      const canAdjustSiteNames=canAdjustTaskSiteNames(selected);
+      const interruption=selected.interruption&&canAdjustSiteNames?{...selected.interruption,nextSteps:['点击“自动调整名称并继续”，检查可用的名称和子域名后恢复原任务。']}:selected.interruption;
+      return {task:{id:selected.id,status:selected.status,stopped:selected.stopped,canAdjustSiteNames},context:selected.context,followup:selected.followup,interruption,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
     }
     const source=task.kind==='evaluation'?task:task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
     if(section==='delivery')return {task:source?{id:source.id,kind:source.kind,environmentId:source.environmentId,status:source.status,delivery:source.delivery,report:source.report?{quality:source.report.quality}:null}:null};

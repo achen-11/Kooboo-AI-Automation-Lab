@@ -282,6 +282,7 @@ test('evaluation and analysis reset bloated or budget-blocked threads while pres
       decide:(async(options:any)=>{
         analysisAttempts++;
         assert.ok(options.policy.maxTokens>=15000000);
+        assert.ok(options.policy.maxRequests>=240,'site-scope analysis guarantees at least 240 requests');
         options.onThreadStarted?.('bloated-analysis-thread');
         throw new Error('剩余预算不足以接收本次上下文；请缩小上下文或显式调整预算。');
       }) as typeof localDecision
@@ -305,6 +306,7 @@ test('evaluation and analysis reset bloated or budget-blocked threads while pres
         assert.match(options.sop,/8192 output_tokens/);
         assert.ok(options.minutes>=30,'site-scope evaluation guarantees at least 30 minutes');
         assert.ok(options.policy.maxTokens>=15000000);
+        assert.ok(options.policy.maxRequests>=300,'site-scope evaluation guarantees at least 300 requests');
         options.onThreadStarted?.('bloated-thread-001');
         const payload=evaluationPayload(options,task);
         const badSelector=structuredClone(payload);badSelector.views[0].selector='#missing-hero';

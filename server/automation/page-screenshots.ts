@@ -43,11 +43,26 @@ export async function waitForScreenshotContent(timeout:number):Promise<Screensho
     }
     return true;
   };
+  const visibleImage=(image:HTMLImageElement)=>{
+    const r=image.getBoundingClientRect();
+    return r.width>1&&r.height>1&&visible(image);
+  };
+  const transformed=(element:Element)=>{
+    for(let current:Element|null=element;current;current=current.parentElement||(current.getRootNode() as ShadowRoot).host||null){
+      const style=getComputedStyle(current);
+      if(style.transform&&style.transform!=='none')return true;
+    }
+    return false;
+  };
   let previous='',lastChange=start,result:ScreenshotReadiness;
   do {
     await new Promise(resolve=>setTimeout(resolve,100));
-    const images=Array.from(document.images).filter(visible);
-    const animations=document.getAnimations().filter(animation=>{
+    const images=Array.from(document.images).filter(visibleImage);
+    for(const img of images)if(!img.complete&&img.loading==='lazy')img.loading='eager';
+    const allAnimations=document.getAnimations();
+    const infiniteTargets=new Set(allAnimations.filter(a=>{const e=a.effect as KeyframeEffect|null;return a.playState==='running'&&e?.target instanceof Element&&!Number.isFinite(e.getComputedTiming().endTime);}).map(a=>(a.effect as KeyframeEffect).target as Element));
+    const hasInfinite=(element:Element)=>{for(let cur:Element|null=element;cur;cur=cur.parentElement)if(infiniteTargets.has(cur))return true;return false;};
+    const animations=allAnimations.filter(animation=>{
       const effect=animation.effect as KeyframeEffect|null,target=effect?.target;
       return animation.playState==='running'&&target instanceof Element&&inViewport(target)&&Number.isFinite(effect!.getComputedTiming().endTime);
     });
@@ -60,7 +75,8 @@ export async function waitForScreenshotContent(timeout:number):Promise<Screensho
     }
     const layout=Array.from(document.querySelectorAll('body > *, section, h1, h2, h3, img')).filter(inViewport).slice(0,200).map(element=>{
       const rect=element.getBoundingClientRect(),style=getComputedStyle(element);
-      return [Math.round(rect.x),Math.round(rect.y),Math.round(rect.width),Math.round(rect.height),style.opacity,style.visibility,(element as HTMLImageElement).currentSrc];
+      const moving=transformed(element)||hasInfinite(element);
+      return [moving?0:Math.round(rect.x),moving?0:Math.round(rect.y),Math.round(rect.width),Math.round(rect.height),style.opacity,style.visibility,(element as HTMLImageElement).currentSrc];
     });
     const signature=JSON.stringify([layout,text]),now=performance.now();
     if(signature!==previous)lastChange=now;previous=signature;

@@ -24,7 +24,7 @@ export function analysisCaptureIndex(capture:WorkflowCapture,directory:string){
     const observation=JSON.parse(readTemplateEvidence(directory,proof).toString()),p=observation.position;
     return {file:file.name,settled:file.settled,...(p?{y:p.scrollY,width:p.viewportWidth,height:p.viewportHeight,documentHeight:p.documentHeight}:{}),stableForMs:observation.readiness?.stableForMs};
   });
-  return {scope:capture.scope,layout:{url,viewport,width,height,truncated,elementCount:capture.layout.elements.length,linkCount:capture.layout.links.length,candidates:candidates.slice(0,60).map(({selector,tag,text,rect})=>({selector,tag,text:text.slice(0,160),rect})),candidatesTruncated:candidates.length>60},frames,files:capture.files.map(({name,type,settled})=>({name,type,settled}))};
+  return {scope:capture.scope,layout:{url,viewport,width,height,truncated,elementCount:capture.layout.elements.length,linkCount:capture.layout.links.length,internalLinks:capture.layout.links.slice(0,30),candidates:candidates.slice(0,60).map(({selector,tag,text,rect})=>({selector,tag,text:text.slice(0,160),rect})),candidatesTruncated:candidates.length>60},frames,files:capture.files.map(({name,type,settled})=>({name,type,settled}))};
 }
 export function recordTemplateLayout(task:AutomationTask,layout:TemplateLayoutSnapshot,role:TemplateEvidence['role'],directory:string,browser:WorkflowBrowser):TemplateEvidence {
   const name=randomUUID()+'.json',bytes=Buffer.from(JSON.stringify({kind:'template-layout',url:layout.url,viewport:layout.viewport,role,capturedAt:Date.now(),binding:{taskId:task.id,inputVersionId:task.versionId,siteRevision:role==='target'?task.siteRevision:null},layout}));
@@ -42,21 +42,39 @@ export function registeredTemplateEvidence(task:AutomationTask,files:MaterialFil
 export async function captureWorkflowScope(input:{task:AutomationTask;registry:TemplateWorkflowStore;directory:string;browser:WorkflowBrowser;role:'reference'|'content'|'target';url:string;viewport:TemplateViewport;signal:AbortSignal;mode?:'page'|'regions';selectors?:string[];reason?:string;layout?:TemplateLayoutSnapshot}):Promise<WorkflowCapture>{
   const {task,registry,directory,browser,role,url,viewport,signal}=input;
   const key=templateHash(['template-capture-v1',task.templateWorkflow,role,role==='target'?[task.id,task.siteRevision]:null,url,viewport,input.mode||'page',input.selectors||[]]);
-  type Saved={files:TemplateEvidence[];receipts:PageScreenshotsReceipt['screenshots'];complete:boolean;nextStartY:number|null;nextSelectorIndex:number|null;gaps:string[];layout:TemplateLayoutSnapshot;layoutEvidence?:string;traversed?:boolean};
+  type Saved={files:TemplateEvidence[];receipts:PageScreenshotsReceipt['screenshots'];complete:boolean;nextStartY:number|null;nextSelectorIndex:number|null;gaps:string[];layout:TemplateLayoutSnapshot;layoutEvidence?:string;traversed?:boolean;externalMotionBypass?:boolean};
   let saved=registry.batch<Saved>(key);
   if(saved){try{for(const file of saved.files)readTemplateEvidence(directory,file);}catch{saved=undefined;}}
-  if(saved){if(saved.complete)return {layout:saved.layout,files:saved.files,scope:{pagePath:new URL(url).pathname+new URL(url).search,viewport,mode:input.mode||'page',selectors:input.selectors||[],reason:input.reason||'复用同一次采集的已验证回执',evidence:saved.files.map(f=>f.name),complete:true}};}
+  if(saved){if(saved.complete)return {layout:saved.layout,files:saved.files,scope:{pagePath:new URL(url).pathname+new URL(url).search,viewport,mode:input.mode||'page',selectors:input.selectors||[],reason:input.reason||(saved.externalMotionBypass?'外部来源已全页覆盖且完成 10s 降噪重试，保留未静止帧提示并继续分析':'复用同一次采集的已验证回执'),evidence:saved.files.map(f=>f.name),complete:true}};}
   signal.throwIfAborted();
   const layout=saved?.layout||input.layout||await browser.capture({action:'inspect_layout',role,url,viewport}) as TemplateLayoutSnapshot;
   saved??={files:[],receipts:[],complete:false,nextStartY:0,nextSelectorIndex:0,gaps:[],layout};
-  // Retry only unstable frames after traversal; never discard the stable prefix on a gap.
+  // Retry unsettled frames once per capture call; never suppress retries across restarts.
   const repaired=new Set<string>();
   const frameKey=(frame:PageScreenshotsReceipt['screenshots'][number])=>`${frame.capture?.selectorIndex??''}:${frame.position.scrollY}`;
-  for(let batch=0;batch<4&&!saved.complete;batch++){
+  const externalSettledEnough=(positions:PageScreenshotsReceipt['screenshots'][number]['position'][])=>{
+    if(role==='target'||!saved!.traversed||!saved!.receipts.length||saved!.gaps.length)return false;
+    if(positions.some(position=>position.horizontalOverflow))return false;
+    if(input.mode!=='regions'&&!screenshotRangeCovered(positions))return false;
+    const unsettled=saved!.receipts.filter(frame=>!frame.settlement?.settled);
+    if(!unsettled.length||unsettled.some(frame=>!repaired.has(frameKey(frame))))return false;
+    return unsettled.every(frame=>{
+      const r=frame.readiness;
+      return Boolean(r&&r.brokenImages===0&&r.runningAnimations===0&&r.fontsReady&&(r.stableForMs>=500||r.pendingImages===0));
+    });
+  };
+  let traversalBatches=0,retryBatches=0;
+  while(!saved.complete){
     const retry=saved.traversed?saved.receipts.find(frame=>!frame.settlement?.settled&&!repaired.has(frameKey(frame))):undefined;
-    if(saved.traversed&&!retry)break;
+    if(saved.traversed&&!retry){
+      const positions=[...saved.receipts].sort((a,b)=>a.position.scrollY-b.position.scrollY).map(frame=>frame.position);
+      if(externalSettledEnough(positions)){saved.complete=true;saved.externalMotionBypass=true;registry.saveBatch(key,saved);}
+      break;
+    }
+    if(!retry&&traversalBatches>=4)break;
+    if(retry&&retryBatches>=16)break;
     const startY=retry?Math.floor(retry.position.scrollY):saved.nextStartY||0,startSelectorIndex=retry?.capture?.selectorIndex??saved.nextSelectorIndex??0;
-    if(retry)repaired.add(frameKey(retry));
+    if(retry){repaired.add(frameKey(retry));retryBatches++;}else traversalBatches++;
     const receipt=await browser.capture({action:'take_page_screenshots',role,url,viewport,scope:input.mode||'page',selectors:input.selectors||[],startY,startSelectorIndex,maxScreenshots:retry?1:16,...(retry?{settleTimeoutMs:10000}:{})}) as PageScreenshotsReceipt;
     if(receipt.action!=='take_page_screenshots'||!Array.isArray(receipt.screenshots))throw new Error('采集工具没有返回已登记逐屏证据');
     const names=receipt.screenshots.flatMap(frame=>[frame.file,frame.file.replace(/\.png$/,'.json')]);
@@ -78,11 +96,12 @@ export async function captureWorkflowScope(input:{task:AutomationTask;registry:T
     if(saved.receipts.some(frame=>!frame.settlement?.settled))diagnostics.push('存在尚未稳定的画面，保留有效帧并仅补采这些位置');
     if(positions.some(position=>position.horizontalOverflow))diagnostics.push('Horizontal overflow was not captured.');
     saved.complete=!!saved.traversed&&saved.receipts.length>0&&!diagnostics.length&&(input.mode==='regions'||screenshotRangeCovered(positions));
+    if(!saved.complete&&externalSettledEnough(positions)){saved.complete=true;saved.externalMotionBypass=true;}
     registry.saveBatch(key,saved);
     if(saved.complete)break;
     if(!receipt.screenshots.length)break;
     if(!retry&&!saved.traversed&&(input.mode||'page')==='page'&&(receipt.nextStartY===null||receipt.nextStartY<=startY))throw new Error('逐屏采集没有前进，已保留有效证据');
   }
   if(saved.complete&&!saved.layoutEvidence){saved.layout=await browser.capture({action:'inspect_layout',role,url,viewport}) as TemplateLayoutSnapshot;const proof=recordTemplateLayout(task,saved.layout,role,directory,browser);saved.files.push(proof);saved.layoutEvidence=proof.name;registry.saveBatch(key,saved);registry.store.put(task);}
-  return {layout:saved.layout,files:saved.files,scope:{pagePath:new URL(url).pathname+new URL(url).search,viewport,mode:input.mode||'page',selectors:input.selectors||[],reason:input.reason||'一次采集服务全部检查',evidence:saved.files.map(f=>f.name),complete:saved.complete}};
+  return {layout:saved.layout,files:saved.files,scope:{pagePath:new URL(url).pathname+new URL(url).search,viewport,mode:input.mode||'page',selectors:input.selectors||[],reason:input.reason||(saved.externalMotionBypass?'外部来源已全页覆盖且完成 10s 降噪重试，保留未静止帧提示并继续分析':'一次采集服务全部检查'),evidence:saved.files.map(f=>f.name),complete:saved.complete}};
 }

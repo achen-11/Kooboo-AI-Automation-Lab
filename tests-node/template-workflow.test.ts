@@ -38,8 +38,8 @@ test('adding designer groups preserves customized checks and does not duplicate 
   merged[1].viewports.push('desktop');
   assert.equal(designerTemplateChecks[1].viewports.length,2,'draft edits cannot mutate the source definitions');
 });
-function fakeBrowser(f:Fixture,owner:AutomationTask,calls:{role:string;action:string;viewport:string}[],change?:(value:TemplateLayoutSnapshot)=>TemplateLayoutSnapshot,script?:(input:any)=>{position?:Record<string,unknown>;settled?:boolean;receipt?:Record<string,unknown>}):typeof evaluationBrowser{return async(_urls,work,_signal,initial=[],checkpoint=()=>{},binding)=>{const artifacts=structuredClone(initial);return {artifacts,env:{EVALUATION_BROWSER_URL:'',EVALUATION_BROWSER_TOKEN:''},close:async()=>{},capture:async(raw:unknown)=>{const input=raw as {role:string;action:string;url:string;viewport:TemplateViewport;scope?:string;selectors?:string[]};calls.push(input);const measured=change?change(layout(input.url,input.viewport)):layout(input.url,input.viewport);if(input.action==='inspect_layout')return measured;
-    const behavior=script?.(input)||{},name=randomUUID()+'.png',position={url:input.url,scrollX:0,scrollY:0,documentHeight:1000,viewportWidth:measured.width,viewportHeight:1000,matches:1,invalidSelector:false,visible:true,nestedScroll:false,horizontalOverflow:false,regionTop:0,regionBottom:1000,...behavior.position},observation={file:name,url:input.url,role:input.role,viewport:input.viewport,action:input.action,position,settlement:{settled:behavior.settled??true},capture:{scope:input.scope||'page',...(input.scope==='regions'?{selectorIndex:(raw as any).startSelectorIndex||0}:{})},binding};
+function fakeBrowser(f:Fixture,owner:AutomationTask,calls:{role:string;action:string;viewport:string}[],change?:(value:TemplateLayoutSnapshot)=>TemplateLayoutSnapshot,script?:(input:any)=>{position?:Record<string,unknown>;settled?:boolean;readiness?:Record<string,unknown>;receipt?:Record<string,unknown>}):typeof evaluationBrowser{return async(_urls,work,_signal,initial=[],checkpoint=()=>{},binding)=>{const artifacts=structuredClone(initial);return {artifacts,env:{EVALUATION_BROWSER_URL:'',EVALUATION_BROWSER_TOKEN:''},close:async()=>{},capture:async(raw:unknown)=>{const input=raw as {role:string;action:string;url:string;viewport:TemplateViewport;scope?:string;selectors?:string[]};calls.push(input);const measured=change?change(layout(input.url,input.viewport)):layout(input.url,input.viewport);if(input.action==='inspect_layout')return measured;
+    const behavior=script?.(input)||{},name=randomUUID()+'.png',position={url:input.url,scrollX:0,scrollY:0,documentHeight:1000,viewportWidth:measured.width,viewportHeight:1000,matches:1,invalidSelector:false,visible:true,nestedScroll:false,horizontalOverflow:false,regionTop:0,regionBottom:1000,...behavior.position},observation={file:name,url:input.url,role:input.role,viewport:input.viewport,action:input.action,position,settlement:{settled:behavior.settled??true},...(behavior.readiness?{readiness:behavior.readiness}:{}),capture:{scope:input.scope||'page',...(input.scope==='regions'?{selectorIndex:(raw as any).startSelectorIndex||0}:{})},binding};
     // Real PNG signature is sufficient here; no image interpretation is simulated.
     for(const [filename,bytes,type] of [[name,Buffer.from('89504e470d0a1a0a0000000049454e44ae426082','hex'),'image/png'],[name.replace('.png','.json'),Buffer.from(JSON.stringify(observation)),'application/json']] as const){mkdirSync(resolve(work,'evidence'),{recursive:true});writeFileSync(resolve(work,'evidence',filename),bytes);artifacts.push({id:randomUUID(),name:filename,type,size:bytes.length,sha256:hash(bytes),role:input.role as MaterialFile['role'],viewport:input.viewport,settled:behavior.settled??true});}checkpoint(artifacts);return {action:'take_page_screenshots',status:'complete',coverageComplete:true,screenshots:[observation],gaps:[],nextStartY:null,nextSelectorIndex:null,...behavior.receipt};}} as Awaited<ReturnType<typeof evaluationBrowser>>;};}
 function analysisPayload(context:any){const captures=context.captures as {scope:{viewport:TemplateViewport};files:{name:string;type:string}[]}[];return {pages:[{path:'/',title:'Home',views:[{id:'hero',title:'Hero',role:'hero',required:true,layouts:captures.map(capture=>({viewport:capture.scope.viewport,selector:'#hero',evidence:capture.files.map(file=>file.name),intent:'Single hero',exceptions:'',constraints:[]}))}]}],contentMapping:'Template copy',manifest:{sourceComplete:true,limitations:[],items:[{id:'home',title:'Home',kind:'page',required:true,source:'https://source.test/',expectation:'Hero on both viewports',paths:['/'],expectedCount:1,viewports:['desktop','mobile']}],evidence:context.evidence.map((file:any)=>file.name)}};}
@@ -201,5 +201,70 @@ test('incomplete target state resumes its capture instead of being cached as fin
     assert.equal(calls.filter(call=>call.action==='take_page_screenshots').length,2);
     assert.ok(calls.filter(call=>call.action==='take_page_screenshots').every((call:any)=>call.maxScreenshots===1));
     assert.equal(f.registry.evaluation(task.id)?.quality,'passed');
+  }finally{f.close();}
+});
+
+test('external capture completes after 10s readiness retry while target stays strict, and analysis exposes internalLinks',async()=>{
+  const f=fixture();
+  try{
+    const readiness={stableForMs:600,pendingImages:0,brokenImages:0,runningAnimations:0,fontsReady:true};
+    const work=resolve(f.directory,'automation-runs',f.task.id);
+    mkdirSync(resolve(work,'evidence'),{recursive:true});
+    const extCalls:any[]=[];
+    const extBrowser=await fakeBrowser(
+      f,
+      f.task,
+      extCalls,
+      snapshot=>({...snapshot,links:['https://source.test/about','https://source.test/pricing']}),
+      ()=>({settled:false,readiness})
+    )({target:'',reference:'https://source.test/',content:''},work,new AbortController().signal,[],files=>{f.task.artifacts=files;},{taskId:f.task.id,inputVersionId:f.task.versionId,siteRevision:''});
+    const extScope=await captureWorkflowScope({
+      task:f.task,
+      registry:f.registry,
+      directory:f.directory,
+      browser:extBrowser,
+      role:'reference',
+      url:'https://source.test/',
+      viewport:'desktop',
+      signal:new AbortController().signal
+    });
+    assert.equal(extScope.scope.complete,true);
+    assert.equal(extCalls.filter(call=>call.action==='take_page_screenshots').length,2);
+
+    const targetCalls:any[]=[];
+    f.store.beginSiteChange(f.task);
+    const targetBrowser=await fakeBrowser(
+      f,
+      f.task,
+      targetCalls,
+      undefined,
+      ()=>({settled:false,readiness})
+    )({target:'https://target.test/',reference:'',content:''},work,new AbortController().signal,f.task.artifacts||[],files=>{f.task.artifacts=files;},{taskId:f.task.id,inputVersionId:f.task.versionId,siteRevision:f.task.siteRevision!});
+    const targetScope=await captureWorkflowScope({
+      task:f.task,
+      registry:f.registry,
+      directory:f.directory,
+      browser:targetBrowser,
+      role:'target',
+      url:'https://target.test/',
+      viewport:'desktop',
+      signal:new AbortController().signal
+    });
+    assert.equal(targetScope.scope.complete,false);
+
+    let capturedInternalLinks:string[]=[];
+    await ensureTemplateAnalysis(f.task,f.store,f.vault,f.directory,new AbortController().signal,{
+      openBrowser:fakeBrowser(
+        f,
+        f.task,
+        [],
+        snapshot=>({...snapshot,links:['https://source.test/about','https://source.test/pricing']})
+      ),
+      decide:(async(options:any)=>{
+        capturedInternalLinks=options.context.captures[0]?.layout?.internalLinks||[];
+        return options.submit(analysisPayload(options.context));
+      }) as typeof localDecision
+    });
+    assert.deepEqual(capturedInternalLinks,['https://source.test/about','https://source.test/pricing']);
   }finally{f.close();}
 });

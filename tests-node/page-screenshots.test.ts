@@ -114,3 +114,17 @@ test('evaluation browser registers every frame and observation and blocks templa
   }finally{await browser?.close();launch.mock.restore();rmSync(work,{recursive:true,force:true});}
   assert.equal(closes,1);
 });
+
+test('readiness script settles transform marquees, ignores 1x1 tracking pixels and promotes visible lazy images',async()=>{
+  let clock=0,shiftX=0;
+  const marqueeRect=()=>({x:shiftX,y:0,top:0,bottom:100,left:shiftX,right:shiftX+200,width:200,height:100});
+  const section={parentElement:null,getRootNode:()=>({}),getBoundingClientRect:marqueeRect};
+  const tracker={complete:false,naturalWidth:0,loading:'eager',parentElement:null,getRootNode:()=>({}),getBoundingClientRect:()=>({x:0,y:0,top:0,bottom:1,left:0,right:1,width:1,height:1})};
+  const lazyImg={complete:false,naturalWidth:0,loading:'lazy',currentSrc:'https://example.test/a.jpg',parentElement:null,getRootNode:()=>({}),getBoundingClientRect:()=>({x:10,y:10,top:10,bottom:110,left:10,right:110,width:100,height:100})};
+  const context={document:{body:section,images:[tracker,lazyImg],fonts:{status:'loaded'},getAnimations:()=>[],querySelectorAll:()=>[section],createTreeWalker:()=>({nextNode:()=>null}),createRange:()=>({selectNodeContents:()=>{},getClientRects:()=>[]})},performance:{now:()=>clock},innerWidth:1440,innerHeight:1000,NodeFilter:{SHOW_TEXT:4},Element:class {},getComputedStyle:()=>({display:'block',visibility:'visible',opacity:'1',transform:'matrix(1, 0, 0, 1, 10, 0)'}),setTimeout:(done:()=>void,ms:number)=>{clock+=ms;shiftX+=15;if(lazyImg.loading==='eager'){(lazyImg as any).naturalWidth=100;lazyImg.complete=true;}done();},__name:(fn:unknown)=>fn};
+  const result=await runInNewContext('('+waitForScreenshotContent.toString()+')(4000)',context) as ScreenshotReadiness;
+  assert.equal(result.settled,true);
+  assert.equal(result.images,1);
+  assert.equal(result.pendingImages,0);
+  assert.equal(lazyImg.loading,'eager');
+});

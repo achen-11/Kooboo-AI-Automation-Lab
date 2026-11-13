@@ -146,11 +146,17 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
       };
       if(input.action==='take_page_screenshots'){
         const loaded=await page.waitForLoadState('load',{timeout:5000}).then(()=>true,()=>false);
-        return await takePageScreenshots(page,input,signal,async(bytes:Buffer,position:ScreenshotPosition,readiness:ScreenshotReadiness,capture:ScreenshotReceipt['capture'])=>{
-          const settlement:PageSettlement={settled:readiness.settled,loaded,networkIdle:false,images:readiness.images,pendingImages:readiness.pendingImages,blankImageRatio:readiness.images?readiness.brokenImages/readiness.images:0};
-          const saved=await saveObservation(bytes,settlement,{position,readiness,capture});
-          return {file:saved.file,url:saved.url,imagePath:saved.imagePath,role:saved.role,viewport:saved.viewport,position,readiness,settlement,capture};
-        });
+        const freezeMotion=input.role!=='target'&&input.settleTimeoutMs>=10000&&typeof page.emulateMedia==='function';
+        if(freezeMotion)await page.emulateMedia({reducedMotion:'reduce'});
+        try{
+          return await takePageScreenshots(page,input,signal,async(bytes:Buffer,position:ScreenshotPosition,readiness:ScreenshotReadiness,capture:ScreenshotReceipt['capture'])=>{
+            const settlement:PageSettlement={settled:readiness.settled,loaded,networkIdle:false,images:readiness.images,pendingImages:readiness.pendingImages,blankImageRatio:readiness.images?readiness.brokenImages/readiness.images:0};
+            const saved=await saveObservation(bytes,settlement,{position,readiness,capture});
+            return {file:saved.file,url:saved.url,imagePath:saved.imagePath,role:saved.role,viewport:saved.viewport,position,readiness,settlement,capture};
+          });
+        }finally{
+          if(freezeMotion)await page.emulateMedia({reducedMotion:'no-preference'}).catch(()=>{});
+        }
       }
       let settlement=await settlePage(page,navigated);
       // A reference capture can drive negative repair instructions, so it gets extra time before being labelled unsettled.

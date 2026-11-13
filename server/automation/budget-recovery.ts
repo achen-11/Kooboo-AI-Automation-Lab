@@ -78,18 +78,19 @@ export function correctUnsentPlanningAttempts(task:AutomationTask,store:Automati
   followup.attempts=0;
 }
 
-/** Manual recovery retains this task's stopped followup and planning requests. */
+/** Manual recovery retains this task's stopped followup, planning and evaluation requests. */
 export function retainStoppedFollowupReservations(task: AutomationTask, store: AutomationStore, owns: (id: string) => boolean) {
   const budgetId = task.followup?.budgetId;
   if (!store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_model_requests'").get()) return;
   const requests = store.db.prepare(`SELECT r.id,r.charged FROM auto_model_requests r
     JOIN auto_usage u ON u.event_id=r.id AND u.source='codex'
     WHERE u.task_id=? AND ((r.account_id=? AND json_extract(u.json,'$.stage')='followup')
-      OR (r.account_id=? AND json_extract(u.json,'$.stage')='planning'))
-      AND r.state IN ('active','unknown')`).all(task.id,budgetId?'followup:' + budgetId:'','planning:' + task.id);
+      OR (r.account_id=? AND json_extract(u.json,'$.stage')='planning')
+      OR (r.account_id=? AND json_extract(u.json,'$.stage')='evaluation'))
+      AND r.state IN ('active','unknown')`).all(task.id,budgetId?'followup:' + budgetId:'','planning:' + task.id,'evaluation:' + task.id);
   if (!requests.length) return;
   if (!task.stopped || owns(task.id)) throw new Conflict('只能恢复已确认停止的任务');
   assertWorkflowStopped(task, store, owns);
   for (const request of requests) retainRequestReservation(store.db, request.id);
-  store.event(task.id, `恢复任务：保留 ${requests.length} 笔已停止跟进 / 分析请求的未知用量预占，共 ${requests.reduce((sum, r) => sum + Number(r.charged), 0)} token；解除请求阻塞，实际用量与费用仍待核算。`);
+  store.event(task.id, `恢复任务：保留 ${requests.length} 笔已停止跟进 / 分析 / 评测请求的未知用量预占，共 ${requests.reduce((sum, r) => sum + Number(r.charged), 0)} token；解除请求阻塞，实际用量与费用仍待核算。`);
 }

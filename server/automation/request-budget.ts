@@ -13,6 +13,15 @@ export interface RequestBudgetPolicy {
 export function retainRequestReservation(db: Database, id: string) {
   return db.prepare("UPDATE auto_model_requests SET state='retained' WHERE id=? AND state IN ('active','unknown')").run(id);
 }
+/** Retain stopped unresolved reservations for an account without zeroing prior charges. */
+export function retainAccountReservations(db: Database, accountId: string, runKey?: string) {
+  if (!db.prepare("SELECT name FROM sqlite_master WHERE name='auto_model_requests'").get()) return { count: 0, tokens: 0 };
+  const rows = runKey
+    ? db.prepare("SELECT id,charged FROM auto_model_requests WHERE account_id=? AND run_key=? AND state IN ('active','unknown')").all(accountId, runKey)
+    : db.prepare("SELECT id,charged FROM auto_model_requests WHERE account_id=? AND state IN ('active','unknown')").all(accountId);
+  for (const row of rows) retainRequestReservation(db, String(row.id));
+  return { count: rows.length, tokens: rows.reduce((sum, row) => sum + Number(row.charged), 0) };
+}
 /** Missing usage keeps the admission estimate; only an unfinished request blocks admission. */
 export class RequestBudget {
   constructor(private db: Database, readonly policy: RequestBudgetPolicy) {

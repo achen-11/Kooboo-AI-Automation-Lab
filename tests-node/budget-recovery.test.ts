@@ -112,6 +112,30 @@ test('resuming stopped template evaluation queues the executor without spending 
   }finally{await f.close();}
 });
 
+test('stopped template evaluation resume and startup recovery retain orphaned active evaluation reservations',async()=>{
+  const f=await fixture();try{
+    const task=f.store.task(f.task.id)!;task.kind='evaluation';task.scenario='site-template';f.store.put(task);
+    const budget=new RequestBudget(f.store.db,{key:'evaluation:'+task.id,runKey:task.id,maxTokens:1000000,maxRequests:80});
+    const req1=randomUUID();budget.reserve(req1,Buffer.from('{}'));
+    f.store.usage.record(task.id,{id:req1,source:'codex',stage:'evaluation',model:'test',endpoint:'https://models.invalid',startedAt:1,endedAt:2,status:'unknown',basis:'request',raw:null});
+    const spent1=budget.state().spent;
+    const tok1=f.store.evaluations.begin(task.id);f.store.evaluations.finish(task.id,tok1,false);
+    assert.equal((await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/confirm-stopped`,headers:f.headers})).statusCode,200);
+    assert.equal((await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/resume`,headers:f.headers})).statusCode,200);
+    assert.equal(f.store.db.prepare('SELECT state FROM auto_model_requests WHERE id=?').get(req1).state,'retained');
+    assert.equal(budget.state().spent,spent1);
+
+    const running=f.store.task(task.id)!;running.status='running';running.stopped=false;f.store.put(running);
+    const tok2=f.store.evaluations.begin(task.id);f.store.evaluations.finish(task.id,tok2,true);
+    const req2=randomUUID();budget.reserve(req2,Buffer.from('{}'));
+    f.store.recover();
+    assert.equal(f.store.task(task.id)!.status,'queued');
+    assert.equal(f.store.db.prepare('SELECT state FROM auto_model_requests WHERE id=?').get(req2).state,'retained');
+    const req3=randomUUID();budget.reserve(req3,Buffer.from('{"input":"resume"}'));
+    assert.equal(budget.state().requests,3);
+  }finally{await f.close();}
+});
+
 test('paused queue permits confirming an exited evaluation before its queued recovery guard has run',async()=>{
   const f=await fixture();try{
     const task=f.store.task(f.task.id)!;task.kind='evaluation';task.scenario='site-template';task.status='following-up';task.stopped=false;task.followup!.state='queued';task.followup!.executionStopped=false;

@@ -11,7 +11,7 @@ import { randomUUID } from 'node:crypto';
 import { chromium } from 'playwright';
 import { executeFollowup, type FollowupExecute } from './followup.js';
 import { advanceOptimization, applyOptimizationAction, optimizationBudgetReason, stopOptimization } from './optimization.js';
-import { ModelBudgetExceeded } from './request-budget.js';
+import { ModelBudgetExceeded, retainAccountReservations } from './request-budget.js';
 import { ExperienceStore } from './experience-store.js';
 import { queueReflection, reflectExperience, selectExperience } from './experience.js';
 import { cleanupGenerationContext } from './generation-context.js';
@@ -321,6 +321,7 @@ export class AutomationWorker{
       this.store.ensureEvaluation(task,this.vault.automation());task.status='completed';task.error='';followup.state='resolved';
     }else{
       if(action.action==='retry')rememberSiteRetry(task,this.store);
+      if(action.action==='retry'&&task.kind==='evaluation'){const retained=retainAccountReservations(this.store.db,'evaluation:'+task.id,task.id);if(retained.count)this.store.event(task.id,`跟进重试：保留 ${retained.count} 笔已停止评测请求的未知用量预占（${retained.tokens} token）。`);}
       if(action.action==='continue'||action.action==='answer')task.generation={...task.generation,next:action};
       task.status='queued';followup.state='resolved';
     }

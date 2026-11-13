@@ -14,6 +14,7 @@ import { TimingLedger } from './timing.js';
 import { EvaluationExecutions } from './evaluation-execution.js';
 import { ResourceFolders } from './resource-folders.js';
 import { Dispositions } from './dispositions.js';
+import { retainAccountReservations } from './request-budget.js';
 import { generationSiteNames, siteNamingError } from '../../shared/kooboo-domains.js';
 
 const initialSop = `你是独立评测员，只做审查与取证，不修改目标站。
@@ -354,7 +355,8 @@ export class AutomationStore {
       // An explicit interruption must survive restarts without scheduling new followups.
       if(task.stopped||task.status==='interrupted')continue;
       if(task.kind==='evaluation'&&task.scenario==='site-template'&&this.evaluations.get(task.id)?.state==='stopped'&&!['cancelling','cancelled','following-up'].includes(task.status)){
-        task.status='queued';task.stopped=true;task.error='平台更新后按已确认停止的独立评测检查点接续；保留全部证据和未知用量。';if(task.followup)task.followup.executionStopped=true;this.put(task);this.event(task.id,task.error);continue;
+        const retained=retainAccountReservations(this.db,'evaluation:'+task.id,task.id);
+        task.status='queued';task.stopped=true;task.error='平台更新后按已确认停止的独立评测检查点接续；保留全部证据和未知用量。';if(task.followup)task.followup.executionStopped=true;this.put(task);this.event(task.id,retained.count?`${task.error}保留 ${retained.count} 笔已停止评测请求的未知用量预占（${retained.tokens} token）。`:task.error);continue;
       }
       if(task.autonomy&&task.kind==='generation'&&task.collectionId&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!['cancelling','cancelled'].includes(task.status)){
         task.status='queued';task.stopped=true;task.error='采集执行服务中断；保留批次、进程身份和检查点，先核对原采集操作后接续。';this.put(task);this.event(task.id,task.error);continue;

@@ -303,9 +303,12 @@ test('evaluation and analysis reset bloated or budget-blocked threads while pres
       decide:(async(options:any)=>{
         seenResume.push(options.resumeThreadId);
         assert.match(options.sop,/8192 output_tokens/);
+        assert.ok(options.minutes>=30,'site-scope evaluation guarantees at least 30 minutes');
         assert.ok(options.policy.maxTokens>=15000000);
         options.onThreadStarted?.('bloated-thread-001');
         const payload=evaluationPayload(options,task);
+        const badSelector=structuredClone(payload);badSelector.views[0].selector='#missing-hero';
+        assert.throws(()=>options.submit(badSelector),/目标区块选择器没有当前测量依据（\/ \/ hero \/ desktop：#missing-hero）/);
         await options.read({kind:'checkpoint',input:{views:[payload.views[0]]}});
         throw new Error('Incomplete response returned, reason: max_output_tokens');
       }) as typeof localDecision

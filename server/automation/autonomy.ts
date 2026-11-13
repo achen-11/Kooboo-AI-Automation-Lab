@@ -14,8 +14,12 @@ export function recoveryProgressKey(task: AutomationTask) {
   const evidenceRoles=[...new Set(task.artifacts?.map(f=>JSON.stringify([f.type,f.role,f.viewport]))||[])].sort();
   return digest({version:task.versionId,site:task.generatedSiteId,prepared:task.generation?.prepared,materials:Object.entries(task.generation?.importedMaterials||{}).sort(),transfer:task.generation?.transferComplete,delivery:task.generation?.deliveryState,evidenceRoles,report:task.report?{assessments:task.report.assessments.map(a=>[a.criterionId,a.viewport,a.passed]).sort(),issues:task.report.issues.map(i=>[i.title,i.severity]).sort(),completeness:task.report.completeness?.checks.map(c=>[c.id,c.status]).sort(),migration:task.report.migrationCheck?.checks.map(c=>[c.id,c.status,c.differences.filter(d=>d.confirmed).map(d=>[d.code,d.subject]).sort()]).sort()}:undefined});
 }
+export function isModelBillingOrAuthError(error: unknown) {
+  const text = error instanceof Error ? error.message : String(error ?? '');
+  return /模型服务拒绝请求（HTTP 402）|模型服务返回 HTTP 40[123]\b|insufficient[_ ]quota|余额不足/i.test(text);
+}
 export function isAutonomousRetry(error: unknown) {
-  if(error instanceof UnconfirmedStop||error instanceof FollowupRuntimeError)return false;
+  if(error instanceof UnconfirmedStop||error instanceof FollowupRuntimeError||isModelBillingOrAuthError(error))return false;
   return error instanceof Pending||error instanceof ModelBudgetExceeded||error instanceof Error&&/timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|fetch failed|429|502|503|504|超时|连接失败|连接模型|模型上游|模型服务返回 HTTP|达到.*(?:时限|时间|预算)|耗尽累计活动时间|未提交.*(?:结果|行动)/i.test(error.message);
 }
 /** Records host-observed state before scheduling another paid action. Never erases history. */
@@ -33,7 +37,7 @@ export function recordAutonomousAttempt(task: AutomationTask, strategy: string, 
   if(!progressed&&recent.at(-1)!==strategy&&recent.includes(strategy))history.strategyReturns++;
   if(recent.at(-1)!==strategy)recent.push(strategy);
   history.strategies=recent.slice(-20);
-  const same=history.failures.filter(f=>f.fingerprint===fingerprint&&f.progressKey===progressKey).length;
+  const same=history.failures.filter(f=>(!autonomous.resumedAt||f.at>=autonomous.resumedAt)&&f.fingerprint===fingerprint&&f.progressKey===progressKey).length;
   const stop=same>=autonomous.policy.maxSameFailures?'相同目标、输入和证据下重复失败，已触发自主执行防循环。':history.strategyReturns>=autonomous.policy.maxStrategyReturns?'恢复策略反复回转且无可验证进展，已触发自主执行防循环。':history.noProgress>=autonomous.policy.maxNoProgress?'多次执行仍没有可验证进展，已停止自动接续并保留成果。':'';
   autonomous.checkpoint={...autonomous.checkpoint,progressKey,stage:task.stage,reason:normalized,nextAt:now+Math.min(autonomous.policy.retryMaxMs,autonomous.policy.retryBaseMs*2**Math.min(10,Math.max(0,same-1)))};
   if(stop)autonomous.stopReason=stop;
@@ -42,16 +46,54 @@ export function recordAutonomousAttempt(task: AutomationTask, strategy: string, 
 export function nextAutonomousWindow(task: AutomationTask, now=Date.now()) {
   if(!task.autonomy||!task.followup)return;
   const followup=task.followup;
-  task.autonomy.window={index:task.autonomy.window.index+1,startedAt:now,attemptsBase:followup.attempts,tokensBase:followup.tokens,elapsedMsBase:followup.elapsedMs||0};
-  followup.budgetId=randomUUID();followup.threadId='';
+  const next={index:Math.max(task.autonomy.window.index,followup.window?.index??0)+1,startedAt:now,attemptsBase:followup.attempts,tokensBase:followup.tokens,elapsedMsBase:followup.elapsedMs||0};
+  task.autonomy.window=next;
+  if(followup.window)followup.window=structuredClone(next);
+  followup.budgetId=randomUUID();delete followup.runId;followup.threadId='';delete followup.imageThread;
 }
 export function autonomousWindowRemaining(task: AutomationTask) {
-  const followup=task.followup!,window=task.autonomy?.window;
+  const followup=task.followup!,window=followup.window||task.autonomy?.window;
   return {attempts:followup.policy.maxAttempts-(followup.attempts-(window?.attemptsBase||0)),tokens:followup.policy.maxTokens-(followup.tokens-(window?.tokensBase||0)),milliseconds:followup.policy.maxMinutes*60000-((followup.elapsedMs||0)-(window?.elapsedMsBase||0))};
 }
 export function followupRequestPolicy(task: AutomationTask): RequestBudgetPolicy {
   const followup=task.followup!;followup.budgetId||=randomUUID();
-  return {key:'followup:'+followup.budgetId,runKey:followup.budgetId,maxTokens:followup.policy.maxTokens,maxRequests:followup.policy.maxRequests||80,initialTokens:Math.max(0,followup.tokens-(task.autonomy?.window.tokensBase||0))};
+  const window=followup.window||task.autonomy?.window;
+  return {key:'followup:'+followup.budgetId,runKey:followup.runId||followup.budgetId,maxTokens:followup.policy.maxTokens,maxRequests:followup.policy.maxRequests||80,initialTokens:Math.max(0,followup.tokens-(window?.tokensBase||0))};
+}
+/** Grants a fresh manual-recovery window only when the prior followup window or anti-loop guard was exhausted; cumulative counters stay intact. */
+export function prepareManualFollowupResume(task: AutomationTask, store: AutomationStore, now=Date.now()) {
+  const reasonText = `${task.interruption?.reason || ''}\n${task.error || ''}`;
+  if (task.autonomy) {
+    const h = task.autonomy.history, p = task.autonomy.policy;
+    if (h.noProgress >= p.maxNoProgress || h.strategyReturns >= p.maxStrategyReturns) {
+      h.noProgress = 0; h.strategyReturns = 0; h.strategies = [];
+    }
+    if (h.failures.length >= p.maxSameFailures) task.autonomy.resumedAt = now;
+  }
+  const followup = task.followup;
+  if (!followup) return;
+  const rem = autonomousWindowRemaining(task);
+  const hasRequestsTable = Boolean(store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_model_requests'").get());
+  const account = followup.budgetId && hasRequestsTable ? followupAccountState(task, store) : undefined;
+  const maxRequests = followup.policy.maxRequests || 80;
+  const budgetBlocked = Boolean(account && (
+    account.requests >= maxRequests
+    || followup.policy.maxTokens - account.spent < 32768
+    || ((account.spent > 0 || account.requests > 0) && /剩余预算不足|模型请求次数上限|token 已达到预算上限/.test(reasonText))
+  ));
+  if (rem.attempts <= 0 || rem.tokens <= 0 || rem.milliseconds <= 0 || budgetBlocked) {
+    const prev = followup.window || task.autonomy?.window;
+    const next = { index: (prev?.index ?? 0) + 1, startedAt: now, attemptsBase: followup.attempts, tokensBase: followup.tokens, elapsedMsBase: followup.elapsedMs || 0 };
+    followup.window = next;
+    if (task.autonomy) task.autonomy.window = structuredClone(next);
+    followup.budgetId = randomUUID();
+    delete followup.runId;
+    followup.threadId = '';
+    delete followup.imageThread;
+    store.event(task.id, `人工恢复跟进：保留累计 ${followup.attempts} 次、${followup.tokens} token 与历史耗时，开启新一轮跟进预算窗口。`);
+  } else if (/重复提交相同模型请求/.test(reasonText)) {
+    followup.runId = randomUUID();
+  }
 }
 /** Caller must await usage.close and its tool/browser shutdown first. Estimates remain charged. */
 export function retainStoppedFollowupReservations(task: AutomationTask, store: AutomationStore, stoppedRequestIds: ReadonlySet<string>) {

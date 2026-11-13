@@ -32,7 +32,12 @@ function stop() {
 }
 process.on('message', (message: unknown) => {
   if (!message || typeof message !== 'object' || !('type' in message)) return;
-  if (message.type === 'cancel' && 'id' in message && typeof message.id === 'string') automationWorker.cancel(message.id);
+  if (message.type === 'cancel' && 'id' in message && typeof message.id === 'string') {
+    const reqId = 'reqId' in message && typeof message.reqId === 'string' ? message.reqId : undefined;
+    void automationWorker.cancel(message.id).finally(() => {
+      if (reqId) send({ type: 'cancelled', reqId, ids: automationWorker.ownedIds() });
+    });
+  }
   if (message.type === 'stop') void stop();
   if (message.type === 'quiesce' && 'id' in message) {
     // The persisted maintenance marker is already visible before this event-loop barrier.

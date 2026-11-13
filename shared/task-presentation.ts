@@ -4,7 +4,7 @@ export interface OptimizationSummary { state: OptimizationRun['state']; policy: 
 
 export type TaskTab = 'overview' | 'report' | 'execution' | 'usage' | 'input' | 'delivery';
 export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { canAdjustSiteNames?: boolean };
-export type TaskRecoveryAction = 'resume' | 'confirm-stopped' | 'adjust-site-names';
+export type TaskRecoveryAction = 'resume' | 'force-resume' | 'confirm-stopped' | 'adjust-site-names';
 export function canAdjustTaskSiteNames(task: AutomationTask): boolean {
   const generation = task.generation;
   return task.kind === 'generation' && task.stopped === true && ['pending', 'failed', 'interrupted'].includes(task.status)

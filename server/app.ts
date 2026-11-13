@@ -43,7 +43,7 @@ function present(item: Evaluation) {
   return { ...item, evaluationId: item.id, jobId: item.submission.jobId, attemptId: item.submission.attemptId, status: item.run.status, scoringStatus: scoringStatus(item.run), fidelityScore: item.run.report?.fidelityScore ?? null, completionScore: item.run.report?.completionScore ?? null, ruleSetVersion: item.run.snapshot?.rule.version ?? item.submission.ruleSetVersion ?? 'visual-v1', reportUrl: `/#/evaluations/${item.id}` };
 }
 
-export async function createApp(options: { directory: string; serveWeb?: boolean; startWorker?: boolean; workerDependencies?: Partial<Dependencies>; backgroundEntry?: URL; updateTransport?: UpdateTransport }) {
+export async function createApp(options: { directory: string; serveWeb?: boolean; startWorker?: boolean; workerDependencies?: Partial<Dependencies>; backgroundEntry?: URL; updateTransport?: UpdateTransport; createAutomationWorker?: (store: AutomationStore, vault: Vault, directory: string) => AutomationWorker }) {
   const directory = resolve(options.directory);
   const vault = new Vault(directory);
   const store = new Store(resolve(directory, 'database.sqlite'));
@@ -56,9 +56,11 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
     for(const secret of [settings.model.apiKey,settings.updateSource?.token||'',...settings.environments.flatMap(e=>[e.token,e.delivery?.token||''])])if(secret)value=value.replaceAll(secret,'[已隐藏]');
     return value.replace(/Bearer\s+[^\s"',;]+/gi,'Bearer [已隐藏]');
   });
-  const automationWorker = options.startWorker === false || options.workerDependencies
-    ? new AutomationWorker(automationStore, vault, directory)
-    : new BackgroundWorkers(directory, automationStore, options.backgroundEntry);
+  const automationWorker = options.createAutomationWorker
+    ? options.createAutomationWorker(automationStore, vault, directory)
+    : options.startWorker === false || options.workerDependencies
+      ? new AutomationWorker(automationStore, vault, directory)
+      : new BackgroundWorkers(directory, automationStore, options.backgroundEntry);
   const app = Fastify({ logger: false, bodyLimit: 1024 * 1024, requestTimeout: 30000 });
   let session = randomUUID() + randomUUID();
   let modelTestRunning = false;

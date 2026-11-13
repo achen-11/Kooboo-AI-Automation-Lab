@@ -23,6 +23,9 @@ import { registerDashboardApi } from './dashboard.js';
 import { registerMigrationApi } from './migration-api.js';
 import { assertWorkflowStopped, retainStoppedFollowupReservations, retainWorkflowLearningReservations, correctUnsentPlanningAttempts, workflowBlockers, workflowActiveReason } from './budget-recovery.js';
 import { ExperienceStore } from './experience-store.js';
+import type { LearningRun } from '../../shared/experience.js';
+import { prepareManualFollowupResume } from './autonomy.js';
+import { retainRequestReservation } from './request-budget.js';
 import { trimTaskGenerationBrowserCache } from './generation-cache.js';
 import { registerGenerationContextApi } from './generation-context-api.js';
 import { registerCollectionApi } from './collection/api.js';
@@ -116,6 +119,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.post('/api/automation/tasks/:id/resume',async(request)=>{
     const{id}=params.parse(request.params);
     const{force}=z.object({force:z.boolean().default(false)}).parse(request.body||{});
+    const cancelledLearningIds=new Set<string>();
     if(force){
       const initial=store.task(id);
       if(!initial)throw new Conflict('任务不存在');
@@ -128,6 +132,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
         if(state&&state.revision!==initial.siteRevision)throw new Conflict('目标站版本已变化，不能恢复旧版本的评测任务');
       }
       const blockers=workflowBlockers(initial,store,owns);
+      for(const r of blockers.learning)cancelledLearningIds.add(r.id);
       const siteActive=initial.generatedSiteId?store.headers(initial.generatedSiteId).filter(t=>t.id!==initial.id&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false)):[];
       const cancelIds=[...new Set([...(owns(id)||!initial.stopped||['running','cancelling'].includes(initial.status)?[id]:[]),...blockers.tasks.map(t=>t.id),...siteActive.map(t=>t.id),...blockers.learning.map(r=>r.id)])];
       if(cancelIds.length)await Promise.allSettled(cancelIds.map(targetId=>Promise.resolve(cancel(targetId))));
@@ -138,11 +143,14 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       if(force){
         const experiences=new ExperienceStore(store),workflowId=experiences.workflow(task).id;
         const blockers=workflowBlockers(task,store,owns);
-        for(const run of blockers.learning){
-          if(['queued','running'].includes(run.status)){
-            run.status='failed';run.reason='操作者强制中断执行中的经验学习并恢复任务';
-            experiences.put(run);store.event(run.taskId,run.reason);
-          }
+        const workflowLearning=store.db.prepare("SELECT json FROM auto_learning_runs WHERE json_extract(json,'$.workflowId')=?").all(workflowId)
+          .map(r=>JSON.parse(r.json) as LearningRun)
+          .filter(r=>['queued','running'].includes(r.status)||(cancelledLearningIds.has(r.id)&&r.status!=='completed'));
+        for(const run of workflowLearning){
+          const wasQueued=run.status==='queued'&&!cancelledLearningIds.has(run.id);
+          run.status='failed';
+          run.reason=wasQueued?'操作者已取消排队的经验学习并恢复任务':'操作者强制中断执行中的经验学习并恢复任务';
+          experiences.put(run);store.event(run.taskId,run.reason);
         }
         retainWorkflowLearningReservations(workflowId,task.id,store,'强制中断并恢复');
         const siblingIds=[...new Set([...blockers.tasks.map(t=>t.id),...(task.generatedSiteId?store.headers(task.generatedSiteId).filter(t=>t.id!==task.id&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false)).map(t=>t.id):[])])].filter(tId=>tId!==task.id);
@@ -180,7 +188,21 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
         if(execution&&execution.state!=='stopped')throw new Conflict('原评测执行尚未确认停止，请核查后确认停止再恢复');
       }
       const wasCancelled=task.status==='cancelled';
-      if(!force)assertWorkflowStopped(task,store,owns);
+      if(!force){
+        assertWorkflowStopped(task,store,owns);
+        if(store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_learning_runs'").get()){
+          const experiences=new ExperienceStore(store),workflowId=experiences.workflow(task).id;
+          if(!task.report){
+            for(const row of store.db.prepare("SELECT json FROM auto_learning_runs WHERE json_extract(json,'$.taskId')=? AND status='queued' AND json_extract(json,'$.kind')='reflection'").all(task.id)){
+              const run=JSON.parse(row.json) as LearningRun;
+              run.status='completed';run.reason='跳过复盘：原中断任务已恢复继续执行。';experiences.put(run);
+            }
+          }
+          if(store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_model_requests'").get()){
+            for(const req of store.db.prepare("SELECT id FROM auto_model_requests WHERE account_id=? AND state='active'").all('experience:'+workflowId))retainRequestReservation(store.db,String(req.id));
+          }
+        }
+      }
       retainStoppedFollowupReservations(task,store,force?()=>false:owns);
       if(task.autonomy){delete task.autonomy.stopReason;delete task.autonomy.checkpoint.nextAt;}
       const preCreateCollection=Boolean(task.autonomy&&!task.generatedSiteId&&task.collectionId);
@@ -213,6 +235,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       // change; a historical no-progress guard must not skip that inspection.
       clearSiteRetry(task,store);
       if(task.followup)task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);
+      prepareManualFollowupResume(task,store);
       store.scheduleFollowup(task,root?.optimization?.recoveryPolicy||vault.automation().followup);
       return task;
     });
@@ -323,7 +346,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const items=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT ? OFFSET ?').all(selected.id,q.pageSize,(page-1)*q.pageSize);
       const canAdjustSiteNames=canAdjustTaskSiteNames(selected);
       const interruption=selected.interruption&&canAdjustSiteNames?{...selected.interruption,nextSteps:['点击“自动调整名称并继续”，检查可用的名称和子域名后恢复原任务。']}:selected.interruption;
-      return {task:{id:selected.id,status:selected.status,stopped:selected.stopped,canAdjustSiteNames},context:selected.context,followup:selected.followup,interruption,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
+      return {task:{id:selected.id,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{})},context:selected.context,followup:selected.followup,interruption,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
     }
     const source=task.kind==='evaluation'?task:task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
     if(section==='delivery')return {task:source?{id:source.id,kind:source.kind,environmentId:source.environmentId,status:source.status,delivery:source.delivery,report:source.report?{quality:source.report.quality}:null}:null};

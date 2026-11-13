@@ -72,7 +72,25 @@ export class BackgroundWorkers {
       child.on('message', onMessage); child.send({ type: 'quiesce', id }, error => { if (error) { clearTimeout(timer); child.off('message', onMessage); reject(new Error('无法连接后台执行服务')); } });
     });
   }
-  cancel(id: string) { if (this.child?.connected) this.child.send({ type: 'cancel', id }, () => {}); }
+  cancel(id: string): Promise<void> {
+    const child = this.child;
+    if (!child?.connected || !this.healthy) return Promise.resolve();
+    const reqId = crypto.randomUUID();
+    return new Promise<void>(resolve => {
+      const done = () => { clearTimeout(timer); child.off('message', onMessage); child.off('close', done); resolve(); };
+      const timer = setTimeout(done, 5500);
+      timer.unref();
+      const onMessage = (raw: unknown) => {
+        const message = raw as { type?: string; reqId?: string; ids?: unknown };
+        if (message?.type !== 'cancelled' || message.reqId !== reqId) return;
+        if (Array.isArray(message.ids)) this.owned = new Set(message.ids.filter((item): item is string => typeof item === 'string'));
+        done();
+      };
+      child.on('message', onMessage);
+      child.once('close', done);
+      child.send({ type: 'cancel', id, reqId }, error => { if (error) done(); });
+    });
+  }
   owns(id: string) {
     if (!this.child?.connected || this.failed) return false;
     if (this.owned.has(id)) return true;

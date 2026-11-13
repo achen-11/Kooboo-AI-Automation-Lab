@@ -39,19 +39,21 @@ export function registerLearningApi(app:FastifyInstance,store:AutomationStore,va
   app.post('/api/automation/learning/:id/cancel',async req=>{
     const{id}=params.parse(req.params),run=experiences.run(id);
     if(!run)throw new Conflict('经验学习记录不存在');
-    if(!['queued','running'].includes(run.status)&&!owns(id))throw new Conflict('只能中断排队中或执行中的经验学习');
-    const wasQueued=run.status==='queued'&&!owns(id);
-    if(owns(id))await Promise.resolve(cancel(id));
+    const wasOwned=owns(id);
+    if(!['queued','running'].includes(run.status)&&!wasOwned)return {run,alreadyStopped:true};
+    const wasQueued=run.status==='queued'&&!wasOwned;
+    if(wasOwned)await Promise.resolve(cancel(id));
     return store.db.transaction(()=>{
       const current=experiences.run(id);if(!current)throw new Conflict('经验学习记录不存在');
-      if(['queued','running'].includes(current.status)){
+      let alreadyStopped=false;
+      if(['queued','running'].includes(current.status)||(wasOwned&&current.status!=='completed')){
         current.status='failed';
         current.reason=wasQueued?'操作者已取消排队的经验学习':'操作者已强制中断执行中的经验学习';
         experiences.put(current);store.event(current.taskId,current.reason);
-      }
+      }else alreadyStopped=true;
       const otherRunning=store.db.prepare("SELECT id FROM auto_learning_runs WHERE json_extract(json,'$.workflowId')=? AND status='running'").all(current.workflowId).some(r=>String(r.id)!==current.id);
       if(!otherRunning&&!owns(id))retainWorkflowLearningReservations(current.workflowId,current.taskId,store,'中断经验学习');
-      return {run:experiences.run(id)!};
+      return {run:experiences.run(id)!,alreadyStopped};
     });
   });
   app.post('/api/automation/learning/:id/retry',async req=>{

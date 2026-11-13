@@ -167,7 +167,9 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
   // Host-owned observations and action validation remain the source of truth.
   const options={model:task.model?.name||vault.automation().evaluationModel,workingDirectory:work,skipGitRepoCheck:true,sandboxMode:'workspace-write' as const,networkAccessEnabled:true,approvalPolicy:'never' as const,webSearchMode:'disabled' as const};
   const thread=task.followup.threadId?codex.resumeThread(task.followup.threadId,options):codex.startThread(options);
-    const prompt=`按照 SKILL.md 自主跟进 task.json 中的本轮任务。当前尝试 ${task.followup.attempts}/${task.followup.policy.maxAttempts}，阶段 ${task.stage}，最近问题：${task.error}。
+    const activeWindow=task.followup.window||task.autonomy?.window;
+    const windowAttempts=task.followup.attempts-(activeWindow?.attemptsBase||0);
+    const prompt=`按照 SKILL.md 自主跟进 task.json 中的本轮任务。当前尝试 ${windowAttempts}/${task.followup.policy.maxAttempts}${activeWindow?.attemptsBase?`（累计第 ${task.followup.attempts} 次）`:''}，阶段 ${task.stage}，最近问题：${task.error}。
 你必须通过本轮 tools.mjs 查询事实并调用 act 工具推动流程，不要只写建议，不要直接修改目标站或任务文件。使用 node tools.mjs '<JSON>'，工具服务地址和令牌已由运行环境注入，不要输出令牌。每次恢复都使用当前工具环境。
 查询示例：{"tool":"get_task"}。其他查询工具：get_conversation、get_site、probe_site、inspect_execution。工具返回 evidenceId，行动必须引用本轮已取得的 evidenceId。
 行动示例：{"tool":"act","decision":{"action":"retry","reason":"依据实际错误决定重试本阶段","evidence":["工具返回的 evidenceId"]}}。

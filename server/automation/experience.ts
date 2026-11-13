@@ -8,6 +8,7 @@ import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { ExperienceStore, experienceInput } from './experience-store.js';
 import { localDecision } from './local-decision.js';
+import { reflectionDataKey } from './task-index.js';
 
 const selection=z.object({reason:z.string().min(1).max(4000),selected:z.array(z.object({id:z.string(),revision:z.number().int(),reason:z.string().min(1).max(2000)}).strict()).max(5)}).strict();
 const reflection=z.object({reason:z.string().min(1).max(4000),changes:z.array(z.object({id:z.string().optional(),revision:z.number().int().optional(),input:experienceInput,enabled:z.boolean(),reason:z.string().min(1).max(4000),evidence:z.array(z.string()).min(1).max(20)}).strict()).max(5),outcomes:z.array(z.object({experienceId:z.string(),revision:z.number().int(),state:z.enum(['applied-unverified','supported','counterexample','not-applied']),reason:z.string().min(1).max(4000),evidence:z.array(z.string()).min(1).max(20)}).strict()).max(30)}).strict();
@@ -26,12 +27,19 @@ export async function selectExperience(task:AutomationTask,phase:ExperienceStage
 export function queueReflection(task:AutomationTask,store:AutomationStore,manual=false){
   if(!manual&&!task.learningPolicy?.collect)return;
   if(!task.report&&!task.interruption)throw new Error('尚无独立评测或明确中断证据，不能复盘');
-  const result=task.report?JSON.stringify(task.report):JSON.stringify(task.interruption);
-  const fingerprint=createHash('sha256').update(result).digest('hex'),experiences=new ExperienceStore(store),key=`${task.id}:reflection:${fingerprint}`;
+  const experiences=new ExperienceStore(store),key=reflectionDataKey(task)!;
+  const existing=experiences.run(key);
+  if(manual&&existing?.status==='completed'&&existing.reason.startsWith('跳过复盘：')){
+    existing.status='queued';existing.reason='';return experiences.put(existing);
+  }
   // An evaluation stopped by its contract or preflight before any scoring call has no model behaviour to learn from.
-  if(!manual&&task.kind==='evaluation'&&!task.report&&!experiences.run(key)&&!store.usage.entries(task.id).some(entry=>entry.stage!=='experience')){
+  if(!manual&&task.kind==='evaluation'&&!task.report&&!existing&&!store.usage.entries(task.id).some(entry=>entry.stage!=='experience')){
     const run=experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
     run.status='completed';run.reason='跳过复盘：任务在请求工作模型前已因契约或预检中断，没有可复盘的模型执行。';experiences.put(run);return run;
+  }
+  if(!manual&&!task.report&&task.interruption&&!existing&&/模型服务拒绝请求（HTTP 402）|模型服务返回 HTTP 40[123]\b|insufficient[_ ]quota|余额不足|AI 跟进已达到配置的次数、时间或 token 预算|仍有模型请求执行中|同一预算仍有模型请求执行中|操作者强制中断/i.test(task.interruption.reason)){
+    const run=experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
+    run.status='completed';run.reason='跳过复盘：任务因模型账户额度/鉴权或预算保护中断，不自动发起消耗配额的复盘请求。';experiences.put(run);return run;
   }
   return experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
 }
@@ -65,5 +73,5 @@ export async function reflectExperience(run:LearningRun,store:AutomationStore,va
       for(const outcome of value.outcomes){const current=experiences.get(outcome.experienceId);if(current&&!current.manualDisabled&&current.revision===outcome.revision&&['supported','counterexample'].includes(outcome.state))experiences.save({title:current.title,scenarios:current.scenarios,stages:current.stages,conditions:current.conditions,exclusions:current.exclusions,guidance:current.guidance},{id:current.id,revision:current.revision,actor:'ai',reason:outcome.reason,taskId:task.id,evidence:outcome.evidence,verdict:outcome.state as 'supported'|'counterexample'});}
       run.produced=produced.map(e=>e.id);run.outcomes=value.outcomes;run.reason=value.reason;run.status='completed';experiences.put(run);return {produced:run.produced};
     })});
-  }catch(error){const saved=experiences.run(run.id);if(saved?.status==='completed'||(signal.aborted&&saved?.status==='failed'))return;run.status='failed';run.reason=error instanceof Error?error.message:'经验复盘失败';experiences.put(run);store.event(task.id,'经验复盘未完成，不影响已发布报告：'+run.reason);}
+  }catch(error){const saved=experiences.run(run.id);if(saved?.status==='completed'||(signal.aborted&&saved?.status==='failed'))return;const abortReason=signal.aborted&&signal.reason instanceof Error?signal.reason.message:'';run.status='failed';run.reason=abortReason||(error instanceof Error?error.message:'经验复盘失败');experiences.put(run);if(!abortReason.includes('强制中断'))store.event(task.id,(task.report?'经验复盘未完成，不影响已发布报告：':'经验复盘未完成：')+run.reason);}
 }

@@ -23,6 +23,7 @@ export interface AutonomousExecution {
     strategyReturns: number;
   };
   stopReason?: string;
+  resumedAt?: number;
 }
 
 export const defaultAutonomousPolicy: AutonomousExecution['policy'] = {

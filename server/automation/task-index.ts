@@ -27,6 +27,13 @@ export type TaskHeader = Omit<TaskSummary, 'report' | 'optimization' | 'delivery
   workflowIds: string[];
 };
 
+export function reflectionDataKey(task: Pick<AutomationTask, 'id' | 'report' | 'interruption'>): string | null {
+  if (task.report) return `${task.id}:reflection:${createHash('sha256').update(JSON.stringify(task.report)).digest('hex')}`;
+  if (!task.interruption) return null;
+  const { time: _time, ...stable } = task.interruption;
+  return `${task.id}:reflection:${createHash('sha256').update(JSON.stringify(stable)).digest('hex')}`;
+}
+
 export function taskHeader(task: AutomationTask): TaskHeader {
   const summary = taskSummary(task), report = task.report, optimization = task.optimization;
   delete summary.usage;
@@ -58,6 +65,6 @@ export function taskHeader(task: AutomationTask): TaskHeader {
     } : null,
     delivery: task.delivery ? { status: task.delivery.status, stopped: task.delivery.stopped, nextAt: task.delivery.nextAt, error: brief(task.delivery.error || '') } : undefined,
     followup: task.followup ? { state: task.followup.state, nextAt: task.followup.nextAt } : undefined,
-    reflectionKey: reflection ? `${task.id}:reflection:${createHash('sha256').update(JSON.stringify(report || task.interruption)).digest('hex')}` : null,
+    reflectionKey: reflection ? reflectionDataKey(task) : null,
   };
 }

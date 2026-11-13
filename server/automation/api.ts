@@ -210,17 +210,20 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       retainStoppedFollowupReservations(task,store,force?()=>false:owns);
       if(task.autonomy){delete task.autonomy.stopReason;delete task.autonomy.checkpoint.nextAt;}
       const preCreateCollection=Boolean(task.autonomy&&!task.generatedSiteId&&task.collectionId);
+      const prePrepareTemplate=Boolean(task.templateWorkflow)&&task.scenario==='site-template'&&task.kind==='generation'&&task.stage==='prepare'&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted;
       const neverStartedGeneration=wasCancelled&&task.kind==='generation'&&!task.followup&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted;
       if(root?.optimization){
         const run=root.optimization;
-        run.state=preCreateCollection||neverStartedGeneration?'waiting-evaluation':task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';
+        run.state=preCreateCollection||neverStartedGeneration||prePrepareTemplate?'waiting-evaluation':task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';
         run.reason='';run.nextSteps=[];delete run.stoppedAt;store.put(root,true);
         if(task.id===root.id)task.optimization=run;
       }
       if(preCreateCollection){task.status='queued';store.put(task);store.event(task.id,'按原输入和采集检查点恢复A段');return task;}
-      if(neverStartedGeneration){
+      if(neverStartedGeneration||prePrepareTemplate){
         task.status='queued';delete task.interruption;task.error='';
-        store.put(task);store.event(id,'重新启动已取消的未建站任务，按原固定输入与规则排队执行。');return task;
+        if(task.followup){task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);task.followup.state='resolved';task.followup.executionStopped=true;}
+        clearSiteRetry(task,store);
+        store.put(task);store.event(id,prePrepareTemplate?'按原固定输入与已采集证据直接恢复模板分析准备；保留累计用量。':'重新启动已取消的未建站任务，按原固定输入与规则排队执行。');return task;
       }
       // The user explicitly resumed a stopped evaluation. No AI decision is
       // needed to decide whether to retry, nor another spent followup window.

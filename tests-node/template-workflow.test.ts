@@ -272,3 +272,60 @@ test('external capture completes after 10s readiness retry while target stays st
     assert.ok(capturedMinutes>=15,'site-scope template analysis guarantees at least 15 minutes');
   }finally{f.close();}
 });
+
+test('evaluation resets bloated thread on max_output_tokens while preserving saved view checkpoints',async()=>{
+  const f=fixture();
+  try{
+    await analyze(f);
+    const task=evaluateTask(f),seenResume:Array<string|undefined>=[];
+    await assert.rejects(()=>executeTemplateWorkflowEvaluation(task,f.store,f.vault,f.directory,new AbortController().signal,{
+      openInspection,openBrowser:fakeBrowser(f,task,[]),
+      decide:(async(options:any)=>{
+        seenResume.push(options.resumeThreadId);
+        assert.match(options.sop,/8192 output_tokens/);
+        options.onThreadStarted?.('bloated-thread-001');
+        const payload=evaluationPayload(options,task);
+        await options.read({kind:'checkpoint',input:{views:[payload.views[0]]}});
+        throw new Error('Incomplete response returned, reason: max_output_tokens');
+      }) as typeof localDecision
+    }),/max_output_tokens/);
+    assert.equal(f.registry.batch<string>('template-evaluation-thread:'+task.id),'');
+    await executeTemplateWorkflowEvaluation(task,f.store,f.vault,f.directory,new AbortController().signal,{
+      openInspection,openBrowser:fakeBrowser(f,task,[]),
+      decide:(async(options:any)=>{
+        seenResume.push(options.resumeThreadId);
+        assert.equal(options.context.draftViews.length,1,'saved view drafts survive thread reset');
+        const payload=evaluationPayload(options,task);
+        return options.submit({...payload,views:payload.views.slice(1)});
+      }) as typeof localDecision
+    });
+    assert.deepEqual(seenResume,[undefined,undefined]);
+    assert.equal(f.registry.evaluation(task.id)?.quality,'passed');
+  }finally{f.close();}
+});
+
+test('POST /resume directly requeues site-template generation interrupted during prepare without followup detour',async()=>{
+  const directory=mkdtempSync(resolve(tmpdir(),'workflow-prepare-resume-')),f=await createApp({directory,serveWeb:false,startWorker:false});
+  try{
+    const login=await f.app.inject({method:'POST',url:'/api/login'}),headers={cookie:String(login.headers['set-cookie']).split(';')[0]};
+    const resource=await f.app.inject({method:'POST',url:'/api/automation/resources',headers,payload:{name:'Template',scenario:'site-template',description:'',contentUrl:'',referenceUrl:'https://source.test/',externalSource:'',externalId:'',files:[]}});
+    const [task]=f.automationStore.create({resourceIds:[resource.json().id],kind:'generation',scope:'site',environmentId:randomUUID(),requirements:''},defaultAutomationSettings);
+    new TemplateWorkflowStore(f.automationStore).initialize(task);
+    f.automationStore.scheduleFollowup(task,defaultAutomationSettings.followup!);
+    task.status='interrupted';
+    task.stage='prepare';
+    task.stopped=true;
+    task.error='页面分析预算不足';
+    task.followup!.state='interrupted';
+    task.followup!.attempts=3;
+    task.followup!.executionStopped=true;
+    f.automationStore.put(task);
+    const res=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/resume`,headers});
+    assert.equal(res.statusCode,200,res.body);
+    const body=res.json();
+    assert.equal(body.status,'queued');
+    assert.equal(body.error,'');
+    assert.equal(body.followup?.state,'resolved');
+    assert.equal(body.followup?.executionStopped,true);
+  }finally{await f.app.close();rmSync(directory,{recursive:true,force:true});}
+});

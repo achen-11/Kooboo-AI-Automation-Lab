@@ -60,7 +60,7 @@ export async function captureWorkflowScope(input:{task:AutomationTask;registry:T
     if(!unsettled.length||unsettled.some(frame=>!repaired.has(frameKey(frame))))return false;
     return unsettled.every(frame=>{
       const r=frame.readiness;
-      return Boolean(r&&r.brokenImages===0&&r.runningAnimations===0&&r.fontsReady&&(r.stableForMs>=500||r.pendingImages===0));
+      return Boolean(r&&r.brokenImages===0&&r.fontsReady&&(r.stableForMs>=500||r.pendingImages===0));
     });
   };
   let traversalBatches=0,retryBatches=0;

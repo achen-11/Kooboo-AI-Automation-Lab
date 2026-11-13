@@ -53,13 +53,13 @@ export async function usageCapture(taskId:string,stage:UsageStage,store:Automati
         for(let attempt=0;;attempt++){
           try{
             upstream=await fetch(endpoint+req.url,{method:'POST',headers:{Authorization:'Bearer '+runtime.model.apiKey,'Content-Type':'application/json',Accept:req.headers.accept||'text/event-stream'},body:new Uint8Array(body),signal:combined,redirect:'error'});
-            if(stage==='evaluation'&&upstream.ok&&upstream.body){reader=upstream.body.getReader();first=await reader.read();}
+            if(['evaluation','planning','followup'].includes(stage)&&upstream.ok&&upstream.body){reader=upstream.body.getReader();first=await reader.read();}
             break;
           }catch(error){
             const code=(error as {cause?:{code?:unknown}})?.cause?.code;
-            // Only retry independent read-only evaluation before any response
+            // Only retry independent read-only evaluation/planning/followup before any response
             // bytes reach the SDK. Never replay a partial stream or an action.
-            if(stage!=='evaluation'||attempt>=2||combined.aborted||!['UND_ERR_SOCKET','UND_ERR_CONNECT_TIMEOUT','ECONNRESET','ETIMEDOUT'].includes(String(code)))throw error;
+            if(!['evaluation','planning','followup'].includes(stage)||attempt>=2||combined.aborted||!['UND_ERR_SOCKET','UND_ERR_CONNECT_TIMEOUT','ECONNRESET','ETIMEDOUT'].includes(String(code)))throw error;
             await reader?.cancel().catch(()=>{});reader=undefined;first=undefined;
             observation.status='failed';observation.endedAt=Date.now();observation.note=`模型连接在首段响应前断开（${code}）；保留未知用量，有限重试 ${attempt+1}/2。`;
             budget?.complete(observation.id,null);store.usage.complete(taskId,observation,price);

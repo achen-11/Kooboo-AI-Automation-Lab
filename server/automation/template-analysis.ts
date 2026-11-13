@@ -53,6 +53,12 @@ export async function ensureTemplateAnalysis(task:AutomationTask,store:Automatio
   };
   try{
     for(const role of ['reference',...(content?['content'] as const:[])] as const)for(const viewport of ['desktop','mobile'] as const)await capture(role,role==='reference'?reference:content,viewport);
+    for(const item of [...captures.values()].filter(entry=>!entry.scope.complete)){
+      const targetUrl=item.layout?.url;
+      if(!targetUrl)continue;
+      const itemRole:'content'|'reference'=item.files.some(file=>file.role==='content')?'content':'reference';
+      await capture(itemRole,targetUrl,item.layout.viewport);
+    }
     const currentSourceEvidence=()=>[...new Map([...captures.values()].flatMap(item=>item.files).concat(record.sourceEvidence.filter(file=>file.role==='content'&&file.url==='')).map(file=>[file.name,file])).values()];
     const pending=[...captures.values()].filter(item=>!item.scope.complete);
     if(pending.length){

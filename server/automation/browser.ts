@@ -3,11 +3,12 @@ import { createHash, randomUUID, timingSafeEqual } from 'node:crypto';
 import { writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { chromium, type Frame, type Page } from 'playwright';
+import { inspectTemplateLayout } from './template-layout.js';
 import { z } from 'zod';
 import type { MaterialFile } from '../../shared/automation.js';
 import { pageScreenshotPolicy, takePageScreenshots, type ScreenshotPosition, type ScreenshotReadiness, type ScreenshotReceipt } from './page-screenshots.js';
 
-export const browserAction=z.object({action:z.enum(['snapshot','screenshot','navigate','take_page_screenshots','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),key:z.string().min(1).max(100).optional(),fullPage:z.boolean().default(false),scope:z.enum(['page','regions']).default('page'),selectors:z.array(z.string().min(1).max(500)).max(20).default([]),maxScreenshots:z.number().int().min(1).max(40).default(16),startY:z.number().int().min(0).max(10000000).default(0),startSelectorIndex:z.number().int().min(0).default(0),settleTimeoutMs:z.number().int().min(1000).max(10000).default(4000)}).superRefine((input,ctx)=>{
+export const browserAction=z.object({action:z.enum(['inspect_layout','snapshot','screenshot','navigate','take_page_screenshots','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),key:z.string().min(1).max(100).optional(),fullPage:z.boolean().default(false),safeReversible:z.boolean().default(false),scope:z.enum(['page','regions']).default('page'),selectors:z.array(z.string().min(1).max(500)).max(20).default([]),maxScreenshots:z.number().int().min(1).max(40).default(16),startY:z.number().int().min(0).max(10000000).default(0),startSelectorIndex:z.number().int().min(0).default(0),settleTimeoutMs:z.number().int().min(1000).max(10000).default(4000)}).superRefine((input,ctx)=>{
   if(input.action==='press'&&!input.value&&!input.key)ctx.addIssue({code:'custom',message:'press 需要 value 或 key 指定按键，不能默认触发 Enter',path:['value']});
   if(input.action==='press'&&input.value&&input.key&&input.value!==input.key)ctx.addIssue({code:'custom',message:'value 与 key 指定了不同按键',path:['key']});
   if(input.action==='take_page_screenshots'){
@@ -112,19 +113,25 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
           if(shouldAbortNavigation(route.request(),roleOrigin,page?.mainFrame()))return route.abort().catch(()=>{});
           return route.continue().catch(()=>{});
         });
-        page=await context.newPage();pages.set(key,page);const initialUrl=['navigate','take_page_screenshots'].includes(input.action)&&input.url?input.url:urls[input.role];navigationStatus=(await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}))?.status();}
-      if(input.action==='navigate'||input.action==='take_page_screenshots'){
-        const url=input.url||(input.action==='take_page_screenshots'?page.url():undefined);if(!url)throw new Error('navigate 需要 url');
-        if((input.action==='navigate'||input.startY===0||page.url()!==url)&&(!navigated||page.url()!==url)){navigationStatus=(await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000}))?.status();navigated=true;}
+        page=await context.newPage();pages.set(key,page);const initialUrl=['navigate','take_page_screenshots','inspect_layout'].includes(input.action)&&input.url?input.url:urls[input.role];navigationStatus=(await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}))?.status();}
+      if(input.action==='navigate'||input.action==='take_page_screenshots'||input.action==='inspect_layout'){
+        const url=input.url||(['take_page_screenshots','inspect_layout'].includes(input.action)?page.url():undefined);if(!url)throw new Error('navigate 需要 url');
+        if((input.action!=='inspect_layout'||page.url()!==url)&&(input.action==='navigate'||input.startY===0||page.url()!==url)&&(!navigated||page.url()!==url)){navigationStatus=(await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000}))?.status();navigated=true;}
       }
       else if(['click','fill','select','press'].includes(input.action)){
         if(!input.element||!input.name)throw new Error('请提供可访问角色 element 和名称 name');
         const locator=page.getByRole(input.element as Parameters<Page['getByRole']>[0],{name:input.name,exact:true});
+        if(input.safeReversible){
+          if(input.action==='press'&&!['Escape','ArrowLeft','ArrowRight','ArrowUp','ArrowDown','Home','End','Tab','Shift+Tab'].includes(input.value||input.key||''))throw new Error('新流程仅允许安全导航按键，不能按 Enter 提交表单');
+          const safe=await locator.evaluate(element=>{const html=element as HTMLInputElement;const label=(element.textContent||'')+' '+(element.getAttribute('aria-label')||'');if(/delete|remove|buy|purchase|pay|checkout|send|submit|logout|sign.?out|删除|移除|购买|支付|结算|发送|提交|退出/i.test(label))return false;if(element.closest('form')&&['submit','reset'].includes(html.type||'submit'))return false;if(element.tagName==='A'){const href=(element as HTMLAnchorElement).href;try{const url=new URL(href,location.href);return /^https?:$/.test(url.protocol)&&url.origin===location.origin&&!url.username&&!url.password;}catch{return false;}}return true;});
+          if(!safe)throw new Error('无法确认此操作安全可逆，保留交互未验证');
+        }
         if(input.action==='click')await locator.click({timeout:15000});
         if(input.action==='fill')await locator.fill(input.value||'',{timeout:15000});
         if(input.action==='select')await locator.selectOption(input.value||'',{timeout:15000});
         if(input.action==='press')await locator.press(input.value||input.key!,{timeout:15000});
       }
+      if(input.action==='inspect_layout'){await page.evaluate(()=>window.scrollTo(0,0));const settlement=await settlePage(page,navigated);const layout=await inspectTemplateLayout(page,input.viewport);if(!settlement.settled){layout.dependencyHash=null;layout.dependencyGaps.push('测量时页面尚未稳定');}return layout;}
       const saveObservation=async(pixels:Buffer,settlement:PageSettlement,extra:Record<string,unknown>={})=>{
       const file=randomUUID()+'.png';writeFileSync(resolve(directory,'evidence',file),pixels,{mode:0o600});
       const snapshot=await page!.locator('body').ariaSnapshot({timeout:15000});

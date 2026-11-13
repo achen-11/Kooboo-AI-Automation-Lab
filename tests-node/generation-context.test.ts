@@ -10,6 +10,7 @@ import { defaultAutomationSettings } from '../shared/automation.js';
 import { assertGenerationInput, cleanupGenerationContext, GenerationContextStore, generationContextReaderVersion, generationInputLimits, generationReaderLimits, prepareGenerationContext, shardContext, contextReader, type ContextRequest, type ContextPackage } from '../server/automation/generation-context.js';
 import { GenerationInputError } from '../server/automation/errors.js';
 import { isContextOverflow } from '../server/automation/generator.js';
+import { TemplateWorkflowStore } from '../server/automation/template-workflow-store.js';
 
 async function fixture() {
   const directory = mkdtempSync(join(tmpdir(), 'generation-context-')), app = await createApp({ directory, startWorker: false, serveWeb: false });
@@ -47,6 +48,25 @@ test('small instructions and manifest stay in message and preserve a platform or
     const result = await prepareGenerationContext(f.task, f.store, f.request, f.siteId, source);
     assert.equal(result.mode, 'message'); assert.match(result.text, /修复全部问题/); assert.match(result.text, /"required":true/); assert.equal(f.remote.size, 0);
     assert.deepEqual(JSON.parse(new GenerationContextStore(f.store).packages(f.task.id)[0].original), source);
+  } finally { await f.close(); }
+});
+
+test('disabling experience removes historical baseline guidance from delivery while retaining the frozen baseline', async () => {
+  const f = await fixture(); try {
+    f.task.scenario = 'site-template';
+    f.task.generatedSiteId = null;
+    const registry = new TemplateWorkflowStore(f.store);
+    registry.initialize(f.task);
+    const record = registry.get(f.task)!;
+    const guidance = [{ id: 'historical', revision: 1, guidance: 'OLD_EXPERIENCE_ONLY', reason: 'Earlier selection' }];
+    record.baseline = { id: randomUUID(), revision: 1, createdAt: Date.now(), inputVersionId: f.task.versionId, referenceUrl: 'https://source.test/', contentUrl: null, scope: 'site', pages: [], contentMapping: 'Frozen copy', limitations: [], complete: true, evidence: [], checklistId: record.checklistId, experienceGuidance: guidance };
+    registry.put(record);
+    for (const [globalUse, taskUse] of [[false, true], [true, false], [true, true]]) {
+      f.task.learningPolicy = { ...f.task.learningPolicy!, use: taskUse };
+      const result = await prepareGenerationContext(f.task, f.store, f.request, f.siteId, { instructions: 'Use baseline' }, globalUse);
+      assert.equal(result.text.includes('OLD_EXPERIENCE_ONLY'), globalUse && taskUse);
+      assert.deepEqual(registry.get(f.task)!.baseline!.experienceGuidance, guidance);
+    }
   } finally { await f.close(); }
 });
 

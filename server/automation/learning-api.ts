@@ -35,7 +35,7 @@ export function registerLearningApi(app:FastifyInstance,store:AutomationStore,va
     const ids=store.workflowIds(task),where=`json_extract(json,'$.taskId') IN (${ids.map(()=>'?').join(',')})${q.kind?" AND json_extract(json,'$.kind')=?":''}`,args=[...ids,...(q.kind?[q.kind]:[])],total=Number(store.db.prepare('SELECT COUNT(*) n FROM auto_learning_runs WHERE '+where).get(...args).n),pages=Math.max(1,Math.ceil(total/q.pageSize)),page=Math.min(q.page,pages);
     return {page,pages,total,items:store.db.prepare('SELECT json FROM auto_learning_runs WHERE '+where+' ORDER BY created_at DESC LIMIT ? OFFSET ?').all(...args,q.pageSize,(page-1)*q.pageSize).map(r=>JSON.parse(r.json))};
   });
-  app.post('/api/automation/tasks/:id/reflect',async req=>{const{id}=params.parse(req.params),task=store.task(id);if(!task||!task.stopped||owns(id))throw new Conflict('请等待任务停止后复盘');const source=task.report?task:store.currentReport(task)||task;if(!source.report&&!source.interruption)throw new Conflict('没有可复盘的新报告或明确中断证据');const run=queueReflection(source,store,true)!;if(!source.learningPolicy&&run.status==='queued'){run.policy=structuredClone(vault.automation().learning!);experiences.put(run);}return {run,enabled:vault.automation().enabled,queued:run.status==='queued'||run.status==='running'};});
+  app.post('/api/automation/tasks/:id/reflect',async req=>{if(!vault.automation().learning?.collect)throw new Conflict('经验沉淀已关闭，请先在系统设置启用');const{id}=params.parse(req.params),task=store.task(id);if(!task||!task.stopped||owns(id))throw new Conflict('请等待任务停止后复盘');const source=task.report?task:store.currentReport(task)||task;if(!source.report&&!source.interruption)throw new Conflict('没有可复盘的新报告或明确中断证据');const run=queueReflection(source,store,true)!;if(!source.learningPolicy&&run.status==='queued'){run.policy=structuredClone(vault.automation().learning!);experiences.put(run);}return {run,enabled:vault.automation().enabled,queued:run.status==='queued'||run.status==='running'};});
   app.post('/api/automation/learning/:id/cancel',async req=>{
     const{id}=params.parse(req.params),run=experiences.run(id);
     if(!run)throw new Conflict('经验学习记录不存在');
@@ -57,6 +57,7 @@ export function registerLearningApi(app:FastifyInstance,store:AutomationStore,va
     });
   });
   app.post('/api/automation/learning/:id/retry',async req=>{
+    if(!vault.automation().learning?.collect)throw new Conflict('经验沉淀已关闭，请先在系统设置启用');
     const{id}=params.parse(req.params),run=experiences.run(id);
     if(!run||run.kind!=='reflection'||run.status!=='failed'||owns(id))throw new Conflict('只能恢复已停止的经验复盘');
     const {useCurrentPolicy}=z.object({useCurrentPolicy:z.boolean().default(false)}).parse(req.body||{});

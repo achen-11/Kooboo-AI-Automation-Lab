@@ -22,8 +22,29 @@ import type { Requirement, RequirementCheck } from '../shared/completeness.js';
 import { inspectionTools } from '../server/automation/inspection-tools.js';
 import { createAutonomousExecution } from '../shared/autonomy.js';
 import { retainStoppedLearningReservations } from '../server/automation/budget-recovery.js';
+import { AutomationWorker } from '../server/automation/worker.js';
 
 const experience:ExperienceInput={title:'先查交付记录',scenarios:['site-template'],stages:['generation','followup','evaluation'],conditions:'续建前不确定原会话状态',exclusions:'没有原会话',guidance:'查询实际交付回执后再决定，不重复发送。'};
+test('learning defaults off; disabling it blocks adoption, manual reflection and queued scheduling without deleting history',async()=>{
+  assert.equal(defaultLearningSettings.use,false);assert.equal(defaultLearningSettings.collect,false);
+  const f=await fixture();try{
+    const task=f.create(),es=new ExperienceStore(f.automationStore);
+    es.save(experience,{actor:'human',reason:'保留历史'});
+    task.status='completed';task.stopped=true;task.report=report();f.automationStore.put(task);
+    const run=es.enqueue(task,'evaluation','reflection','disabled-test');
+    const selected=es.enqueue(task,'generation','selection',`${task.id}:selection:generation:initial`);
+    selected.status='completed';selected.adoptions=[{experienceId:'history',revision:1,title:'旧指导',guidance:'不应再注入',reason:'旧快照'}];es.put(selected);
+    f.vault.updateAutomation({...f.vault.automation(),enabled:true,learning:{...defaultLearningSettings,use:false,collect:false}});
+    let calls=0;
+    await selectExperience(task,'followup',f.automationStore,f.vault,f.directory,new AbortController().signal,(async()=>{calls++;}) as typeof localDecision);
+    assert.equal(adoptedGuidance(task,f.automationStore,'generation',f.vault),'');
+    const worker=new AutomationWorker(f.automationStore,f.vault,f.directory,{generation:async()=>{},evaluation:async()=>{}},()=>true,undefined,(async()=>{calls++;}) as typeof reflectExperience);
+    await worker.tick();assert.equal(calls,0);assert.equal(es.run(run.id)?.status,'queued');assert.equal(es.page().total,1);
+    for(const url of [`/api/automation/tasks/${task.id}/reflect`,`/api/automation/learning/${run.id}/retry`]){
+      const response=await f.app.inject({method:'POST',url,headers:f.headers});assert.equal(response.statusCode,409);assert.match(response.json().error,/经验沉淀已关闭/);
+    }
+  }finally{await f.close();}
+});
 test('a stopped collection decision retains only its own unknown reservation and preserves historical blockers and charges',async()=>{
   const f=await fixture();try{
     const task=f.create();task.autonomy=createAutonomousExecution('Complete collection');
@@ -41,6 +62,7 @@ const report=():AutomationReport=>({summary:'独立评测',assessments:[],scores
 async function fixture(){
   const directory=mkdtempSync(join(tmpdir(),'learning-test-')),f=await createApp({directory,serveWeb:false,startWorker:false}),login=await f.app.inject({method:'POST',url:'/api/login'}),headers={cookie:String(login.headers['set-cookie']).split(';')[0]};
   const environmentId=randomUUID();f.vault.update({threshold:80,paused:true,model:{endpoint:'https://models.invalid',name:'test',apiKey:'fake-key'},environments:[{id:environmentId,name:'test',origin:'http://kooboo.invalid',apiOrigin:'http://kooboo.invalid',token:'fake-env'}]});
+  f.vault.updateAutomation({...f.vault.automation(),learning:{...defaultLearningSettings,use:true,collect:true}});
   const r=f.automationStore.saveResource({name:'Source',scenario:'site-template',description:'页面与动态产品',contentUrl:'https://source.invalid',referenceUrl:'',externalSource:'',externalId:'',files:[]});
   const create=(scope:'homepage'|'site'='homepage',parentId?:string)=>f.automationStore.create({resourceIds:[r.id],environmentId,kind:'generation',scope,requirements:'',parentId},f.vault.automation())[0];
   return {...f,directory,headers,environmentId,resource:r,create,async close(){await f.app.close();rmSync(directory,{recursive:true,force:true});}};

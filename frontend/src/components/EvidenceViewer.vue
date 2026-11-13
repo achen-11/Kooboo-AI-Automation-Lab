@@ -6,7 +6,8 @@ import { comparisonFor, evidenceImages, evidenceLabel, type EvidenceContext } fr
 import BaseSelect from './BaseSelect.vue';
 import EvidenceImagePane from './EvidenceImagePane.vue';
 
-const props = defineProps<{ taskId: string; artifacts: MaterialFile[] }>();
+type ViewerArtifact = MaterialFile & { href?: string };
+const props = defineProps<{ taskId: string; artifacts: ViewerArtifact[] }>();
 const dialog = ref<HTMLDialogElement>();
 const filmstrip = ref<HTMLElement>();
 const headingId = useId(), detailId = useId();
@@ -20,14 +21,14 @@ const selected = computed(() => images.value.find(file => file.name === selected
 const pair = computed(() => selected.value ? comparisonFor(images.value, selected.value) : null);
 const comparing = computed(() => mode.value === 'compare' && !!pair.value);
 const choices = (role: 'reference' | 'target') => images.value.filter(file => file.role === role && file.viewport === selected.value?.viewport);
-const label = (file: MaterialFile) => evidenceLabel(file, images.value.findIndex(item => item.name === file.name));
-const artifact = (file: MaterialFile) => `/api/v1/automation/reports/${props.taskId}/artifacts/${encodeURIComponent(file.name)}`;
+const label = (file: ViewerArtifact) => evidenceLabel(file, images.value.findIndex(item => item.name === file.name));
+const artifact = (file: ViewerArtifact) => file.href || `/api/v1/automation/reports/${props.taskId}/artifacts/${encodeURIComponent(file.name)}`;
 const panes = computed(() => comparing.value
-  ? [images.value.find(file => file.name === referenceName.value), images.value.find(file => file.name === targetName.value)].filter((file): file is MaterialFile => !!file)
+  ? [images.value.find(file => file.name === referenceName.value), images.value.find(file => file.name === targetName.value)].filter((file): file is ViewerArtifact => !!file)
   : selected.value ? [selected.value] : []);
 const paneRefs = new Map<string, InstanceType<typeof EvidenceImagePane>>();
 const setPane = (name: string, value: unknown) => { if (value) paneRefs.set(name, value as InstanceType<typeof EvidenceImagePane>); else paneRefs.delete(name); };
-function choose(file: MaterialFile, autoMode = false) {
+function choose(file: ViewerArtifact, autoMode = false) {
   const previousViewport = selected.value?.viewport;
   selectedName.value = file.name;
   const match = comparisonFor(images.value, file);

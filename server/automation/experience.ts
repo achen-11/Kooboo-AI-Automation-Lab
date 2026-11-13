@@ -9,14 +9,15 @@ import type { Vault } from '../lib/vault.js';
 import { ExperienceStore, experienceInput } from './experience-store.js';
 import { localDecision } from './local-decision.js';
 import { reflectionDataKey } from './task-index.js';
+import { TemplateWorkflowStore } from './template-workflow-store.js';
 
 const selection=z.object({reason:z.string().min(1).max(4000),selected:z.array(z.object({id:z.string(),revision:z.number().int(),reason:z.string().min(1).max(2000)}).strict()).max(5)}).strict();
 const reflection=z.object({reason:z.string().min(1).max(4000),changes:z.array(z.object({id:z.string().optional(),revision:z.number().int().optional(),input:experienceInput,enabled:z.boolean(),reason:z.string().min(1).max(4000),evidence:z.array(z.string()).min(1).max(20)}).strict()).max(5),outcomes:z.array(z.object({experienceId:z.string(),revision:z.number().int(),state:z.enum(['applied-unverified','supported','counterexample','not-applied']),reason:z.string().min(1).max(4000),evidence:z.array(z.string()).min(1).max(20)}).strict()).max(30)}).strict();
 function context(task:AutomationTask,store:AutomationStore){return {task:{id:task.id,scenario:task.scenario,scope:task.scope,stage:task.stage,message:task.message.slice(0,20000),error:task.error,interruption:task.interruption},input:store.version(task.versionId),report:task.report?{...task.report,artifacts:undefined}:undefined,events:store.events(task.id).slice(-20).map(e=>({id:'event:'+e.seq,time:e.time,message:e.message.slice(0,2000)}))};}
 export function selectionKey(task:AutomationTask,phase:ExperienceStage){return `${task.id}:selection:${phase}:${phase==='followup'?task.followup?.budgetId||task.followup?.startedAt||'initial':'initial'}`;}
-export function adoptedGuidance(task:AutomationTask,store:AutomationStore,phase:ExperienceStage){const run=new ExperienceStore(store).run(selectionKey(task,phase));return run?.status==='completed'&&run.adoptions.length?'\n\n本阶段采用的经验（补充建议，不改变原 SOP、范围和规则）：\n'+run.adoptions.map(e=>`[${e.title} v${e.revision}] ${e.guidance}\n适用依据：${e.reason}`).join('\n'):'';}
+export function adoptedGuidance(task:AutomationTask,store:AutomationStore,phase:ExperienceStage,vault?:Vault){if(!task.learningPolicy?.use||vault&&!vault.automation().learning?.use)return '';const run=new ExperienceStore(store).run(selectionKey(task,phase));return run?.status==='completed'&&run.adoptions.length?'\n\n本阶段采用的经验（补充建议，不改变原 SOP、范围和规则）：\n'+run.adoptions.map(e=>`[${e.title} v${e.revision}] ${e.guidance}\n适用依据：${e.reason}`).join('\n'):'';}
 export async function selectExperience(task:AutomationTask,phase:ExperienceStage,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,decide:typeof localDecision=localDecision){
-  if(!task.learningPolicy?.use)return;
+  if(task.templateWorkflow||!task.learningPolicy?.use||!vault.automation().learning?.use)return;
   const experiences=new ExperienceStore(store),key=selectionKey(task,phase);if(experiences.run(key))return;
   const candidates=experiences.candidates(task,phase,'',1,task.scenario==='site-template'?12:60);if(!candidates.length)return;
   const run=experiences.enqueue(task,phase,'selection',key);run.status='running';experiences.put(run);
@@ -26,6 +27,12 @@ export async function selectExperience(task:AutomationTask,phase:ExperienceStage
 }
 export function queueReflection(task:AutomationTask,store:AutomationStore,manual=false){
   if(!manual&&!task.learningPolicy?.collect)return;
+  if(!manual&&task.templateWorkflow){
+    const registry=new TemplateWorkflowStore(store),evaluation=registry.evaluation(task.id);
+    const events=[...(evaluation?.issues.filter(issue=>issue.status==='open').map(issue=>issue.id)||[]),...(task.report?.issues.filter(issue=>!evaluation?.issues.some(item=>issue.detail.includes(item.id))).map(issue=>createHash('sha256').update(JSON.stringify([issue.severity,issue.title,(evaluation?.evidence.filter(file=>issue.evidence.includes(file.name)&&file.role==='target').map(file=>[file.url,file.viewport])||[]).sort()])).digest('hex'))||[]),...(task.interruption?[createHash('sha256').update(task.interruption.reason).digest('hex')]:[])];
+    if(!events.length)return;
+    const key='learning-events:'+task.templateWorkflow.rootTaskId,seen=registry.batch<string[]>(key)||[],fresh=events.filter(event=>!seen.includes(event));if(!fresh.length)return;registry.saveBatch(key,[...new Set([...seen,...fresh])]);
+  }
   if(!task.report&&!task.interruption)throw new Error('尚无独立评测或明确中断证据，不能复盘');
   const experiences=new ExperienceStore(store),key=reflectionDataKey(task)!;
   const existing=experiences.run(key);

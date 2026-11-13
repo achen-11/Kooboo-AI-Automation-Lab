@@ -81,7 +81,7 @@ export class AutomationWorker{
         try{advanceOptimization(root,this.store,settings);}catch(error){stopOptimization(root,this.store,'优化调度无法继续：'+(error as Error).message,['查看执行记录，核实站点、原会话与报告。']);}
       }
       // Executor-injected test workers do not start real model side effects.
-      if((this.execute.generation===executeGeneration&&this.execute.evaluation===executeEvaluation)||this.reflect!==reflectExperience){
+      if(settings.learning?.collect&&((this.execute.generation===executeGeneration&&this.execute.evaluation===executeEvaluation)||this.reflect!==reflectExperience)){
         const experiences=new ExperienceStore(this.store);
         if(!this.learningReady){experiences.recover();this.learningReady=true;}
         syncReflectionCandidates(this.store,experiences);

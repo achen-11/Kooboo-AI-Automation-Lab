@@ -40,13 +40,16 @@ import { registerSiteDomainApi } from './site-domains.js';
 import { registerTaskNamingApi } from './site-naming-api.js';
 import { taskSiteNaming } from './site-naming.js';
 import { registerLiveComparisonApi } from './live-comparison.js';
+import { registerTemplateWorkflowApi } from './template-workflow-api.js';
+import { TemplateWorkflowStore } from './template-workflow-store.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
 const logicalPath=z.string().min(1).max(300).refine(n=>{try{return materialPath(n)===n;}catch{return false;}},'附件路径不合法');
 const file=z.object({id:uuid,name:logicalPath,type:z.string().max(200),size:z.number().int().nonnegative(),sha256:z.string().regex(/^[a-f0-9]{64}$/)});
 const resource=z.object({folderId:uuid.nullable().optional(),name:z.string().trim().min(1).max(200),scenario:z.enum(Object.keys(scenarios) as [keyof typeof scenarios,...(keyof typeof scenarios)[]]),description:z.string().max(200000),contentUrl:url,referenceUrl:url,externalSource:z.string().max(200),externalId:z.string().max(200),files:z.array(file).max(1000),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional()}).superRefine((r,ctx)=>{
-  if(['migration','upgrade','site-template'].includes(r.scenario)&&!r.contentUrl)ctx.addIssue({code:'custom',message:'当前场景需要内容站 URL',path:['contentUrl']});
+  if(['migration','upgrade'].includes(r.scenario)&&!r.contentUrl)ctx.addIssue({code:'custom',message:'当前场景需要内容站 URL',path:['contentUrl']});
+  if(r.scenario==='site-template'&&!r.referenceUrl&&!r.contentUrl)ctx.addIssue({code:'custom',message:'模板需要参考站 URL',path:['referenceUrl']});
   if(r.scenario==='upgrade'&&!r.referenceUrl)ctx.addIssue({code:'custom',message:'升级场景需要独立参考站',path:['referenceUrl']});
   try{uniqueMaterialPaths(r.files);}catch(error){ctx.addIssue({code:'custom',message:(error as Error).message,path:['files']});}
   if(Boolean(r.externalId)!==Boolean(r.externalSource))ctx.addIssue({code:'custom',message:'外部来源与记录标识需要一起填写'});
@@ -75,6 +78,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerSiteDomainApi(app,store,vault,owns);
   registerTaskNamingApi(app,store,vault,owns);
   registerLiveComparisonApi(app,store);
+  registerTemplateWorkflowApi(app,store,directory);
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns,cancel);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
@@ -289,6 +293,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
         ?vault.get().environments.find(e=>e.id===input.environmentId)?.defaultRootDomain||undefined:undefined;
       const value={items:store.create({...input,defaultRootDomain,...(snapshot?{versionId:snapshot.inputVersionId}:{})},executionSettings())};
       for(const task of value.items){
+        new TemplateWorkflowStore(store).initialize(task);
         if(snapshot&&sourceManifest&&baseline){
           task.collectionId=snapshot.collectionId;task.collectionVersionId=snapshot.id;task.requirementsEnabled=true;
           // Retain source evidence ownership. A new generation owns only its new manifest revision.

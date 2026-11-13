@@ -1,6 +1,7 @@
 <script setup lang="ts">
 import { nextTick, ref, watch } from 'vue';
 import { Download, LoaderCircle, RotateCw } from '@lucide/vue';
+import { appendUrlParam } from '../lib/template-workflow';
 const props = defineProps<{ src: string; label: string; zoom: number | null }>();
 const container = ref<HTMLElement>();
 const image = ref<HTMLImageElement>();
@@ -25,11 +26,11 @@ defineExpose({ displayScale });
 
 <template>
   <section class="evidence-pane">
-    <header class="evidence-pane-heading"><slot name="heading"><strong :title="label">{{ label }}</strong></slot><a class="text-action" :href="src + '?download=1'" download :aria-label="'下载' + label" title="下载原图"><Download :size="16" /></a></header>
+    <header class="evidence-pane-heading"><slot name="heading"><strong :title="label">{{ label }}</strong></slot><a class="text-action" :href="appendUrlParam(src, 'download', '1')" download :aria-label="'下载' + label" title="下载原图"><Download :size="16" /></a></header>
     <div ref="container" class="evidence-image-scroll" :class="{ 'fit-image': zoom === null }" tabindex="0" :aria-label="label + '预览，可滚动查看'" :aria-busy="loading">
       <div v-if="loading" class="evidence-image-state" role="status"><LoaderCircle class="spin" :size="22" />正在加载截图…</div>
       <div v-if="failed" class="evidence-image-state" role="alert"><p>截图加载失败</p><button class="button secondary small" @click="reload"><RotateCw :size="15" />重新加载</button></div>
-      <img v-show="!failed && !loading" ref="image" :key="src + retry" :src="src + (retry ? '?retry=' + retry : '')" :alt="label" :class="{ 'evidence-image-zoomed': zoom !== null }" :style="zoom !== null && naturalWidth ? { width: naturalWidth * zoom + 'px' } : undefined" draggable="false" @load="loaded" @error="loading = false; failed = true" />
+      <img v-show="!failed && !loading" ref="image" :key="src + retry" :src="retry ? appendUrlParam(src, 'retry', String(retry)) : src" :alt="label" :class="{ 'evidence-image-zoomed': zoom !== null }" :style="zoom !== null && naturalWidth ? { width: naturalWidth * zoom + 'px' } : undefined" draggable="false" @load="loaded" @error="loading = false; failed = true" />
     </div>
   </section>
 </template>

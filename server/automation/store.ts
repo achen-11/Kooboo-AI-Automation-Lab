@@ -235,6 +235,7 @@ export class AutomationStore {
         if(siteName||subDomain||rootDomain)task.generation={...(siteName?{siteName}:{}),...(subDomain?{subDomain}:{}),...(rootDomain?{rootDomain}:{})};
       }
       const parent=input.parentId?this.task(input.parentId):undefined;
+      if(parent?.templateWorkflow&&parent.versionId===task.versionId&&parent.scope===task.scope)task.templateWorkflow=structuredClone(parent.templateWorkflow);
       if(parent?.autonomy){
         task.autonomy=createAutonomousExecution(task.message);
         task.autonomy.policy=structuredClone(parent.autonomy.policy);

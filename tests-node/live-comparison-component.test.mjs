@@ -31,7 +31,7 @@ before(async () => {
         builder.onResolve({ filter: /^\.\/common$/ }, () => ({ path: 'common', namespace: 'live-test' }));
         builder.onLoad({ filter: /.*/, namespace: 'live-test' }, args => ({
           contents: args.path === 'api'
-            ? 'export const api=(...args)=>globalThis.__liveServices.request(...args); export const message=e=>e.message; export const formatDate=String; export const go=()=>{};'
+            ? 'export const api=(...args)=>globalThis.__liveServices.request(...args); export const message=e=>e.message; export const formatDate=String; export const go=()=>{}; export const platform={}; export const sessionFetch=async()=>new Response(JSON.stringify({error:"Not Found"}),{status:404,headers:{"content-type":"application/json"}});'
             : args.path === 'common'
               ? 'export const workspace={settings:{}}; export const scopeName=()=>"全站";'
               : 'export const notify={success:()=>{}};',

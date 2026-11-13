@@ -19,7 +19,7 @@ before(async () => {
       builder.onResolve({ filter: /\/notifications$/ }, () => ({ path: 'notifications', namespace: 'recovery-test' }));
       builder.onResolve({ filter: /^\.\/common$/ }, () => ({ path: 'common', namespace: 'recovery-test' }));
       builder.onLoad({ filter: /.*/, namespace: 'recovery-test' }, args => ({ contents: args.path === 'api'
-        ? 'export const api=(...args)=>globalThis.__recoveryServices.request(...args); export const message=e=>e.message; export const formatDate=String; export const go=()=>{};'
+        ? 'export const api=(...args)=>globalThis.__recoveryServices.request(...args); export const message=e=>e.message; export const formatDate=String; export const go=()=>{}; export const platform={}; export const sessionFetch=async()=>new Response(JSON.stringify({error:"Not Found"}),{status:404,headers:{"content-type":"application/json"}});'
         : args.path === 'common' ? 'export const workspace={settings:{}}; export const scopeName=()=>"全站";'
         : 'export const notify={success:(t)=>globalThis.__recoveryServices.notified?.push({type:"success",text:t}),info:(t)=>globalThis.__recoveryServices.notified?.push({type:"info",text:t})};', loader: 'js' }));
       builder.onLoad({ filter: /\.vue$/ }, args => {
@@ -54,7 +54,7 @@ const descendants = node => node.children.flatMap(child => [child, ...descendant
 const text = node => ((node.tag === '#comment' ? '' : node.text) + node.children.map(text).join('')).trim();
 async function settle() { for (let i = 0; i < 4; i++) { await new Promise(resolve => setImmediate(resolve)); await nextTick(); } }
 const summary = (id, kind = 'evaluation') => ({ id, kind, resourceId: 'resource', resourceName: 'Car Repair', scenario: 'site-template', scope: 'site', environmentId: '', generatedSiteId: 'site', status: 'interrupted', stopped: false, createdAt: 1, updatedAt: 1, siteUrl: '', report: null, attention: '原评测执行尚未确认停止', nextStep: '确认停止后恢复' });
-async function fixture({ pair = false, fail = false, legacy = false, cancelled = false, namingConflict = false, workflowActive = false, windowedFollowup = false } = {}) {
+async function fixture({ pair = false, fail = false, legacy = false, cancelled = false, namingConflict = false, workflowActive = false, windowedFollowup = false, taskStatus, retainActiveOnResume = false } = {}) {
   const previous = new Map(['window', 'document', '__recoveryServices'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const document = Object.assign(new EventTarget(), { hidden: false });
   const window = Object.assign(new EventTarget(), { location: { hash: cancelled ? '#/tasks/root' : '#/tasks/root?tab=execution' }, history: { replaceState() {} } });
@@ -63,7 +63,9 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
   if (cancelled) Object.assign(root, { generatedSiteId: null, status: 'cancelled', stopped: true, attention: '', nextStep: '' });
   if (namingConflict) Object.assign(root, { generatedSiteId: null, stopped: true, canAdjustSiteNames: true, attention: '自定义站点名或子域名已被占用' });
   if (workflowActive) Object.assign(root, { stopped: true, attention: 'AI 跟进已达到配置的次数、时间或 token 预算，当前流程仍未完成。' });
-  let activeBlocker = workflowActive ? { tasks: 0, learning: 1, reason: '同工作流仍有活动执行（1 个经验学习执行中），请等待全部停止或强制中断后恢复' } : undefined;
+  if (taskStatus) Object.assign(root, { status: taskStatus, stopped: !['running', 'cancelling'].includes(taskStatus), attention: '', nextStep: '' });
+  let activeBlocker = workflowActive ? { tasks: 0, learning: 1, reason: '同工作流仍有活动执行（1 个经验学习执行中），请等待全部停止或强制中断后恢复' }
+    : taskStatus ? { tasks: 1, learning: 0, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' } : undefined;
   const learningItems = workflowActive ? [{ id: 'learn-1', taskId: 'root', workflowId: 'root', phase: 'followup', kind: 'reflection', key: 'k1', status: 'running', policy: {}, createdAt: 1, updatedAt: 1, threadId: '', reason: '执行中', adoptions: [], produced: [], budgetId: 'experience:root' }] : [];
   const calls = [], notified = [];
   const request = async (path, options = {}) => {
@@ -81,7 +83,7 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
       if (path.endsWith('/resume')) {
         const parsed = options.body ? JSON.parse(options.body) : {};
         if (activeBlocker && !parsed.force) throw Error(activeBlocker.reason);
-        activeBlocker = undefined;
+        activeBlocker = retainActiveOnResume ? { tasks: 1, learning: 0, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' } : undefined;
         for (const item of learningItems) if (['running', 'queued'].includes(item.status)) item.status = 'failed';
         task.status = 'queued'; task.attention = '';
       }
@@ -219,5 +221,38 @@ test('cancelling a just-finished learning run in TaskLearning shows info instead
     assert.deepEqual(f.notified, [{ type: 'info', text: '该经验学习已结束' }]);
     assert.equal(f.buttons('强制中断').length, 0);
     assert.equal(f.buttons('恢复任务').length, 2, 'once learning finishes, primary buttons return to normal resume');
+  } finally { f.close(); }
+});
+
+test('normal task activity never displays a recovery blocker banner or force-resume action', async () => {
+  for (const status of ['queued', 'running', 'following-up', 'cancelling', 'completed']) {
+    const f = await fixture({ taskStatus: status });
+    try {
+      assert.ok(!f.text().includes('同工作流仍有活动执行'), `${status} is normal task activity, not a recovery error`);
+      assert.equal(f.buttons('强制中断并恢复').length, 0);
+      if (['queued', 'running', 'following-up'].includes(status)) assert.equal(f.buttons('取消任务').length, 1);
+      f.buttons('概览')[0].props.onClick(); await settle();
+      assert.ok(!f.text().includes('同工作流仍有活动执行'));
+      assert.equal(f.buttons('强制中断并恢复').length, 0);
+      assert.equal(f.calls.filter(c => c.method === 'POST').length, 0);
+    } finally { f.close(); }
+  }
+  const f = await fixture({ taskStatus: 'completed', workflowActive: true });
+  try {
+    assert.ok(!f.text().includes('同工作流仍有活动执行'), 'background reflection after completion does not imply the task must recover');
+    assert.equal(f.buttons('强制中断并恢复').length, 0);
+  } finally { f.close(); }
+});
+
+test('successful recovery removes the blocker warning even while the resumed task is reported active', async () => {
+  const f = await fixture({ workflowActive: true, retainActiveOnResume: true });
+  try {
+    assert.ok(f.text().includes('同工作流仍有活动执行'));
+    await f.buttons('强制中断并恢复')[0].props.onClick(); await settle();
+    assert.equal(f.root.status, 'queued');
+    assert.ok(!f.text().includes('同工作流仍有活动执行'), 'resumed work must not be shown as another recovery failure');
+    assert.equal(f.buttons('强制中断并恢复').length, 0);
+    assert.equal(f.buttons('取消任务').length, 1);
+    assert.equal(f.calls.filter(c => c.method === 'POST').length, 1);
   } finally { f.close(); }
 });

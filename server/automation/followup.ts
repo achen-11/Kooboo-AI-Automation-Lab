@@ -59,6 +59,7 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
     if(task.generation.deliveryState==='sending'&&!(state.delivery?.id===task.generation.deliveryId&&state.delivery?.state==='accepted'))throw new Error('原发送结果仍不确定，禁止追加另一轮');
     if(action.action==='continue'&&(!action.message||state.pending))throw new Error('继续生成需要明确消息；有待输入调用时应使用 answer');
     if(action.action==='answer'&&(!action.answer||!state.pending||action.callId!==state.pending.callId))throw new Error('回答必须对应当前待输入调用及其参数');
+    if(action.action==='answer'&&state.pending?.name==='ask_user_input'&&state.pending.args?.kind==='upload')throw new Error('待输入调用要求用户上传文件（kind=upload），自动跟进不能伪造上传结果，请改用 interrupt 说明原因与下一步');
   }
   if(action.action==='evaluate') {
     if(task.generation?.next)throw new Error('仍有尚未发送的本轮委托，不能使用上一轮完成回执交接评测');
@@ -159,7 +160,7 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
   usage=await usageCapture(task.id,'followup',store,vault,signal,followupRequestPolicy(task));
   const address=server.address();if(!address||typeof address==='string')throw new Error('跟进工具服务启动失败');
   writeFileSync(resolve(work,'tools.mjs'),`try{const r=await fetch(process.env.FOLLOWUP_TOOLS_URL,{method:'POST',headers:{Authorization:'Bearer '+process.env.FOLLOWUP_TOOLS_TOKEN,'Content-Type':'application/json'},body:process.argv[2]||'{}'});console.log(await r.text());if(!r.ok)process.exitCode=1;}catch(error){console.log(JSON.stringify({kind:'followup_tool_transport_error',code:error.cause?.code||'FETCH_FAILED',hostname:new URL(process.env.FOLLOWUP_TOOLS_URL).hostname}));process.exitCode=1;}`,{mode:0o600});
-  writeFileSync(resolve(work,'SKILL.md'),(quality?task.optimization!.policy.sop+'\n\n本次场景约束：'+optimizationScenarioGuidance(task.scenario):task.followup.policy.sop)+adoptedGuidance(task,store,'followup'),{mode:0o600});
+  writeFileSync(resolve(work,'SKILL.md'),(quality?task.optimization!.policy.sop+'\n\n本次场景约束：'+optimizationScenarioGuidance(task.scenario):task.followup.policy.sop)+adoptedGuidance(task,store,'followup',vault),{mode:0o600});
   writeFileSync(resolve(work,'task.json'),JSON.stringify(store.sanitize({task:followupTaskContext(task),input:store.version(task.versionId)}),null,2),{mode:0o600});
   writeFileSync(resolve(work,'tools-schema.json'),JSON.stringify(z.toJSONSchema(toolInput),null,2),{mode:0o600});
   const codex=createClient(vault,directory,{FOLLOWUP_TOOLS_URL:`http://127.0.0.1:${address.port}/tools`,FOLLOWUP_TOOLS_TOKEN:token,...usage.env},task.model||undefined);
@@ -174,7 +175,7 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
 查询示例：{"tool":"get_task"}。其他查询工具：get_conversation、get_site、probe_site、inspect_execution。工具返回 evidenceId，行动必须引用本轮已取得的 evidenceId。
 行动示例：{"tool":"act","decision":{"action":"retry","reason":"依据实际错误决定重试本阶段","evidence":["工具返回的 evidenceId"]}}。
 action 可选 retry（重新执行当前阶段，保留已有站点和证据）、continue（原站原会话继续，需 message）、answer（处理待输入调用，需 callId 和符合调用要求的 answer 参数对象）、evaluate（确认交付后接入独立评测）、wait（waitSeconds 为5到300）、interrupt（必须 nextSteps 数组）。
-continue/answer 前必须 inspect_execution；evaluate 前必须 get_site、probe_site，执行终态不明确时还必须 get_conversation 查交付及未完成调用。系统会检查真实执行前提，失败后请根据工具错误继续查证。不要把原会话的可选建议当成当前任务必做项。首页外工作不在首页任务范围内。评测不达标无需生成修复。
+continue/answer 前必须 inspect_execution；evaluate 前必须 get_site、probe_site，执行终态不明确时还必须 get_conversation 查交付及未完成调用。pending 为 ask_user_input 时，仅当答案可由冻结输入与原任务范围如实确定时才用 answer；若因参考站截图/视觉取证失败挂起等待用户决策（如协助上传参考截图、刷新环境重试或更换参考 URL）、请求文件上传（kind=upload）或需变更范围/地址，严禁代答跳过视觉证据盲写，必须用 interrupt 给出具体原因与可操作 nextSteps。系统会检查真实执行前提，失败后请根据工具错误继续查证。不要把原会话的可选建议当成当前任务必做项。首页外工作不在首页任务范围内。评测不达标无需生成修复。
 已投递的生成任务 retry 前也必须 inspect_execution。原委托存在匹配的 failed/interrupted 终态时，系统会将 retry 转为同站同会话的新一轮投递。历史余额不足等错误只证明对应旧 run 失败；只有新 run 的回执才能证明重试再次失败，不能据旧错误判断当前余额或连接仍不可用。发送结果不确定时只查证，不重复投递。
 评测阶段的 retry 会把你本轮 decision.reason 直接传给原评测会话，请在 reason 中明确需要修正的指标、视口、证据角色等已查证要求。评测器会向同一会话反馈具体结果校验错误，最多追加两次结果修正；可以复用有效证据，不需要重新生成站点或重复采集。会话本身失效时会释放绑定供后续评测使用新会话。不要假定 retry 无法传递具体修正要求。
 成功 act 后简要说明原因即结束本轮。`;

@@ -1,16 +1,25 @@
 <script setup lang="ts">
 import { LoaderCircle, ArrowUpRight } from '@lucide/vue';
 import type { AutomationRule, InputVersion, OptimizationPolicy } from '../../../../shared/automation';
+import type { TemplateWorkflowResponse } from '../../../../shared/template-workflow';
 import TaskLearning from '../../components/TaskLearning.vue';
 import TaskManifest from '../../components/TaskManifest.vue';
 import Disclosure from '../../components/Disclosure.vue';
 import { useTaskSection } from './use-task-section';
 import { scopeName } from './common';
 import TaskGenerationDeliveries from './TaskGenerationDeliveries.vue';
-const props = defineProps<{ taskId: string; resourceId: string; scope: string; kind: 'generation' | 'evaluation'; revision?: string }>();
+import TemplateBaselinePanel from './TemplateBaselinePanel.vue';
+const props = defineProps<{ taskId: string; resourceId: string; scope: string; kind: 'generation' | 'evaluation'; revision?: string; templateWorkflow?: TemplateWorkflowResponse | null; templateUnavailable?: string; baselineFocus?: { pagePath: string; viewId?: string; nonce: number } | null }>();
 const { data, loading, error, load } = useTaskSection<{ message: string; version?: InputVersion; rule: AutomationRule | null; threadId: string; siteName?: string; subDomain?: string; rootDomain?: string; model: { name: string; endpoint: string } | null; optimization?:{policy:OptimizationPolicy} }>(() => `/automation/tasks/${props.taskId}/sections/input`, () => props.revision);
 </script>
+
 <template>
+  <p v-if="templateUnavailable" class="alert info" role="status">{{ templateUnavailable }}</p>
+  <TemplateBaselinePanel
+    v-if="templateWorkflow?.supported"
+    :workflow="templateWorkflow"
+    :focus-target="baselineFocus"
+  />
   <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
   <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="17" />正在加载输入与配置…</p>
   <template v-if="data">

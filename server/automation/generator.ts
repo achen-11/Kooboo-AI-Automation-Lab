@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { ensureTemplateAnalysis } from './template-analysis.js';
 import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
@@ -20,7 +21,7 @@ import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, typ
 import { adaptRepairImages } from './repair-images.js';
 import { resolve } from 'node:path';
 import { generatedSiteName, normalizeRootDomain, parseRootDomains, findRootDomain, rootDomainValue } from '../../shared/kooboo-domains.js';
-import { generationSourceEvidence } from './generation-reference.js';
+import { generationSourceEvidence, templateGenerationImages, templateGenerationSources } from './generation-reference.js';
 import { archiveDeliveryImages, GenerationDeliveryStore, isPreSendBridgeRejection } from './generation-delivery.js';
 import { assertSiteNaming, availableSiteNames } from './site-naming.js';
 
@@ -28,6 +29,8 @@ async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)
 
 /** Existing Kooboo APIs + the existing frontend stream/function loop. No server generation API is introduced. */
 export async function executeGeneration(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,openSession:typeof generationSession=generationSession){
+  const templateBaseline=await ensureTemplateAnalysis(task,store,vault,directory,signal);
+  if(templateBaseline&&!templateBaseline.complete)throw new Pending('生成前的来源分析仍有缺口，尚未创建或修改生成站：'+templateBaseline.limitations.join('；'));
   await ensureSourceCollection(task,store,vault,directory,signal);
   const input=effectiveCollectionInput(task,store,directory);if(!input)throw new Error('缺少固定的输入版本');
   if(task.collectionVersionId){
@@ -140,7 +143,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     task.message+='\n资料映射清单：kfile:'+manifestPath+'；共 '+uploaded.length+' 份资料。按需从清单定位文件，每次只返回必要摘要，禁止把全清单展开到聊天。';store.put(task);}
   task.generation.prepared=true;store.put(task);
   if((!task.generation.deliveryId||task.generation.next)&&!task.generation.legacySubmitted&&(task.generation.deliveryState!=='completed'||task.generation.next)){
-    await ensureManifest(task,store,vault,directory,signal);
+    if(!task.templateWorkflow)await ensureManifest(task,store,vault,directory,signal);
     await selectExperience(task,'generation',store,vault,directory,signal);
   }
   // A finished chat loop may have produced no page. An explicit, validated
@@ -181,7 +184,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       }
       const batch=action?.action==='answer'?undefined:adapted?.batches[task.generation.repairBatch?.completed||0];
       let images=action?.action==='answer'?undefined:batch?.images||(!adapted?repairSources?.map(image=>({uri:'data:image/png;base64,'+image.bytes.toString('base64'),mediaType:'image/png' as const})):undefined);
-      const baseline=initial&&!images&&state.imageInput?sourceVisualBaselineImages(input,directory):undefined;
+      const baseline=initial&&!images&&state.imageInput?(task.templateWorkflow?templateGenerationImages(task,store,directory):sourceVisualBaselineImages(input,directory)):undefined;
       if(baseline?.images.length)images=baseline.images;
       if(images?.length&&!state.imageInput)throw new Pending('当前 Kooboo automation bridge 不支持图片修复委托，请更新 bridge 后恢复；尚未发送修复消息。');
       // Validate images/answers before provisioning files or changing deliveryId.
@@ -194,11 +197,11 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
           ?'修复证据正在分批传递。此批仅研读附件，简要记录可见差异和图片区域对应关系，不修改目标站、不调用写入工具、不重新采集。后续批次将补齐证据，最后一批才会收到完整修复委托。读完本批后简短结束，等待调度器追加下一批。'
           :action?.action==='continue'&&action.message!==task.message
           ?task.message+'\n\n本轮已核对的跟进要求：\n'+action.message:task.message,
-        guidance:adoptedGuidance(task,store,'generation')+collectionGuidance+acceptedAssetGuidance+(baseline?.label||'')+(batch?`\n修复证据批次 ${(task.generation.repairBatch?.completed||0)+1}/${adapted!.batches.length}。${task.generation.repairBatch!.completed===adapted!.batches.length-1?'已到最后一批，结合前批已研读的证据统一执行本次完整修复，完成后按原完整范围独立复评。':'本批只研读，不执行修复。'}`+batch.label:''),
+        guidance:adoptedGuidance(task,store,'generation',vault)+collectionGuidance+acceptedAssetGuidance+(baseline?.label||'')+(batch?`\n修复证据批次 ${(task.generation.repairBatch?.completed||0)+1}/${adapted!.batches.length}。${task.generation.repairBatch!.completed===adapted!.batches.length-1?'已到最后一批，结合前批已研读的证据统一执行本次完整修复，完成后按原完整范围独立复评。':'本批只研读，不执行修复。'}`+batch.label:''),
         manifest,
         materials,
-        ...(task.scenario==='site-template'?{sourceEvidence:generationSourceEvidence(manifest,store,directory)}:{}),
-      });
+        ...(task.scenario==='site-template'?{sourceEvidence:task.templateWorkflow?templateGenerationSources(task,store,directory):generationSourceEvidence(manifest,store,directory)}:{}),
+      },Boolean(vault.automation().learning?.use));
       assertGenerationInput(prepared?.text,images,action?.action==='answer'?action.answer:undefined);
       if(prepared){store.event(task.id,`生成委托资料：${prepared.mode}；最终文本 ${Buffer.byteLength(prepared.text)} bytes，图片 ${images?.length||0} 张；平台原件 ${prepared.packageId}`);}
       const id=randomUUID(),conversationId=task.generation.conversationId||state.conversationId;

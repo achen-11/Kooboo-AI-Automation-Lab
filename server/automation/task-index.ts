@@ -13,7 +13,7 @@ export type ReadinessReport = Pick<AutomationReport, 'quality' | 'scores' | 'sum
     checks: Pick<NonNullable<AutomationReport['collectionTarget']>['checks'][number], 'status'>[];
   };
 };
-export type ReadinessTask = Pick<AutomationTask, 'collectionVersionId' | 'versionId' | 'generatedSiteId' | 'siteRevision' | 'requirementsEnabled' | 'scope'> & {
+export type ReadinessTask = Pick<AutomationTask, 'collectionVersionId' | 'versionId' | 'generatedSiteId' | 'siteRevision' | 'requirementsEnabled' | 'scope' | 'templateWorkflow'> & {
   optimization?: Pick<NonNullable<AutomationTask['optimization']>, 'state' | 'reportId' | 'activeTaskId' | 'currentRevision' | 'reason' | 'stoppedAt'> & { policy: { targetScore: number } };
   rule: { criteria: Pick<NonNullable<AutomationTask['rule']>['criteria'][number], 'id' | 'required' | 'scopes' | 'viewports'>[] } | null;
 };
@@ -41,7 +41,7 @@ export function taskHeader(task: AutomationTask): TaskHeader {
   return {
     ...summary, summary, versionId: task.versionId, siteRevision: task.siteRevision,
     workflowIds: [...new Set([task.id, ...(task.evaluationTaskId ? [task.evaluationTaskId] : []), ...(optimization?.rounds.flatMap(round => [round.generationTaskId, ...(round.previousEvaluationTaskIds || []), ...(round.evaluationTaskId ? [round.evaluationTaskId] : [])]) || [])])],
-    collectionVersionId: task.collectionVersionId, requirementsEnabled: task.requirementsEnabled,
+    collectionVersionId: task.collectionVersionId, requirementsEnabled: task.requirementsEnabled, templateWorkflow:task.templateWorkflow,
     error: brief(task.error),
     rule: task.rule ? { criteria: (task.rule.criteria || []).map(({ id, required, scopes, viewports }) => ({ id, required, scopes, viewports })) } : null,
     optimization: optimization ? {

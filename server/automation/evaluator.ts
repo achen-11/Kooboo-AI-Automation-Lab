@@ -1,4 +1,5 @@
 import { z } from 'zod';
+import { executeTemplateWorkflowEvaluation } from './template-workflow-evaluation.js';
 import { createHash, randomUUID } from 'node:crypto';
 import { closeSync, constants, fstatSync, lstatSync, mkdirSync, openSync, readFileSync, readSync, rmSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
@@ -195,6 +196,7 @@ export function collectionEvaluationManifest(manifest:RequirementManifest,pageAl
 }
 
 export async function executeEvaluation(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,dependencies:{openBrowser?:typeof evaluationBrowser;createClient?:typeof codexClient}={}){
+  if(task.templateWorkflow)return executeTemplateWorkflowEvaluation(task,store,vault,directory,signal,dependencies);
   task.stage='evaluation';store.put(task);
   const site=task.generatedSiteId&&store.site(task.generatedSiteId);const input=effectiveCollectionInput(task,store,directory);if(!site||!input||!task.rule)throw new Error('缺少评测站点、输入或规则快照');
   if(!site.url)throw new Error('生成站尚未有可访问地址，请先关联实际站点地址');
@@ -268,7 +270,7 @@ export async function executeEvaluation(task:AutomationTask,store:AutomationStor
     const reviewManifest=compact?.manifest||manifest;
     const reviewTask=program?{id:task.id,kind:task.kind,scope:task.scope,scenario:task.scenario,versionId:task.versionId,collectionVersionId:task.collectionVersionId,generatedSiteId:task.generatedSiteId,siteRevision:task.siteRevision,requirementsId:task.requirementsId,message:task.message,rule:{id:task.rule.id,hash:task.rule.hash,criteria:task.rule.criteria}}:task;
     writeFileSync(resolve(work,'task.json'),JSON.stringify({task:reviewTask,input:program?{...input,files:undefined}:input,site,manifest:reviewManifest,sourceRenderedTargets:renderedTargets,collectionPageAliases:compact?.pageAliases||pageAliases,...(program?{collectionProgramSummary:'collection-program-summary.json',fullManifest:'collection-manifest.json',materialsManifest:'materials-manifest.json',evidenceManifest:'evidence-manifest.json'}:{})},null,2),{mode:0o600});
-    writeFileSync(resolve(work,'SKILL.md'),task.rule.sop+'\n\n'+task.rule.references+adoptedGuidance(task,store,'evaluation')+acceptedAssetGuidance+renderedGuidance+(program?dataIdentityEvaluationContract(true):''),{mode:0o600});
+    writeFileSync(resolve(work,'SKILL.md'),task.rule.sop+'\n\n'+task.rule.references+adoptedGuidance(task,store,'evaluation',vault)+acceptedAssetGuidance+renderedGuidance+(program?dataIdentityEvaluationContract(true):''),{mode:0o600});
     copyEvaluationMaterials(directory,work,input.files);
     const codex=(dependencies.createClient||codexClient)(vault,directory,{...browser.env,...inspection.env,...usage.env},task.model,sdkPidFile);
     const threadOptions={model:task.model.name,workingDirectory:work,skipGitRepoCheck:true,sandboxMode:'workspace-write' as const,networkAccessEnabled:true,approvalPolicy:'never' as const,webSearchMode:'disabled' as const};

@@ -231,6 +231,11 @@ test('host validation rejects invented evidence, uncertain sends, wrong phases, 
     assert.throws(()=>validate(decision('continue',{message:'continue'}),{execution}),/answer/);
     assert.throws(()=>validate(decision('answer',{callId:'other',answer:{choice:'a'}}),{execution}),/当前待输入/);
     assert.equal(validate(decision('answer',{callId:'call',answer:{choice:'a'}}),{execution}).action,'answer');
+    assert.equal(validate(decision('interrupt',{reason:'参考站 Sandbox 与外部截图均失败，等待用户上传参考截图或刷新重试',nextSteps:['在 Kooboo 会话上传参考站截图或检查截图服务后恢复任务']}),{execution}).action,'interrupt');
+    execution.pending={callId:'call',name:'ask_user_input',args:{kind:'upload',upload:{target:'mediaLibrary'}}} as any;
+    assert.throws(()=>validate(decision('answer',{callId:'call',answer:{value:[]}}),{execution}),/kind=upload.*interrupt/);
+    assert.equal(validate(decision('interrupt',{reason:'需用户手动上传参考站截图',nextSteps:['上传参考站截图至媒体库后恢复任务']}),{execution}).action,'interrupt');
+    execution.pending={callId:'call',name:'ask_user_input',args:{}} as any;
     t.generation!.deliveryState='sending';assert.throws(()=>validate(decision('answer',{callId:'call',answer:{}}),{execution}),/不确定/);
     t.kind='evaluation';assert.throws(()=>validate(decision('continue',{message:'edit'}),{execution}),/不能直接改站/);assert.equal(validate(decision('retry')).action,'retry');
   }finally{await f.close();}

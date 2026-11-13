@@ -1,4 +1,5 @@
 import { randomUUID } from 'node:crypto';
+import { TemplateWorkflowStore } from './template-workflow-store.js';
 import type { AutomationReport, AutomationSettings, AutomationTask, FollowupAction } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import { Conflict } from '../lib/store.js';
@@ -13,6 +14,7 @@ import { validateRecollectionAction, validateRecollectionScope } from './collect
 import type { ReadinessReport, ReadinessTask } from './task-index.js';
 
 function qualityBarMet(task: ReadinessTask, report: ReadinessReport) {
+  if(task.templateWorkflow&&report.quality!=='passed')return false;
   const target=report.collectionTarget;
   if(task.collectionVersionId&&(!target||target.state!=='complete'||target.collectionVersionId!==task.collectionVersionId||target.inputVersionId!==task.versionId||target.generatedSiteId!==task.generatedSiteId||target.siteRevision!==(task.optimization?.currentRevision||task.siteRevision)||!target.checks.length||target.checks.some(check=>check.status!=='verified')))return false;
   if(report.migrationCheck&&report.migrationCheck.state!=='complete')return false;
@@ -132,6 +134,15 @@ export function advanceOptimization(task: AutomationTask, store: AutomationStore
   if(task.autonomy&&run.noImprovement>=2&&!task.autonomy.checkpoint.diagnosticRequired){
     if(task.autonomy.history.diagnostics>=task.autonomy.policy.maxDiagnostics){stopOptimization(task,store,'有限诊断与换策后仍无实质改善，已触发自主优化防循环。',['查看各轮实际证据、失败路径和保留的原站，提供新的修复条件后恢复。']);return;}
     task.autonomy.history.diagnostics++;task.autonomy.checkpoint.diagnosticRequired=true;store.event(task.id,'连续两轮无改善，下一轮先诊断失败原因并提出不同的证据支持路径。');
+  }
+  if(task.templateWorkflow){
+    const workflow=new TemplateWorkflowStore(store),result=workflow.evaluation(evaluation.id),baseline=workflow.get(task)?.baseline;
+    if(!baseline?.complete||!result){stopOptimization(task,store,'存在来源或本轮取证缺口，保留未验证；不委托 AI Chat 改站消除证据缺口。',['查看新流程缺口，先恢复对应分析/评测；范围变更建立新任务。']);return;}
+    const issues=evaluation.report.issues,images=[...new Set(issues.flatMap(issue=>issue.evidence))].filter(name=>evaluation.report!.artifacts.some(file=>file.name===name&&file.type==='image/png')).slice(0,20);
+    if(!issues.length||!images.length){stopOptimization(task,store,'当前报告没有具备定位与证据的可执行缺陷，停止自动修复。',['查看评分依据并补齐具体问题后再修复。']);return;}
+    const message='根据本轮独立评测批量修复以下问题。保持冻结基线与原站原会话，避免重复参考研究。\n'+issues.map(issue=>`[${issue.severity}] ${issue.title}\n${issue.detail}\n证据：${issue.evidence.join(', ')}`).join('\n\n');
+    const progress={improved:result.issues.some(issue=>issue.status==='done'),reason:'由独立复验结果产生问题状态，按全部已证缺陷批量交接',resolved:result.issues.filter(issue=>issue.status==='done').map(issue=>issue.id),remaining:result.issues.filter(issue=>issue.status==='open').map(issue=>issue.id),unverified:result.issues.filter(issue=>issue.status==='unverified').map(issue=>issue.id),introduced:[]};
+    store.db.transaction(()=>{run.state='planning';run.activeTaskId=task.id;store.put(task);applyOptimizationAction(task,{action:'repair',reason:'独立评测已形成可执行修复清单，无需额外 AI 规划',message,imageEvidence:images,evidence:images,progress},store,settings);});return;
   }
   run.state='planning';run.activeTaskId=task.id;task.stage='optimization';task.model ||= evaluation.model;
   if(task.followup)task.followup.threadId='';

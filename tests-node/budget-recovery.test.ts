@@ -262,7 +262,8 @@ test('resume detects running learning even without task reservations, and force 
 test('HTTP 402 billing failure interrupts immediately on attempt 1, skips automatic reflection without spawning workflow blockers, and deduplicates identical interruptions', async () => {
   const f = await fixture();
   try {
-    f.vault.updateAutomation({ ...f.vault.automation(), enabled: true, autoEvaluate: false });
+    const settings = f.vault.automation();
+    f.vault.updateAutomation({ ...settings, enabled: true, autoEvaluate: false, learning: { ...settings.learning!, collect: true } });
     const experiences = new ExperienceStore(f.store);
     const homepageTask = f.store.create({
       resourceIds: [f.task.resourceId],
@@ -506,7 +507,8 @@ test('in-flight reflection owned by a live worker is aborted cleanly by both lea
   const login = await f.app.inject({ method: 'POST', url: '/api/login' });
   const headers = { cookie: String(login.headers['set-cookie']).split(';')[0] };
   try {
-    f.vault.updateAutomation({ ...f.vault.automation(), enabled: true, autoEvaluate: false });
+    const settings = f.vault.automation();
+    f.vault.updateAutomation({ ...settings, enabled: true, autoEvaluate: false, learning: { ...settings.learning!, collect: true } });
     const store = f.automationStore, experiences = new ExperienceStore(store);
     const resource = store.saveResource({ name: 'LiveCancel', scenario: 'upgrade', contentUrl: 'https://source.invalid', referenceUrl: '', description: '', files: [], externalSource: '', externalId: '' });
     const task = store.create({ resourceIds: [resource.id], kind: 'generation', scope: 'homepage', environmentId: '', requirements: '' }, f.vault.automation())[0];

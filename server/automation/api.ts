@@ -35,6 +35,7 @@ import { clearSiteRetry } from './retry-guard.js';
 import { registerSiteDomainApi } from './site-domains.js';
 import { registerTaskNamingApi } from './site-naming-api.js';
 import { taskSiteNaming } from './site-naming.js';
+import { registerLiveComparisonApi } from './live-comparison.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -69,6 +70,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerDispositionApi(app,store,()=>vault.get().threshold,cancel,owns);
   registerSiteDomainApi(app,store,vault,owns);
   registerTaskNamingApi(app,store,vault,owns);
+  registerLiveComparisonApi(app,store);
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
@@ -243,7 +245,10 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const active=task.optimization?.activeTaskId&&task.optimization.activeTaskId!==id?store.header(task.optimization.activeTaskId)||task:undefined;
     const summaries=new Map(store.summaries([...new Map([task,...(evaluation?[evaluation]:[]),...(active?[active]:[])].map(t=>[t.id,t])).values()]).map(t=>[t.id,t]));
     const disposition=store.dispositions.get('delivery',task.generatedSiteId||task.id),resourceDisposition=store.dispositions.get('resource',task.resourceId);
-    return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
+    const versionUrls=store.db.prepare("SELECT json_extract(json,'$.referenceUrl') AS referenceUrl,json_extract(json,'$.contentUrl') AS contentUrl FROM auto_versions WHERE id=?").get(task.versionId) as {referenceUrl?:string|null;contentUrl?:string|null}|undefined;
+    const siteUrl=task.siteUrl||(task.generatedSiteId?(store.db.prepare("SELECT json_extract(json,'$.url') AS url FROM auto_sites WHERE id=?").get(task.generatedSiteId) as {url?:string|null}|undefined)?.url:'')||'';
+    const canCompareLive=Boolean(siteUrl||versionUrls?.referenceUrl||versionUrls?.contentUrl);
+    return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),canCompareLive,...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
   });
   app.get('/api/automation/tasks/:id/usage',async(request,reply)=>{
     const {id}=params.parse(request.params),task=store.task(id);

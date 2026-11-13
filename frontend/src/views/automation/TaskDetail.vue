@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { ArrowLeft, ArrowUpRight, ExternalLink, Ban, Play, FileText, Send, X, LoaderCircle, MoreHorizontal, CircleAlert, Check, Clock3, Download, Link, RotateCcw, Trash2 } from '@lucide/vue';
+import { ArrowLeft, ArrowUpRight, ExternalLink, Ban, Play, FileText, Send, X, LoaderCircle, MoreHorizontal, CircleAlert, Check, Clock3, Columns2, Download, Link, RotateCcw, Trash2 } from '@lucide/vue';
 import { scenarios, taskStatusNames, optimizationStateNames, supportsAutomaticOptimization, type AutomationTask, type AutomationSettings, type Resource, type GeneratedSite } from '../../../../shared/automation';
 import { dispositionStateNames, type DispositionState } from '../../../../shared/dispositions';
 import { initialTaskTab, stageNames, taskRecoveryAction, type TaskSnapshot, type TaskTab } from '../../../../shared/task-presentation';
@@ -9,6 +9,7 @@ import { notify } from '../../lib/notifications';
 import { siteReportLink } from '../../lib/site-reports';
 import TaskUsage from '../../components/TaskUsage.vue';
 import EnvironmentName from '../../components/EnvironmentName.vue';
+import LiveSiteComparisonDialog from '../../components/LiveSiteComparisonDialog.vue';
 import SiteTaskUsage from './SiteTaskUsage.vue';
 import TaskExecution from './TaskExecution.vue';
 import TaskRecoveryActions from './TaskRecoveryActions.vue';
@@ -43,6 +44,9 @@ const diagnosticDialog = ref<InstanceType<typeof DiagnosticExportDialog>>();
 const execution = ref<InstanceType<typeof TaskExecution>>();
 const domainDialog = ref<InstanceType<typeof SiteDomainDialog>>();
 const dispositionDialog = ref<InstanceType<typeof DispositionDialog>>();
+const liveComparisonDialog = ref<InstanceType<typeof LiveSiteComparisonDialog>>();
+const canCompareLive = computed(() => data.value?.canCompareLive ?? Boolean(task.value && (task.value.siteUrl || ['site-template', 'migration', 'upgrade'].includes(task.value.scenario))));
+const defaultComparisonReportId = computed(() => data.value?.currentReportId || (task.value?.kind === 'evaluation' ? task.value.id : evaluation.value?.id) || null);
 const disposition = computed(() => data.value?.disposition);
 const resourceDisposition = computed(() => data.value?.resourceDisposition);
 const deliveryUnitId = computed(() => task.value ? (task.value.generatedSiteId || task.value.id) : '');
@@ -143,6 +147,7 @@ onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange
   <template v-if="task">
     <header class="page-header task-detail-header"><div class="task-heading"><h1>{{ task.resourceName }}</h1><div class="task-metadata"><span class="task-meta-tag">{{ scenarios[task.scenario] }}</span><span class="task-meta-tag">{{ task.kind === 'generation' ? '生成任务' : '评测任务' }}</span><span class="task-meta-tag">{{ scopeName(task.scope) }}</span><EnvironmentName class="task-meta-tag" :environment-id="task.environmentId" /><span class="status-badge task-header-status" :class="current?.status">{{ task.optimization && !(task.optimization.state==='waiting-evaluation'&&task.optimization.activeTaskId===task.id) ? optimizationStateNames[task.optimization.state] : current ? taskStatusNames[current.status] : taskStatusNames[task.status] }}</span><span v-if="disposition" class="task-meta-tag disposition-tag" :class="disposition.state" :title="disposition.note ? `${dispositionStateNames[disposition.state]}：${disposition.note}` : dispositionStateNames[disposition.state]">已归档 · {{ dispositionStateNames[disposition.state] }}</span></div><p v-if="disposition?.note" class="task-disposition-note">归档说明：{{ disposition.note }}</p></div><div class="toolbar-actions task-header-actions">
       <a v-if="task.siteUrl" class="button secondary" :href="task.siteUrl" target="_blank" rel="noopener noreferrer"><ExternalLink :size="16" />打开站点</a>
+      <button v-if="canCompareLive" type="button" class="button secondary" @click="liveComparisonDialog?.open()"><Columns2 :size="16" />实时对比</button>
       <button v-if="disposition" class="button secondary" :disabled="busy" @click="openDisposition('active')"><RotateCcw :size="16" />移回在列</button>
       <TaskRecoveryActions v-if="!disposition || current?.stopped === false" :task="current" :busy="busy" @action="action" />
       <button v-if="canContinue" class="button primary" :disabled="busy" @click="openContinuation"><LoaderCircle v-if="busy" class="spin" :size="16" /><Send v-else :size="16" />{{ task.scope === 'homepage' ? '补全全站' : '继续生成' }}</button>
@@ -156,6 +161,7 @@ onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange
     <SiteDomainDialog ref="domainDialog" @saved="load" />
     <CreateTaskDialog ref="continueDialog" :resources="continueResources" :site="continueSite" />
     <DiagnosticExportDialog :key="task.id" ref="diagnosticDialog" :task-id="task.id" />
+    <LiveSiteComparisonDialog :key="'live-' + task.id" ref="liveComparisonDialog" :task-id="task.id" :default-report-id="defaultComparisonReportId" />
     <p v-if="actionError && !followDialog?.open" class="alert error" role="alert">{{ actionError }}</p>
     <nav class="task-tabs" role="tablist" aria-label="任务详情分区"><button v-for="(item, index) in tabs" :id="`task-tab-${item.id}`" :key="item.id" role="tab" :aria-selected="tab === item.id" :aria-controls="`task-panel-${item.id}`" :tabindex="tab === item.id ? 0 : -1" :class="{ selected: tab === item.id }" @click="selectTab(item.id)" @keydown="tabKey($event, index)">{{ item.label }}</button></nav>
     <div :id="`task-panel-${tab}`" role="tabpanel" :aria-labelledby="`task-tab-${tab}`" class="task-tab-content">

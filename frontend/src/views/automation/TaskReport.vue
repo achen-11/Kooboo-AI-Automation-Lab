@@ -1,11 +1,12 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { LoaderCircle, FileText, ExternalLink, ChevronDown, ChevronRight, Image, Download } from '@lucide/vue';
+import { LoaderCircle, FileText, ExternalLink, ChevronDown, ChevronRight, Columns2, Image, Download } from '@lucide/vue';
 import { taskStatusNames, type AutomationReport, type AutomationRule, type OptimizationProgress } from '../../../../shared/automation';
 import Disclosure from '../../components/Disclosure.vue';
 import TablePagination from '../../components/TablePagination.vue';
 import CompletenessReport from '../../components/CompletenessReport.vue';
 import EvidenceViewer from '../../components/EvidenceViewer.vue';
+import LiveSiteComparisonDialog from '../../components/LiveSiteComparisonDialog.vue';
 import { evidenceLabel, type EvidenceContext } from '../../lib/evidence-preview';
 import { useTaskSection } from './use-task-section';
 import { formatDate } from '../../api';
@@ -18,6 +19,7 @@ const qualities = { passed: '达到标准', failed: '需要改进', unverified: 
 const severity = { critical: '严重', major: '主要', minor: '次要' };
 const issueOpen = ref<number | null>(null), allEvidence = ref(false), page = ref(1);
 const viewer = ref<InstanceType<typeof EvidenceViewer>>();
+const liveComparison = ref<InstanceType<typeof LiveSiteComparisonDialog>>();
 const images = computed(() => data.value?.report?.artifacts.filter(file => file.type === 'image/png') || []);
 const issueContexts = computed<EvidenceContext[]>(() => data.value?.report?.issues || []);
 const assessmentContexts = computed<EvidenceContext[]>(() => data.value?.report?.assessments.map(item => ({
@@ -65,7 +67,7 @@ function openGallery(name: string) {
     </section>
     <div class="report-score-grid"><section class="panel report-verdict"><span>质量结论</span><h2 :class="data.report.quality === 'passed' ? 'success-text' : 'warning-text'">{{ qualities[data.report.quality] }}</h2></section><section v-for="item in data.report.scores" :key="item.viewport" class="panel report-score"><span>{{ names[item.viewport] || item.viewport }}</span><strong>{{ item.value ?? '—' }}</strong><small>{{ item.value === null ? '未验证' : '按本轮规则计算' }}</small></section></div>
     <section class="panel settings-panel">
-      <h2>评测结论</h2><p class="report-summary">{{ data.report.summary }}</p>
+      <div class="section-heading"><h2>评测结论</h2><button type="button" class="text-action" @click="liveComparison?.open(data.taskId)"><Columns2 :size="14" />实时站点对比</button></div><p class="report-summary">{{ data.report.summary }}</p>
       <Disclosure label="分项评分与依据"><div class="table-scroll"><table class="task-table">
         <thead><tr><th>指标 / 视口</th><th>评分</th><th>依据</th></tr></thead>
         <tbody><tr v-for="(item, assessmentIndex) in data.report.assessments" :key="item.criterionId + item.viewport">
@@ -92,5 +94,6 @@ function openGallery(name: string) {
     <section class="panel settings-panel task-section-stack"><h2>覆盖范围</h2><div><h3>未验证（{{ data.report.coverage.unverified.length }}）</h3><ul v-if="data.report.coverage.unverified.length" class="task-text-list"><li v-for="text in data.report.coverage.unverified" :key="text">{{ text }}</li></ul><p v-else class="text-muted">报告未列出未验证项。</p></div><Disclosure :label="'已验证（' + data.report.coverage.verified.length + '）'"><ul class="task-text-list"><li v-for="text in data.report.coverage.verified" :key="text">{{ text }}</li></ul></Disclosure><Disclosure :label="'范围之外（' + data.report.coverage.outOfScope.length + '）'"><ul class="task-text-list"><li v-for="text in data.report.coverage.outOfScope" :key="text">{{ text }}</li></ul></Disclosure></section>
     <section class="panel settings-panel"><div class="section-heading"><button class="text-action" :aria-expanded="allEvidence" @click="allEvidence = !allEvidence"><ChevronDown v-if="allEvidence" :size="16" /><ChevronRight v-else :size="16" />全部截图（{{ images.length }}）</button><a class="text-action" :href="`/api/v1/automation/reports/${data.taskId}`" target="_blank" rel="noopener noreferrer">报告 JSON<ExternalLink :size="14" /></a></div><template v-if="allEvidence"><div class="evidence-grid"><button v-for="(file, index) in visibleImages" :key="file.id" class="evidence-preview-card" :aria-label="'预览' + label(file.name, (page - 1) * 12 + index)" @click="openGallery(file.name)"><img :src="artifact(file.name)" loading="lazy" :alt="label(file.name, (page - 1) * 12 + index)" /><span>{{ label(file.name, (page - 1) * 12 + index) }}<Image :size="13" /></span></button></div><TablePagination :page="page" :pages="pages" :total="images.length" @change="page = $event" /></template></section>
     <EvidenceViewer v-if="data.taskId" ref="viewer" :task-id="data.taskId" :artifacts="data.report.artifacts" />
+    <LiveSiteComparisonDialog :key="'report-live-' + taskId" ref="liveComparison" :task-id="taskId" :default-report-id="data.taskId" />
   </template>
 </template>

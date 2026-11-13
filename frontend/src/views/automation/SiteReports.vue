@@ -1,8 +1,9 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref } from 'vue';
-import { ArrowLeft, ArrowUpRight, FileText, LoaderCircle } from '@lucide/vue';
+import { ArrowLeft, ArrowUpRight, Columns2, FileText, LoaderCircle } from '@lucide/vue';
 import { formatDate, go } from '../../api';
 import TablePagination from '../../components/TablePagination.vue';
+import LiveSiteComparisonDialog from '../../components/LiveSiteComparisonDialog.vue';
 import TaskReport from './TaskReport.vue';
 import { useTaskSection } from './use-task-section';
 import { scopeName } from './common';
@@ -15,6 +16,7 @@ const props = defineProps<{ taskId: string; siteId: string; taskKind: 'generatio
 const initial = reportLocation(window.location.hash.split('?')[1] || '', props.taskId, props.taskKind);
 const selected = ref(initial.reportId), page = ref(initial.page);
 const heading = ref<HTMLHeadingElement>(), back = ref<HTMLButtonElement>();
+const liveComparison = ref<InstanceType<typeof LiveSiteComparisonDialog>>();
 const { data, loading, error, load } = useTaskSection<SiteReportPage>(
   () => `/automation/site-deliveries/${props.siteId}/reports?page=${page.value}&pageSize=10`, () => props.revision);
 const names: Record<string, string> = { desktop: 'PC', mobile: '移动端', business: '业务' };
@@ -45,7 +47,7 @@ onUnmounted(() => window.removeEventListener('hashchange', hashChanged));
     <p v-else class="section-loading"><LoaderCircle class="spin" :size="17" />正在加载评测结果…</p>
   </template>
   <section v-else class="panel task-data-panel">
-    <div class="section-heading panel-heading"><h2 ref="heading" tabindex="-1">评测记录</h2><button v-if="data?.currentReportId" class="text-action" @click="navigate(data.currentReportId)">当前报告<ArrowUpRight :size="14" /></button></div>
+    <div class="section-heading panel-heading"><h2 ref="heading" tabindex="-1">评测记录</h2><div class="toolbar-actions"><button type="button" class="text-action" @click="liveComparison?.open(data?.currentReportId)"><Columns2 :size="14" />实时站点对比</button><button v-if="data?.currentReportId" class="text-action" @click="navigate(data.currentReportId)">当前报告<ArrowUpRight :size="14" /></button></div></div>
     <p v-if="data && !data.currentReportId" class="report-current-note">当前版本（{{ scopeName(data.scope) }}）暂无有效报告，已有分数仅供历史查阅。</p>
     <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="17" />正在加载评测记录…</p>
     <div v-if="data?.items.length" class="table-scroll" :aria-busy="loading"><table class="task-table report-history"><thead><tr><th>评测时间</th><th>范围</th><th>评分</th><th>结果</th><th /></tr></thead><tbody>
@@ -59,6 +61,7 @@ onUnmounted(() => window.removeEventListener('hashchange', hashChanged));
     </tbody></table></div>
     <div v-else-if="data && !error" class="empty-state"><FileText :size="30" /><h2>暂无评测记录</h2><p>独立评测与后续复评会汇总在这里。</p></div>
     <TablePagination v-if="data" :page="data.page" :pages="data.pages" :total="data.total" :busy="loading" @change="navigate(null, $event)" />
+    <LiveSiteComparisonDialog :key="'site-live-' + taskId" ref="liveComparison" :task-id="taskId" :default-report-id="data?.currentReportId" />
   </section>
 </template>
 

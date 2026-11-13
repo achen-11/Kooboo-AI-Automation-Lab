@@ -65,5 +65,5 @@ export async function reflectExperience(run:LearningRun,store:AutomationStore,va
       for(const outcome of value.outcomes){const current=experiences.get(outcome.experienceId);if(current&&!current.manualDisabled&&current.revision===outcome.revision&&['supported','counterexample'].includes(outcome.state))experiences.save({title:current.title,scenarios:current.scenarios,stages:current.stages,conditions:current.conditions,exclusions:current.exclusions,guidance:current.guidance},{id:current.id,revision:current.revision,actor:'ai',reason:outcome.reason,taskId:task.id,evidence:outcome.evidence,verdict:outcome.state as 'supported'|'counterexample'});}
       run.produced=produced.map(e=>e.id);run.outcomes=value.outcomes;run.reason=value.reason;run.status='completed';experiences.put(run);return {produced:run.produced};
     })});
-  }catch(error){if(experiences.run(run.id)?.status==='completed')return;run.status='failed';run.reason=error instanceof Error?error.message:'经验复盘失败';experiences.put(run);store.event(task.id,'经验复盘未完成，不影响已发布报告：'+run.reason);}
+  }catch(error){const saved=experiences.run(run.id);if(saved?.status==='completed'||(signal.aborted&&saved?.status==='failed'))return;run.status='failed';run.reason=error instanceof Error?error.message:'经验复盘失败';experiences.put(run);store.event(task.id,'经验复盘未完成，不影响已发布报告：'+run.reason);}
 }

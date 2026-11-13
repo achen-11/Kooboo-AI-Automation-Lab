@@ -27,7 +27,8 @@ defineExpose({ dirty });
 const modelTesting = ref(false);
 
 const apiExample = `GET ${window.location.origin}/api/v1/automation/reports?externalSource=your-admin&externalId=your-record\nAuthorization: Bearer <报告读取令牌>`;
-const importExample = JSON.stringify([{ name: '资源名称', scenario: 'migration', description: '资料说明', contentUrl: 'https://example.com', referenceUrl: '', externalSource: 'your-admin', externalId: 'record-001', files: [] }], null, 2);
+const importRequestExample = `POST ${window.location.origin}/api/v1/resources/import\nAuthorization: Bearer <资源导入令牌>\nContent-Type: application/json`;
+const importExample = JSON.stringify([{ name: '资源名称', scenario: 'migration', description: '资料说明', contentUrl: 'https://example.com', referenceUrl: '', externalSource: 'your-admin', externalId: 'record-001', siteName: 'salon', subDomain: 'salon_public', rootDomain: '-shawnchen-hk.kooboo.io', files: [] }], null, 2);
 
 async function load() {
   await refresh();
@@ -128,7 +129,23 @@ async function copy(text: string) {
   </div>
 </form>
 <section v-if="tab==='prompts'" class="panel settings-panel"><label class="field"><span>场景</span><BaseSelect v-model="scenario" :options="Object.entries(scenarios).map(([key, label]) => ({ value: key, label: (label) }))" /></label><label class="field"><span>委托提示词</span><textarea v-model="form.prompts[scenario]" class="input code-editor" rows="18" /></label><p class="text-muted">与资料、范围及补充要求组合为一段完整消息，复用 Kooboo 已有的 skill、reference 和 tools。</p></section>
-<template v-if="tab==='api'"><section class="panel settings-panel"><div class="section-heading"><h2>报告读取</h2><button class="icon-button" aria-label="复制读取示例" @click="copy(apiExample)"><Copy :size="17" /></button></div><pre class="resource-description">{{apiExample}}</pre><label class="field"><span>报告读取令牌</span><div class="input-with-action"><input :value="platform.settings?.credentials.readToken" type="password" readonly /><button class="icon-button" aria-label="复制报告令牌" @click="copy(platform.settings?.credentials.readToken||'')"><Copy :size="17" /></button></div></label><p>待跟进任务：<code>GET /api/v1/automation/tasks?status=pending</code></p><p>报告详情：<code>GET /api/v1/automation/reports/:id</code></p><p>证据文件：<code>GET /api/v1/automation/reports/:id/artifacts/:file</code></p><p class="text-muted">按 externalSource + externalId 关联多个生成站和多轮评测。报告尚未生成时保留状态，report 为 null。读取令牌没有创建或跟进权限。</p></section><section class="panel settings-panel"><h2>外部 Admin 资源导入</h2><p><code>POST /api/v1/resources/import</code></p><label class="field"><span>资源导入令牌</span><div class="input-with-action"><input :value="platform.settings?.credentials.ingestToken" type="password" readonly /><button class="icon-button" aria-label="复制导入令牌" @click="copy(platform.settings?.credentials.ingestToken||'')"><Copy :size="17" /></button></div></label><pre class="resource-description">{{importExample}}</pre><p class="text-muted">相同外部来源与记录标识更新输入版本。首版 API 位于本机；其他机器访问需后续配置网络部署。</p></section></template>
+<template v-if="tab==='api'">
+  <section class="panel settings-panel"><div class="section-heading"><h2>报告读取</h2><button class="icon-button" aria-label="复制读取示例" @click="copy(apiExample)"><Copy :size="17" /></button></div><pre class="resource-description">{{apiExample}}</pre><label class="field"><span>报告读取令牌</span><div class="input-with-action"><input :value="platform.settings?.credentials.readToken" type="password" readonly /><button class="icon-button" aria-label="复制报告令牌" @click="copy(platform.settings?.credentials.readToken||'')"><Copy :size="17" /></button></div></label><p>待跟进任务：<code>GET /api/v1/automation/tasks?status=pending</code></p><p>报告详情：<code>GET /api/v1/automation/reports/:id</code></p><p>证据文件：<code>GET /api/v1/automation/reports/:id/artifacts/:file</code></p><p class="text-muted">按 externalSource + externalId 关联多个生成站和多轮评测。报告尚未生成时保留状态，report 为 null。读取令牌没有创建或跟进权限。</p></section>
+  <section class="panel settings-panel">
+    <div class="section-heading"><h2>外部 Admin 资源导入</h2><button class="icon-button" aria-label="复制导入示例" @click="copy(importExample)"><Copy :size="17" /></button></div>
+    <pre class="resource-description">{{importRequestExample}}</pre>
+    <label class="field"><span>资源导入令牌</span><div class="input-with-action"><input :value="platform.settings?.credentials.ingestToken" type="password" readonly /><button class="icon-button" aria-label="复制导入令牌" @click="copy(platform.settings?.credentials.ingestToken||'')"><Copy :size="17" /></button></div></label>
+    <pre class="resource-description">{{importExample}}</pre>
+    <div class="table-scroll"><table class="task-table"><thead><tr><th>可选字段</th><th>说明</th></tr></thead><tbody>
+      <tr><td><code>siteName</code></td><td>站点名称。字母、数字或下划线，最多 63 个字符，保存为小写。</td></tr>
+      <tr><td><code>subDomain</code></td><td>站点子域名。格式同站点名称，不能包含连字符（-）；仅指定名称或子域名时，另一项沿用它。</td></tr>
+      <tr><td><code>rootDomain</code></td><td>建站根域名，不含协议、端口或路径。香港示例为 <code>-shawnchen-hk.kooboo.io</code>，也兼容省略前导 <code>-</code> 的写法。</td></tr>
+    </tbody></table></div>
+    <p class="text-muted">未指定时请省略字段，不传空字符串。根域名依次取创建任务时的选择、资源导入值、环境默认值；实际建站时检查所选环境是否支持。</p>
+    <p class="text-muted">导入仅保存资源。资源详情和版本历史显示保存的输入值，可核对根域名是否带前导 <code>-</code>；任务“输入与配置 → 建站配置”显示实际采用的值。</p>
+    <p class="text-muted">相同外部来源与记录标识更新输入版本，已入队任务保留原版本。首版 API 位于本机；其他机器访问需后续配置网络部署。</p>
+  </section>
+</template>
 </template>
 
 <style scoped>

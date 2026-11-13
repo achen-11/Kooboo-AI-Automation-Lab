@@ -216,3 +216,35 @@ test('cancelled tasks restart cleanly: never-started generations queue directly,
     assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${blocker.id}/resume`, headers: f.headers })).statusCode, 409);
   } finally { await f.close(); }
 });
+
+test('resume detects running learning even without task reservations, and force resume or learning cancel interrupts and recovers', async () => {
+  const f = await fixture();
+  try {
+    const experiences = new ExperienceStore(f.store);
+    const run = experiences.enqueue(f.task, 'evaluation', 'reflection', randomUUID());
+    run.status = 'running';
+    experiences.put(run);
+
+    // Summary surfaces active workflow learning:
+    const summary = await f.app.inject({ method: 'GET', url: `/api/automation/tasks/${f.task.id}/summary`, headers: f.headers });
+    assert.equal(summary.statusCode, 200);
+    assert.equal(summary.json().workflowActive.learning, 1);
+
+    // Normal resume detects running learning even though task has zero followup/planning reservations:
+    const blocked = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${f.task.id}/resume`, headers: f.headers });
+    assert.equal(blocked.statusCode, 409, blocked.body);
+    assert.match(blocked.json().error, /同工作流仍有活动执行/);
+
+    // Force resume interrupts running learning and resumes task:
+    const forced = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${f.task.id}/resume`, headers: f.headers, payload: { force: true } });
+    assert.equal(forced.statusCode, 200, forced.body);
+    assert.equal(experiences.run(run.id)!.status, 'failed');
+    assert.equal(f.store.task(f.task.id)!.status, 'following-up');
+
+    // Individual learning cancel stops queued/running runs:
+    const queued = experiences.enqueue(f.task, 'evaluation', 'reflection', randomUUID());
+    const cancelled = await f.app.inject({ method: 'POST', url: `/api/automation/learning/${queued.id}/cancel`, headers: f.headers });
+    assert.equal(cancelled.statusCode, 200, cancelled.body);
+    assert.equal(experiences.run(queued.id)!.status, 'failed');
+  } finally { await f.close(); }
+});

@@ -21,7 +21,8 @@ import { registerSiteDeliveryApi } from './site-delivery.js';
 import { registerTimingApi } from './timing.js';
 import { registerDashboardApi } from './dashboard.js';
 import { registerMigrationApi } from './migration-api.js';
-import { retainStoppedFollowupReservations, correctUnsentPlanningAttempts } from './budget-recovery.js';
+import { assertWorkflowStopped, retainStoppedFollowupReservations, retainWorkflowLearningReservations, correctUnsentPlanningAttempts, workflowBlockers, workflowActiveReason } from './budget-recovery.js';
+import { ExperienceStore } from './experience-store.js';
 import { trimTaskGenerationBrowserCache } from './generation-cache.js';
 import { registerGenerationContextApi } from './generation-context-api.js';
 import { registerCollectionApi } from './collection/api.js';
@@ -65,14 +66,14 @@ const params=z.object({id:uuid});
 const pageNumber=z.coerce.number().int().min(1).max(1000000),pageSizeNumber=z.coerce.number().int().min(1).max(100);
 const pagination=z.object({page:pageNumber.default(1),pageSize:pageSizeNumber.default(20)});
 
-export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,cancel:(id:string)=>void,owns:(id:string)=>boolean){
+export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,cancel:(id:string)=>void|Promise<void>,owns:(id:string)=>boolean){
   registerResourceFolderApi(app,store.resourceFolders);
   registerDispositionApi(app,store,()=>vault.get().threshold,cancel,owns);
   registerSiteDomainApi(app,store,vault,owns);
   registerTaskNamingApi(app,store,vault,owns);
   registerLiveComparisonApi(app,store);
   registerExecutionLogApi(app,store);
-  registerLearningApi(app,store,vault,directory,owns);
+  registerLearningApi(app,store,vault,directory,owns,cancel);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
   registerTimingApi(app,store);
   registerDashboardApi(app,store);
@@ -114,24 +115,73 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.post('/api/automation/notifications/read',async()=>({ok:true,readAt:store.readAllNotices()}));
   app.post('/api/automation/tasks/:id/resume',async(request)=>{
     const{id}=params.parse(request.params);
+    const{force}=z.object({force:z.boolean().default(false)}).parse(request.body||{});
+    if(force){
+      const initial=store.task(id);
+      if(!initial)throw new Conflict('任务不存在');
+      if(store.dispositions.get('delivery',initial.generatedSiteId||initial.id))throw new Conflict('该任务或生成站已归档，请先移回在列后再恢复');
+      const initialRoot=store.root(initial);
+      if(initialRoot?.optimization?.state==='completed')throw new Conflict('优化目标已达成');
+      if(initialRoot?.optimization&&initialRoot.id!==initial.id&&initialRoot.optimization.activeTaskId!==initial.id)throw new Conflict('该任务已是历史优化轮次，请操作当前轮次');
+      if(initial.kind==='evaluation'&&initial.generatedSiteId&&initial.siteRevision){
+        const state=store.siteState(initial.generatedSiteId);
+        if(state&&state.revision!==initial.siteRevision)throw new Conflict('目标站版本已变化，不能恢复旧版本的评测任务');
+      }
+      const blockers=workflowBlockers(initial,store,owns);
+      const siteActive=initial.generatedSiteId?store.headers(initial.generatedSiteId).filter(t=>t.id!==initial.id&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false)):[];
+      const cancelIds=[...new Set([...(owns(id)||!initial.stopped||['running','cancelling'].includes(initial.status)?[id]:[]),...blockers.tasks.map(t=>t.id),...siteActive.map(t=>t.id),...blockers.learning.map(r=>r.id)])];
+      if(cancelIds.length)await Promise.allSettled(cancelIds.map(targetId=>Promise.resolve(cancel(targetId))));
+    }
     return store.db.transaction(()=>{
       const task=store.task(id);
-      if(!task||owns(id)||!task.stopped||!['pending','interrupted','failed','cancelled'].includes(task.status))throw new Conflict('只能恢复已确认停止的任务');
+      if(!task)throw new Conflict('只能恢复已确认停止的任务');
+      if(force){
+        const experiences=new ExperienceStore(store),workflowId=experiences.workflow(task).id;
+        const blockers=workflowBlockers(task,store,owns);
+        for(const run of blockers.learning){
+          if(['queued','running'].includes(run.status)){
+            run.status='failed';run.reason='操作者强制中断执行中的经验学习并恢复任务';
+            experiences.put(run);store.event(run.taskId,run.reason);
+          }
+        }
+        retainWorkflowLearningReservations(workflowId,task.id,store,'强制中断并恢复');
+        const siblingIds=[...new Set([...blockers.tasks.map(t=>t.id),...(task.generatedSiteId?store.headers(task.generatedSiteId).filter(t=>t.id!==task.id&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false)).map(t=>t.id):[])])].filter(tId=>tId!==task.id);
+        for(const siblingId of siblingIds){
+          const sibling=store.task(siblingId);if(!sibling)continue;
+          if(sibling.delivery?.stopped===false){sibling.delivery.stopped=true;sibling.delivery.status=sibling.delivery.target?'failed':'uncertain';sibling.delivery.error='操作者强制中断并恢复其他任务';}
+          if(!sibling.stopped||['running','cancelling','queued','following-up'].includes(sibling.status)){
+            sibling.stopped=true;if(sibling.followup)sibling.followup.executionStopped=true;
+            if(sibling.kind==='evaluation')store.evaluations.confirmStopped(sibling.id);
+            if(['running','cancelling','queued','following-up'].includes(sibling.status)){sibling.status='interrupted';sibling.error='操作者强制中断并恢复其他任务';}
+          }
+          store.put(sibling);store.event(sibling.id,'操作者强制中断并恢复同工作流/同站任务');
+        }
+        if(!task.stopped||['running','cancelling','queued','following-up'].includes(task.status)){
+          task.stopped=true;if(task.followup)task.followup.executionStopped=true;
+          if(task.kind==='evaluation')store.evaluations.confirmStopped(task.id);
+          if(['running','cancelling','queued','following-up'].includes(task.status))task.status='interrupted';
+          store.put(task);
+        }
+        store.event(task.id,'操作者已强制中断活动执行并恢复当前任务');
+      }
+      if(!force&&(owns(id)||!task.stopped||!['pending','interrupted','failed','cancelled'].includes(task.status)))throw new Conflict('只能恢复已确认停止的任务');
+      if(force&&!['pending','interrupted','failed','cancelled'].includes(task.status))throw new Conflict('当前任务状态不能恢复');
       if(store.dispositions.get('delivery',task.generatedSiteId||task.id))throw new Conflict('该任务或生成站已归档，请先移回在列后再恢复');
       const root=store.root(task);
       if(root?.optimization?.state==='completed')throw new Conflict('优化目标已达成');
       if(root?.optimization&&root.id!==task.id&&root.optimization.activeTaskId!==task.id)throw new Conflict('该任务已是历史优化轮次，请操作当前轮次');
-      if(task.generatedSiteId&&(store.siteReserved(task)||store.headers(task.generatedSiteId).some(t=>t.id!==task.id&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false))))throw new Conflict('同站仍有未停止的执行，请先等待结束后再恢复');
+      if(!force&&task.generatedSiteId&&(store.siteReserved(task)||store.headers(task.generatedSiteId).some(t=>t.id!==task.id&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false))))throw new Conflict('同站仍有未停止的执行，请先等待结束后再恢复');
       if(task.kind==='evaluation'&&task.generatedSiteId&&task.siteRevision){
         const state=store.siteState(task.generatedSiteId);
         if(state&&state.revision!==task.siteRevision)throw new Conflict('目标站版本已变化，不能恢复旧版本的评测任务');
       }
-      if(task.kind==='evaluation'&&task.scenario==='site-template'){
+      if(!force&&task.kind==='evaluation'&&task.scenario==='site-template'){
         const execution=store.evaluations.get(id);
         if(execution&&execution.state!=='stopped')throw new Conflict('原评测执行尚未确认停止，请核查后确认停止再恢复');
       }
       const wasCancelled=task.status==='cancelled';
-      retainStoppedFollowupReservations(task,store,owns);
+      if(!force)assertWorkflowStopped(task,store,owns);
+      retainStoppedFollowupReservations(task,store,force?()=>false:owns);
       if(task.autonomy){delete task.autonomy.stopReason;delete task.autonomy.checkpoint.nextAt;}
       const preCreateCollection=Boolean(task.autonomy&&!task.generatedSiteId&&task.collectionId);
       const neverStartedGeneration=wasCancelled&&task.kind==='generation'&&!task.followup&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted;
@@ -248,7 +298,9 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const versionUrls=store.db.prepare("SELECT json_extract(json,'$.referenceUrl') AS referenceUrl,json_extract(json,'$.contentUrl') AS contentUrl FROM auto_versions WHERE id=?").get(task.versionId) as {referenceUrl?:string|null;contentUrl?:string|null}|undefined;
     const siteUrl=task.siteUrl||(task.generatedSiteId?(store.db.prepare("SELECT json_extract(json,'$.url') AS url FROM auto_sites WHERE id=?").get(task.generatedSiteId) as {url?:string|null}|undefined)?.url:'')||'';
     const canCompareLive=Boolean(siteUrl||versionUrls?.referenceUrl||versionUrls?.contentUrl);
-    return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),canCompareLive,...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
+    const blockers=workflowBlockers(task,store,owns);
+    const workflowActive=(blockers.tasks.length||blockers.learning.length)?{tasks:blockers.tasks.length,learning:blockers.learning.length,reason:workflowActiveReason(blockers.tasks.length,blockers.learning.length)}:undefined;
+    return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),canCompareLive,...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),...(workflowActive?{workflowActive}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
   });
   app.get('/api/automation/tasks/:id/usage',async(request,reply)=>{
     const {id}=params.parse(request.params),task=store.task(id);

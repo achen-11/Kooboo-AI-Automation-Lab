@@ -6,11 +6,48 @@ import { Conflict } from '../lib/store.js';
 import { retainRequestReservation } from './request-budget.js';
 import { optimizationEvidence } from './optimization-evidence.js';
 
-export function assertWorkflowStopped(task: AutomationTask, store: AutomationStore, owns: (id: string) => boolean) {
-  const experiences = new ExperienceStore(store), workflowId = experiences.workflow(task).id;
-  const activeTask = store.tasks().some(t => experiences.workflow(t).id === workflowId && (!t.stopped || owns(t.id) || t.delivery?.stopped === false));
-  const learning = store.db.prepare("SELECT id,status FROM auto_learning_runs WHERE json_extract(json,'$.workflowId')=?").all(workflowId);
-  if (activeTask || learning.some(run => run.status === 'running' || owns(String(run.id)))) throw new Conflict('同工作流仍有活动执行，请等待全部停止后恢复');
+export function workflowBlockers(task: { id: string; parentId?: string | null }, store: AutomationStore, owns: (id: string) => boolean) {
+  const headers = store.headers();
+  const byId = new Map(headers.map(h => [h.id, h]));
+  const rootId = (candidate: { id: string; parentId?: string | null }) => {
+    let current = candidate;
+    const seen = new Set<string>();
+    while (current.parentId && !seen.has(current.id)) {
+      seen.add(current.id);
+      const parent = byId.get(current.parentId) || store.header(current.parentId);
+      if (!parent) break;
+      current = parent;
+    }
+    return current.id;
+  };
+  const workflowId = rootId(task);
+  const tasks = headers.filter(t => rootId(t) === workflowId && (!t.stopped || owns(t.id) || t.delivery?.stopped === false));
+  const learning = store.db.prepare("SELECT id,status,json FROM auto_learning_runs WHERE json_extract(json,'$.workflowId')=?").all(workflowId)
+    .map(r => JSON.parse(r.json) as LearningRun)
+    .filter(run => run.status === 'running' || owns(run.id));
+  return { workflowId, tasks, learning };
+}
+
+export function workflowActiveReason(tasksCount: number, learningCount: number) {
+  const parts: string[] = [];
+  if (tasksCount) parts.push(`${tasksCount} 个任务未停止`);
+  if (learningCount) parts.push(`${learningCount} 个经验学习执行中`);
+  return `同工作流仍有活动执行（${parts.join('、')}），请等待全部停止或强制中断后恢复`;
+}
+
+export function assertWorkflowStopped(task: { id: string; parentId?: string | null }, store: AutomationStore, owns: (id: string) => boolean) {
+  const { tasks, learning } = workflowBlockers(task, store, owns);
+  if (tasks.length || learning.length) throw new Conflict(workflowActiveReason(tasks.length, learning.length));
+}
+
+export function retainWorkflowLearningReservations(workflowId: string, taskId: string, store: AutomationStore, reasonPrefix = '恢复复盘') {
+  if (!store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_model_requests'").get()) return { count: 0, tokens: 0 };
+  const requests = store.db.prepare("SELECT id,charged FROM auto_model_requests WHERE account_id=? AND state IN ('active','unknown')").all('experience:' + workflowId);
+  if (!requests.length) return { count: 0, tokens: 0 };
+  for (const request of requests) retainRequestReservation(store.db, String(request.id));
+  const tokens = requests.reduce((sum, r) => sum + Number(r.charged), 0);
+  store.event(taskId, `${reasonPrefix}：保留同工作流 ${requests.length} 笔已停止经验请求的未知用量预占，共 ${tokens} token；解除请求阻塞，实际用量与费用仍待核算。`);
+  return { count: requests.length, tokens };
 }
 
 /** Explicit reflection recovery retains estimates without declaring missing usage to be zero. */

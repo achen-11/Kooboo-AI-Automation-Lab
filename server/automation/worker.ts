@@ -110,7 +110,14 @@ export class AutomationWorker{
       }
     }finally{this.ticking=false;}
   }
-  cancel(id:string){this.running.get(id)?.controller.abort(new Error('任务已请求取消'));}
+  cancel(id:string):Promise<void>{
+    const running=this.running.get(id),learning=this.learning.get(id);
+    running?.controller.abort(new Error('任务已请求取消'));
+    learning?.controller.abort(new Error('操作者已强制中断本次经验学习'));
+    const pending=[running?.promise,learning?.promise].filter((p):p is Promise<void>=>Boolean(p));
+    if(!pending.length)return Promise.resolve();
+    return Promise.race([Promise.allSettled(pending).then(()=>{}),new Promise<void>(r=>{const t=setTimeout(r,2500);t.unref();})]);
+  }
   owns(id:string){return this.running.has(id)||this.learning.has(id);}
   private interrupt(task:AutomationTask,reason:string,nextSteps:string[],evidence:string[]=[]) {
     this.store.interrupt(task,{reason,evidence,attempted:this.store.events(task.id).filter(e=>/AI 决策|工具失败|执行失败|重试/.test(e.message)).slice(-12).map(e=>e.message),nextSteps,resumeFrom:task.generatedSiteId?'沿用当前生成站、输入版本和已保存证据，从当前阶段继续。':'确认环境及建站结果后，从资料准备阶段继续。'});

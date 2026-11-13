@@ -70,6 +70,8 @@ function openDisposition(nextState: DispositionState) {
 }
 async function onDispositionSaved() { await load(); siteRefresh.value++; }
 const canRecover = computed(() => !disposition.value && ['resume','adjust-site-names'].includes(taskRecoveryAction(current.value) || ''));
+const workflowActive = computed(() => data.value?.workflowActive);
+const canForceResume = computed(() => !disposition.value && Boolean(current.value) && (Boolean(workflowActive.value) || /同工作流仍有活动执行|仍有未停止的执行|已确认停止/.test(actionError.value)));
 const canCancel = computed(() => current.value && (!current.value.stopped || ['queued', 'following-up'].includes(current.value.status)) && !['completed', 'failed', 'cancelled', 'interrupted'].includes(current.value.status));
 const canCreateRound = computed(() => !disposition.value && !optimizationActive.value && (!data.value?.active||data.value.active.stopped&&!['queued','running','following-up','cancelling'].includes(data.value.active.status)) && task.value?.stopped && task.value.generatedSiteId && !['queued', 'running', 'following-up', 'cancelling'].includes(task.value.status) && (!evaluation.value || evaluation.value.stopped && !['queued', 'running', 'following-up', 'cancelling'].includes(evaluation.value.status)));
 const canArchiveComplete = computed(() => disposition.value?.state !== 'completed' && !optimizationActive.value && !canCancel.value && Boolean(task.value?.stopped && (!evaluation.value || evaluation.value.stopped) && (!data.value?.active || data.value.active.stopped)));
@@ -124,6 +126,13 @@ async function action(suffix: string, id = current.value?.id) {
   catch (reason) { actionError.value = message(reason); }
   finally { busy.value = false; }
 }
+async function forceResume(id = current.value?.id) {
+  if (!id || busy.value) return;
+  busy.value = true; actionError.value = '';
+  try { await api(`/automation/tasks/${id}/resume`, { method: 'POST', body: JSON.stringify({ force: true }) }); notify.success('已强制中断活动执行并恢复任务'); await load(); await execution.value?.refresh(); }
+  catch (reason) { actionError.value = message(reason); }
+  finally { busy.value = false; }
+}
 function followup(kind: 'generation' | 'evaluation') {
   more.value?.removeAttribute('open'); followKind.value = kind; requirements.value = kind === 'evaluation' ? '按本轮规则重新评测，独立保存证据与报告。' : ''; actionError.value = ''; followDialog.value?.showModal();
 }
@@ -162,7 +171,8 @@ onUnmounted(() => { clearInterval(timer); window.removeEventListener('hashchange
     <CreateTaskDialog ref="continueDialog" :resources="continueResources" :site="continueSite" />
     <DiagnosticExportDialog :key="task.id" ref="diagnosticDialog" :task-id="task.id" />
     <LiveSiteComparisonDialog :key="'live-' + task.id" ref="liveComparisonDialog" :task-id="task.id" :default-report-id="defaultComparisonReportId" />
-    <p v-if="actionError && !followDialog?.open" class="alert error" role="alert">{{ actionError }}</p>
+    <p v-if="actionError && !followDialog?.open" class="alert error" role="alert">{{ actionError }}<button v-if="canForceResume" class="text-action" :disabled="busy" @click="forceResume()">强制中断并恢复</button></p>
+    <p v-else-if="workflowActive && !followDialog?.open" class="alert error" role="status">{{ workflowActive.reason }}<button v-if="canRecover || current?.stopped === false || ['running','cancelling'].includes(current?.status || '')" class="text-action" :disabled="busy" @click="forceResume()">强制中断并恢复</button></p>
     <nav class="task-tabs" role="tablist" aria-label="任务详情分区"><button v-for="(item, index) in tabs" :id="`task-tab-${item.id}`" :key="item.id" role="tab" :aria-selected="tab === item.id" :aria-controls="`task-panel-${item.id}`" :tabindex="tab === item.id ? 0 : -1" :class="{ selected: tab === item.id }" @click="selectTab(item.id)" @keydown="tabKey($event, index)">{{ item.label }}</button></nav>
     <div :id="`task-panel-${tab}`" role="tabpanel" :aria-labelledby="`task-tab-${tab}`" class="task-tab-content">
       <template v-if="tab === 'overview'">

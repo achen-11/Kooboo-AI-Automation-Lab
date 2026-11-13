@@ -11,10 +11,10 @@ import { queueReflection } from './experience.js';
 import { ManifestStore, manifestInput } from './completeness.js';
 import { Conflict } from '../lib/store.js';
 import { retainRequestReservation } from './request-budget.js';
-import { assertWorkflowStopped, retainStoppedLearningReservations } from './budget-recovery.js';
+import { assertWorkflowStopped, retainStoppedLearningReservations, retainWorkflowLearningReservations } from './budget-recovery.js';
 
 const params=z.object({id:z.string().uuid()}),pagination=z.object({page:z.coerce.number().int().min(1).max(1000000).default(1),pageSize:z.coerce.number().int().min(1).max(100).default(20)});
-export function registerLearningApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,owns:(id:string)=>boolean){
+export function registerLearningApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,owns:(id:string)=>boolean,cancel:(id:string)=>void|Promise<void>=()=>{}){
   const experiences=new ExperienceStore(store),manifests=new ManifestStore(store);
   const budgetTaskIds=(task:AutomationTask)=>{
     const workflowId=experiences.workflow(task).id;
@@ -36,6 +36,24 @@ export function registerLearningApi(app:FastifyInstance,store:AutomationStore,va
     return {page,pages,total,items:store.db.prepare('SELECT json FROM auto_learning_runs WHERE '+where+' ORDER BY created_at DESC LIMIT ? OFFSET ?').all(...args,q.pageSize,(page-1)*q.pageSize).map(r=>JSON.parse(r.json))};
   });
   app.post('/api/automation/tasks/:id/reflect',async req=>{const{id}=params.parse(req.params),task=store.task(id);if(!task||!task.stopped||owns(id))throw new Conflict('请等待任务停止后复盘');const source=task.report?task:store.currentReport(task)||task;if(!source.report&&!source.interruption)throw new Conflict('没有可复盘的新报告或明确中断证据');const run=queueReflection(source,store,true)!;if(!source.learningPolicy&&run.status==='queued'){run.policy=structuredClone(vault.automation().learning!);experiences.put(run);}return {run,enabled:vault.automation().enabled,queued:run.status==='queued'||run.status==='running'};});
+  app.post('/api/automation/learning/:id/cancel',async req=>{
+    const{id}=params.parse(req.params),run=experiences.run(id);
+    if(!run)throw new Conflict('经验学习记录不存在');
+    if(!['queued','running'].includes(run.status)&&!owns(id))throw new Conflict('只能中断排队中或执行中的经验学习');
+    const wasQueued=run.status==='queued'&&!owns(id);
+    if(owns(id))await Promise.resolve(cancel(id));
+    return store.db.transaction(()=>{
+      const current=experiences.run(id);if(!current)throw new Conflict('经验学习记录不存在');
+      if(['queued','running'].includes(current.status)){
+        current.status='failed';
+        current.reason=wasQueued?'操作者已取消排队的经验学习':'操作者已强制中断执行中的经验学习';
+        experiences.put(current);store.event(current.taskId,current.reason);
+      }
+      const otherRunning=store.db.prepare("SELECT id FROM auto_learning_runs WHERE json_extract(json,'$.workflowId')=? AND status='running'").all(current.workflowId).some(r=>String(r.id)!==current.id);
+      if(!otherRunning&&!owns(id))retainWorkflowLearningReservations(current.workflowId,current.taskId,store,'中断经验学习');
+      return {run:experiences.run(id)!};
+    });
+  });
   app.post('/api/automation/learning/:id/retry',async req=>{
     const{id}=params.parse(req.params),run=experiences.run(id);
     if(!run||run.kind!=='reflection'||run.status!=='failed'||owns(id))throw new Conflict('只能恢复已停止的经验复盘');

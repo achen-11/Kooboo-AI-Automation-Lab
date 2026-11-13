@@ -37,7 +37,8 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   delivery?: Pick<NonNullable<AutomationTask['delivery']>, 'status'>;
   disposition?: ItemDisposition;
 };
-export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; canCompareLive?: boolean; disposition?: ItemDisposition; resourceDisposition?: ItemDisposition; latest: { seq: number; time: number; message: string; taskId: string } | null }
+export interface WorkflowActiveSummary { tasks: number; learning: number; reason: string }
+export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; canCompareLive?: boolean; disposition?: ItemDisposition; resourceDisposition?: ItemDisposition; workflowActive?: WorkflowActiveSummary; latest: { seq: number; time: number; message: string; taskId: string } | null }
 export interface CompactNotice { id: string; taskId: string; resourceName: string; title: string; summary: string; tab: TaskTab; createdAt: number; readAt: number | null; currentStatus?: TaskStatus; superseded: boolean }
 export interface NoticePage<T = CompactNotice> { items: T[]; total: number; unread: number; page: number; pages: number; pageSize: number }
 

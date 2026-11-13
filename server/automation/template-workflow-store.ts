@@ -41,6 +41,11 @@ export interface TemplateWorkflowRecord {
   limitations: string[];
 }
 export const templateHash = (value: unknown) => createHash('sha256').update(JSON.stringify(value)).digest('hex');
+export function shouldResetWorkflowThread(error: unknown) {
+  const msg = error instanceof Error ? error.message : String(error);
+  const name = error instanceof Error ? error.name : '';
+  return name === 'ModelBudgetExceeded' || /max_output_tokens|automation_request_too_large|context_length_exceeded|剩余预算不足以接收本次上下文|累计模型 token 已达到预算上限|本次 Agent 已达到模型请求次数上限|无进展循环/i.test(msg);
+}
 export class TemplateWorkflowStore {
   constructor(readonly store: AutomationStore) {
     store.db.exec(`CREATE TABLE IF NOT EXISTS auto_template_checklists(id TEXT PRIMARY KEY,revision INTEGER UNIQUE NOT NULL,json TEXT NOT NULL);

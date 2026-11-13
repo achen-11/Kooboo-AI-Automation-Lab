@@ -273,16 +273,37 @@ test('external capture completes after 10s readiness retry while target stays st
   }finally{f.close();}
 });
 
-test('evaluation resets bloated thread on max_output_tokens while preserving saved view checkpoints',async()=>{
+test('evaluation and analysis reset bloated or budget-blocked threads while preserving saved checkpoints and site budget floor',async()=>{
   const f=fixture();
   try{
-    await analyze(f);
+    let analysisAttempts=0;
+    await assert.rejects(()=>ensureTemplateAnalysis(f.task,f.store,f.vault,f.directory,new AbortController().signal,{
+      openBrowser:fakeBrowser(f,f.task,[]),
+      decide:(async(options:any)=>{
+        analysisAttempts++;
+        assert.ok(options.policy.maxTokens>=15000000);
+        options.onThreadStarted?.('bloated-analysis-thread');
+        throw new Error('剩余预算不足以接收本次上下文；请缩小上下文或显式调整预算。');
+      }) as typeof localDecision
+    }),/剩余预算不足以接收本次上下文/);
+    assert.equal(f.registry.get(f.task)?.analysisThreadId,undefined);
+    await ensureTemplateAnalysis(f.task,f.store,f.vault,f.directory,new AbortController().signal,{
+      openBrowser:fakeBrowser(f,f.task,[]),
+      decide:(async(options:any)=>{
+        analysisAttempts++;
+        assert.equal(options.resumeThreadId,undefined);
+        return options.submit(analysisPayload(options.context));
+      }) as typeof localDecision
+    });
+    assert.equal(analysisAttempts,2);
+
     const task=evaluateTask(f),seenResume:Array<string|undefined>=[];
     await assert.rejects(()=>executeTemplateWorkflowEvaluation(task,f.store,f.vault,f.directory,new AbortController().signal,{
       openInspection,openBrowser:fakeBrowser(f,task,[]),
       decide:(async(options:any)=>{
         seenResume.push(options.resumeThreadId);
         assert.match(options.sop,/8192 output_tokens/);
+        assert.ok(options.policy.maxTokens>=15000000);
         options.onThreadStarted?.('bloated-thread-001');
         const payload=evaluationPayload(options,task);
         await options.read({kind:'checkpoint',input:{views:[payload.views[0]]}});
@@ -290,16 +311,25 @@ test('evaluation resets bloated thread on max_output_tokens while preserving sav
       }) as typeof localDecision
     }),/max_output_tokens/);
     assert.equal(f.registry.batch<string>('template-evaluation-thread:'+task.id),'');
+    await assert.rejects(()=>executeTemplateWorkflowEvaluation(task,f.store,f.vault,f.directory,new AbortController().signal,{
+      openInspection,openBrowser:fakeBrowser(f,task,[]),
+      decide:(async(options:any)=>{
+        seenResume.push(options.resumeThreadId);
+        options.onThreadStarted?.('bloated-thread-002');
+        throw new Error('剩余预算不足以接收本次上下文；请缩小上下文或显式调整预算。');
+      }) as typeof localDecision
+    }),/剩余预算不足以接收本次上下文/);
+    assert.equal(f.registry.batch<string>('template-evaluation-thread:'+task.id),'');
     await executeTemplateWorkflowEvaluation(task,f.store,f.vault,f.directory,new AbortController().signal,{
       openInspection,openBrowser:fakeBrowser(f,task,[]),
       decide:(async(options:any)=>{
         seenResume.push(options.resumeThreadId);
-        assert.equal(options.context.draftViews.length,1,'saved view drafts survive thread reset');
+        assert.equal(options.context.draftViews.length,1,'saved view drafts survive thread resets');
         const payload=evaluationPayload(options,task);
         return options.submit({...payload,views:payload.views.slice(1)});
       }) as typeof localDecision
     });
-    assert.deepEqual(seenResume,[undefined,undefined]);
+    assert.deepEqual(seenResume,[undefined,undefined,undefined]);
     assert.equal(f.registry.evaluation(task.id)?.quality,'passed');
   }finally{f.close();}
 });

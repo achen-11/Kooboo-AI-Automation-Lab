@@ -2,7 +2,7 @@
 
 统一管理资源库、生成 / 评测队列、报告、评测规则与系统设置，沿用 CPR 界面。新功能使用 `frontend/src/views/automation/`、`server/automation/` 和 `shared/automation.ts`；原有评测记录、接口和执行器保留。
 
-v0.7.0 的新建 AI Site 模板任务支持生成前参考分析、冻结双端基线、版本化检查集和逐项独立复验。默认检查集包含区块检查与设计规范，已有安装可在规则页编辑检查集、点击“加入设计规范”并发布新版本；旧任务保留原绑定。经验使用与沉淀在新安装中默认关闭，升级保留已有设置。升级步骤及验收边界见 [v0.7.0 发布说明](docs/release-notes-0.7.0.md) 与 [v0.7.1 修复说明](docs/release-notes-0.7.1.md)。
+v0.7.0 的新建 AI Site 模板任务支持生成前参考分析、冻结双端基线、版本化检查集和逐项独立复验。默认检查集包含区块检查与设计规范，已有安装可在规则页编辑检查集、点击“加入设计规范”并发布新版本；旧任务保留原绑定。经验使用与沉淀在新安装中默认关闭，升级保留已有设置。升级步骤及验收边界见 [v0.7.0 发布说明](docs/release-notes-0.7.0.md)、[v0.7.1 修复说明](docs/release-notes-0.7.1.md) 与 [v0.7.2 修复说明](docs/release-notes-0.7.2.md)。
 
 同事首次安装请从 [部署与交接指南](docs/DEPLOYMENT_AND_HANDOFF.md) 开始，覆盖 Windows / macOS、Kooboo 与模型配置、单任务验证、更新备份及排障。仅打包当前平台可用 `python3 scripts/package-platform.py --output /tmp/kooboo-automation-lab.zip`；构建在临时目录完成，不携带个人运行数据。首次仍需联网安装依赖和 Chromium。
 

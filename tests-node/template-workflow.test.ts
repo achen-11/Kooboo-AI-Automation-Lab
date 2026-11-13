@@ -253,6 +253,8 @@ test('external capture completes after 10s readiness retry while target stays st
     assert.equal(targetScope.scope.complete,false);
 
     let capturedInternalLinks:string[]=[];
+    let capturedMinutes=0;
+    f.task.completenessPolicy={...defaultAutomationSettings.completeness!,maxMinutes:3};
     await ensureTemplateAnalysis(f.task,f.store,f.vault,f.directory,new AbortController().signal,{
       openBrowser:fakeBrowser(
         f,
@@ -262,9 +264,11 @@ test('external capture completes after 10s readiness retry while target stays st
       ),
       decide:(async(options:any)=>{
         capturedInternalLinks=options.context.captures[0]?.layout?.internalLinks||[];
+        capturedMinutes=options.minutes;
         return options.submit(analysisPayload(options.context));
       }) as typeof localDecision
     });
     assert.deepEqual(capturedInternalLinks,['https://source.test/about','https://source.test/pricing']);
+    assert.ok(capturedMinutes>=15,'site-scope template analysis guarantees at least 15 minutes');
   }finally{f.close();}
 });

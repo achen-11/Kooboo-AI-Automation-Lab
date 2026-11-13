@@ -7,7 +7,7 @@ export type RequirementDataIdentity =
   | { kind: 'relations'; parentRequirementIds: string[]; childRequirementIds: string[] }
   | { kind: 'assets' };
 export interface CompletenessSettings {enabled:boolean;maxTokens:number;maxMinutes:number;maxRequests:number;sop:string}
-export const defaultCompletenessSettings:CompletenessSettings={enabled:true,maxTokens:10000000,maxMinutes:3,maxRequests:20,sop:'从冻结资料与源站建立应交付清单，不按已生成产物缩减范围。核对导航、sitemap、静态页面、动态数据、模板、交互与业务流程。来源范围不明必须明确缺口，不得宣布100%完整。静态页面覆盖PC和移动端；动态内容核对全部记录标识、数量和URL，模板声明边界样本；Content/Commerce/Sqlite存储、动态路由与取值必须有实现证据。迁移/升级核对URL映射和SEO；模板使用替代图片及示例内容，不要求继承原站搜索权重。'};
+export const defaultCompletenessSettings:CompletenessSettings={enabled:true,maxTokens:10000000,maxMinutes:15,maxRequests:120,sop:'从冻结资料与源站建立应交付清单，不按已生成产物缩减范围。核对导航、sitemap、静态页面、动态数据、模板、交互与业务流程。来源范围不明必须明确缺口，不得宣布100%完整。静态页面覆盖PC和移动端；动态内容核对全部记录标识、数量和URL，模板声明边界样本；Content/Commerce/Sqlite存储、动态路由与取值必须有实现证据。迁移/升级核对URL映射和SEO；模板使用替代图片及示例内容，不要求继承原站搜索权重。'};
 export interface Requirement {
   id: string; title: string; kind: RequirementKind; required: boolean;
   source: string; expectation: string; paths: string[]; expectedCount: number | null;

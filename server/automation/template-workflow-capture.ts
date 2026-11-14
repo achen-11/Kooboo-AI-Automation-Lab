@@ -6,6 +6,7 @@ import type { TemplateCaptureScope, TemplateEvidence, TemplateLayoutSnapshot, Te
 import type { evaluationBrowser } from './browser.js';
 import { screenshotRangeCovered, type PageScreenshotsReceipt } from './page-screenshots.js';
 import { readTemplateEvidence, TemplateWorkflowStore, templateHash } from './template-workflow-store.js';
+import { templateCandidateLinks } from './template-source-coverage.js';
 
 export type WorkflowBrowser=Awaited<ReturnType<typeof evaluationBrowser>>;
 export interface WorkflowCapture {layout:TemplateLayoutSnapshot;scope:TemplateCaptureScope;files:TemplateEvidence[]}
@@ -24,7 +25,7 @@ export function analysisCaptureIndex(capture:WorkflowCapture,directory:string){
     const observation=JSON.parse(readTemplateEvidence(directory,proof).toString()),p=observation.position;
     return {file:file.name,settled:file.settled,...(p?{y:p.scrollY,width:p.viewportWidth,height:p.viewportHeight,documentHeight:p.documentHeight}:{}),stableForMs:observation.readiness?.stableForMs};
   });
-  return {scope:capture.scope,layout:{url,viewport,width,height,truncated,elementCount:capture.layout.elements.length,linkCount:capture.layout.links.length,internalLinks:capture.layout.links.slice(0,30),candidates:candidates.slice(0,60).map(({selector,tag,text,rect})=>({selector,tag,text:text.slice(0,160),rect})),candidatesTruncated:candidates.length>60},frames,files:capture.files.map(({name,type,settled})=>({name,type,settled}))};
+  return {scope:capture.scope,layout:{url,viewport,width,height,truncated,elementCount:capture.layout.elements.length,linkCount:capture.layout.links.length,internalLinks:templateCandidateLinks(url,capture.layout.links),candidates:candidates.slice(0,60).map(({selector,tag,text,rect})=>({selector,tag,text:text.slice(0,160),rect})),candidatesTruncated:candidates.length>60},frames,files:capture.files.map(({name,type,settled})=>({name,type,settled}))};
 }
 export function recordTemplateLayout(task:AutomationTask,layout:TemplateLayoutSnapshot,role:TemplateEvidence['role'],directory:string,browser:WorkflowBrowser):TemplateEvidence {
   const name=randomUUID()+'.json',bytes=Buffer.from(JSON.stringify({kind:'template-layout',url:layout.url,viewport:layout.viewport,role,capturedAt:Date.now(),binding:{taskId:task.id,inputVersionId:task.versionId,siteRevision:role==='target'?task.siteRevision:null},layout}));

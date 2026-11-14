@@ -115,6 +115,7 @@ export class AutomationStore {
   }
   workflowIds(task: AutomationTask): string[] { return [...new Set([task.id,...(task.evaluationTaskId?[task.evaluationTaskId]:[]),...(task.optimization?.rounds.flatMap(r=>[r.generationTaskId,...(r.previousEvaluationTaskIds||[]),...(r.evaluationTaskId?[r.evaluationTaskId]:[])])||[])])]; }
   tasks() { const tasks=this.all<AutomationTask>('auto_tasks','ORDER BY created_at DESC, rowid DESC');return tasks.map(t=>({...t,usage:this.usage.summary(t.id,this.workflowIds(t).filter(id=>id!==t.id))})); }
+  siteTasks(siteId: string) { return this.all<AutomationTask>('auto_tasks','WHERE site_key=? ORDER BY created_at DESC, rowid DESC',[siteId]); }
   task(id: string, includeUsage=true) { const task=this.all<AutomationTask>('auto_tasks','WHERE id=?',[id])[0];if(task&&includeUsage)task.usage=this.usage.summary(id,this.workflowIds(task).filter(value=>value!==id));return task; }
   headers(siteId?: string) { return this.all<TaskHeader>('auto_task_index',`${siteId ? 'WHERE site_key=? ' : ''}ORDER BY created_at DESC, rowid DESC`,siteId?[siteId]:[]); }
   header(id: string) { return this.all<TaskHeader>('auto_task_index','WHERE id=?',[id])[0]; }
@@ -236,7 +237,11 @@ export class AutomationStore {
         if(siteName||subDomain||rootDomain)task.generation={...(siteName?{siteName}:{}),...(subDomain?{subDomain}:{}),...(rootDomain?{rootDomain}:{})};
       }
       const parent=input.parentId?this.task(input.parentId):undefined;
-      if(parent?.templateWorkflow&&parent.versionId===task.versionId&&parent.scope===task.scope)task.templateWorkflow=structuredClone(parent.templateWorkflow);
+      const siteWorkflowTasks=!parent&&site&&version.scenario==='site-template'?this.siteTasks(site.id).filter(other=>other.templateWorkflow&&other.versionId===task.versionId):[];
+      const siteWorkflowSource=siteWorkflowTasks.find(other=>other.scope===task.scope);
+      if(!siteWorkflowSource&&siteWorkflowTasks.some(other=>other.scope==='homepage')&&task.scope==='site'&&input.kind==='generation')throw new Conflict('该生成站由首页范围的新模板流程创建，冻结基线不含内页；请新建全站生成任务，避免丢失基线回退旧流程');
+      const workflowSource=parent?.templateWorkflow&&parent.versionId===task.versionId&&parent.scope===task.scope?parent:siteWorkflowSource;
+      if(workflowSource?.templateWorkflow)task.templateWorkflow=structuredClone(workflowSource.templateWorkflow);
       if(parent?.autonomy){
         task.autonomy=createAutonomousExecution(task.message);
         task.autonomy.policy=structuredClone(parent.autonomy.policy);
@@ -245,13 +250,14 @@ export class AutomationStore {
       }else if(!parent&&!site&&input.kind==='generation'&&input.scope==='site'&&['migration','upgrade'].includes(version.scenario)){
         task.autonomy=createAutonomousExecution(task.message,{hardMaxRounds:input.optimization?.maxRounds,hardCostCny:input.optimization?.maxCostCny??undefined});
       }
-      task.learningPolicy=structuredClone(parent?parent.learningPolicy:settings.learning||defaultLearningSettings);
-      task.completenessPolicy=structuredClone(parent&&parent.scope===input.scope?parent.completenessPolicy:settings.completeness||defaultCompletenessSettings);
-      task.requirementsEnabled=parent&&parent.scope===input.scope?parent.requirementsEnabled:input.scope==='site'&&(task.completenessPolicy?.enabled??true);
-      task.requirementsId=parent?.scope===input.scope?parent.requirementsId:undefined;
+      task.learningPolicy=structuredClone(parent?parent.learningPolicy:siteWorkflowSource?siteWorkflowSource.learningPolicy:settings.learning||defaultLearningSettings);
+      task.completenessPolicy=structuredClone(parent&&parent.scope===input.scope?parent.completenessPolicy:siteWorkflowSource?siteWorkflowSource.completenessPolicy:settings.completeness||defaultCompletenessSettings);
+      task.requirementsEnabled=parent&&parent.scope===input.scope?parent.requirementsEnabled:siteWorkflowSource?siteWorkflowSource.requirementsEnabled:input.scope==='site'&&(task.completenessPolicy?.enabled??true);
+      const workflowRoot=siteWorkflowSource?.templateWorkflow?this.task(siteWorkflowSource.templateWorkflow.rootTaskId,false):undefined;
+      task.requirementsId=parent?.scope===input.scope?parent.requirementsId:siteWorkflowSource?.requirementsId||(workflowRoot?.scope===input.scope?workflowRoot.requirementsId:undefined);
       let adoptedManifestFrom='';
-      if(input.kind==='evaluation'&&site&&parent?.scope===input.scope){
-        // An independent review may have revised the contract after the parent froze its manifest;
+      if(site&&(parent?.scope===input.scope&&input.kind==='evaluation'||Boolean(siteWorkflowSource))){
+        // An independent review may have revised the contract after the parent/root froze its manifest;
         // the revision is bound to input and frozen material, not to the site revision that review scored.
         const revision=(id?:string)=>{if(!id)return 0;try{return Number(this.db.prepare('SELECT revision FROM auto_requirement_manifests WHERE id=?').get(id)?.revision)||0;}catch{return 0;}};
         const newest=this.all<AutomationTask>('auto_tasks','WHERE site_key=? AND kind=?',[site.id,'evaluation']).filter(other=>other.requirementsId&&other.versionId===task.versionId&&other.scope===input.scope&&other.collectionVersionId===task.collectionVersionId).map(other=>({task:other,revision:revision(other.requirementsId)})).sort((a,b)=>b.revision-a.revision)[0];

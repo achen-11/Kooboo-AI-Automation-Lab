@@ -63,7 +63,13 @@ export class TemplateWorkflowStore {
   }
   current() { return this.list()[0]||this.publish(initial); }
   initialize(task: AutomationTask) {
-    if(task.templateWorkflow||task.scenario!=='site-template'||task.kind!=='generation'||task.parentId||task.generatedSiteId)return;
+    if(task.templateWorkflow||task.scenario!=='site-template')return;
+    if(task.generatedSiteId&&!task.parentId){
+      const inherited=this.store.siteTasks(task.generatedSiteId).find(other=>other.id!==task.id&&other.templateWorkflow&&other.versionId===task.versionId&&other.scope===task.scope);
+      if(inherited?.templateWorkflow){task.templateWorkflow=structuredClone(inherited.templateWorkflow);this.store.put(task);}
+      return;
+    }
+    if(task.kind!=='generation'||task.parentId||task.generatedSiteId)return;
     const checklist=this.current();
     task.templateWorkflow={version:1,rootTaskId:task.id,checklistId:checklist.id};
     this.put({rootTaskId:task.id,inputVersionId:task.versionId,checklistId:checklist.id,baseline:null,sourceEvidence:[],sourceCaptures:{},limitations:[]});

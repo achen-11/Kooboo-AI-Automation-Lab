@@ -51,9 +51,10 @@ test('AI Site route survives small messages, continuations and later resource ed
     assert.ok(result.text.includes(f.siteId)); assert.doesNotMatch(result.text, /changed-reference/);
     assert.match(result.text, /references\/reference-site.md/); assert.match(result.text, /agentReady/);
     assert.match(result.text, /桌面与移动首屏/); assert.match(result.text, /本次只做首页/);
-    assert.match(result.text, /function_discover 和 use_function 加载 take_page_screenshots、read_image/);
-    assert.match(result.text, /nextStartY/); assert.match(result.text, /unsupported/);
-    assert.doesNotMatch(result.text, /全页截图用于区段顺序|take_screenshot →/);
+    assert.match(result.text, /use_function 加载 take_screenshot、process_image、read_image/);
+    assert.match(result.text, /nextOffset/); assert.match(result.text, /unsupported/);
+    assert.match(result.text, /take_screenshot → process_image/);
+    assert.doesNotMatch(result.text, /take_page_screenshots/);
     assert.match(result.text, /目标站浏览器验收仍需明确授权/);
     const archived = JSON.parse(new GenerationContextStore(f.store).packages(f.task.id)[0].original);
     assert.equal(archived.instructions, instructions); assert.ok(archived.referenceStudy);

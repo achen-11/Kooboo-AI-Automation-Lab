@@ -9,7 +9,6 @@ import { prepareGenerationContext, assertGenerationInput, cleanupGenerationConte
 import { koobooClient, siteIdentity, refreshSite, probeSite } from './kooboo.js';
 import { materialDestination, readMaterial } from './materials.js';
 import { generationSession, matchingGenerationOutcome } from './generation-session.js';
-import { readEvidence } from './optimization-evidence.js';
 import { ensureManifest, ManifestStore } from './completeness.js';
 import { selectExperience, adoptedGuidance } from './experience.js';
 import { optimizationBudgetReason } from './optimization.js';
@@ -18,12 +17,11 @@ import { ensureSourceCollection } from './collection/orchestrator.js';
 import { effectiveCollectionInput } from './collection/store.js';
 import { frozenCollectionAssetGapGuidance, preflightCollectionTarget } from './collection/target-verification.js';
 import { sourceVisualFoldImages, sourceVisualMaterial, sourceVisualRequired, type SourceVisualIndex } from './collection/source-visual.js';
-import { adaptRepairImages } from './repair-images.js';
-import { resolve } from 'node:path';
 import { generatedSiteName, normalizeRootDomain, parseRootDomains, findRootDomain, rootDomainValue } from '../../shared/kooboo-domains.js';
-import { generationSourceEvidence, templateGenerationImages, templateGenerationSources } from './generation-reference.js';
-import { archiveDeliveryImages, GenerationDeliveryStore, isPreSendBridgeRejection } from './generation-delivery.js';
+import { generationSourceEvidence, templateGenerationSources } from './generation-reference.js';
+import { GenerationDeliveryStore, isPreSendBridgeRejection } from './generation-delivery.js';
 import { assertSiteNaming, availableSiteNames } from './site-naming.js';
+import { prepareReferenceMedia } from './generation-reference-media.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
@@ -159,7 +157,6 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   const session=await openSession(task,store,vault,directory,signal);
   const snapshot=async()=>{const state=await session.snapshot();deliveries.observe(state);return state;};
   try{
-    let adapted:ReturnType<typeof adaptRepairImages>|undefined;
     // Each batch owns a durable delivery receipt. Only a matching terminal run
     // advances it; a restart must never replay an accepted, uncertain send.
     while(true){
@@ -172,48 +169,32 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       if(state.pending&&action?.action!=='answer')throw new Pending('原会话存在待输入调用，需先回答后再发送修复批次：'+state.pending.name);
       if(state.canSend===false)throw new Pending('目标环境 Kooboo AI 模型尚未就绪或无可用模型（canSend=false），尚未发送委托；请检查目标环境 AI 配置后重试');
       if(action?.retryOf&&(!matchingGenerationOutcome(task,state)||task.generation.deliveryId!==action.retryOf.deliveryId||state.runId!==action.retryOf.runId||!['failed','interrupted'].includes(state.state)))throw new Pending('原失败执行的回执已变化，需重新查证后决定是否重试；尚未发送新消息');
-      const repairSources=task.repairEvidence?task.repairEvidence.files.map(name=>{
-        const file=store.task(task.repairEvidence!.reportId)?.report?.artifacts.find(f=>f.name===name);if(!file)throw new Error('修复引用的原报告图片不存在');
-        return readEvidence(directory,task.repairEvidence!.reportId,file);
-      }):undefined;
-      if(task.scenario==='site-template'&&repairSources&&action?.action!=='answer')adapted??=adaptRepairImages(repairSources,resolve(directory,'automation-runs',task.id,'repair-images'));
-      if(adapted?.batches.length){
-        const saved=task.generation.repairBatch;
-        if(saved&&saved.planKey!==adapted.planKey)throw new GenerationInputError('修复图片计划发生变化，需核对已发送批次；禁止重置后重复发送');
-        task.generation.repairBatch??={planKey:adapted.planKey,completed:0,total:adapted.batches.length};store.put(task);
-      }
-      const batch=action?.action==='answer'?undefined:adapted?.batches[task.generation.repairBatch?.completed||0];
-      let images=action?.action==='answer'?undefined:batch?.images||(!adapted?repairSources?.map(image=>({uri:'data:image/png;base64,'+image.bytes.toString('base64'),mediaType:'image/png' as const})):undefined);
-      const baseline=initial&&!images&&state.imageInput?(task.templateWorkflow?templateGenerationImages(task,store,directory):sourceVisualBaselineImages(input,directory)):undefined;
-      if(baseline?.images.length)images=baseline.images;
-      if(images?.length&&!state.imageInput)throw new Pending('当前 Kooboo automation bridge 不支持图片修复委托，请更新 bridge 后恢复；尚未发送修复消息。');
-      // Validate images/answers before provisioning files or changing deliveryId.
-      assertGenerationInput(undefined,images,action?.action==='answer'?action.answer:undefined);
+      // Pixels are read from an isolated media library, never through bridge attachments.
+      assertGenerationInput(undefined,undefined,action?.action==='answer'?action.answer:undefined);
       const manifest=task.requirementsId?new ManifestStore(store).get(task.requirementsId):undefined;
       const collectionGuidance=task.collectionVersionId?'\n本任务的A段已核验并冻结资料版本 '+task.collectionVersionId+'。使用资料映射清单按需读取原件、完整正文、数据分片和关系；批量落地当前范围，避免重新全站采集。动态记录保存可回读的 sourceUrl 或 oldUrl 完整来源 URL。SQLite 表 CollectionRecordBindings 用 id、requirementId、sourceUrl、targetKind（sqlite/content）、targetContainer（真实表名/Content容器）、targetId（真实记录主键）、identityKeyField（可空，默认id）声明每项页面或数据要求的规范记录；记录本身的sourceUrl/oldUrl必须匹配原URL。页面索引和业务记录可共存，不为凑数复制实体；每个冻结路径含分页都要明确映射。CollectionRelationBindings 用 id、sourcePath（完整原路径及查询参数）、tableName、parentField、childField、orderField、parentIdentityField、childIdentityField、sourcePathField 声明真实关系字段。父子引用字段从对应规范记录读取，默认identityKeyField/id；关系行须用sourcePathField区分分页与别名，不能把分类全部分页混成一页，顺序字段须为唯一数值。所有含详情成员的来源页均适用，不依赖pageType标签。CollectionAssetBindings 用 id、sourceUrl、materialPath（冻结state.localPath原值）、targetUrl（当前目标同域真实URL）记录已取得素材映射；同字节允许多个源URL共用文件，不能混淆源URL数与文件数。三张表仅声明现有实现，不提供或改写预期成员，不把目标总量反推来源。保留分类关系、成员顺序、分页、数字路径、.aspx与查询参数；元数据引号等原字符按HTML上下文转义，不能删字符。实际目标响应须承接原页标题、可见正文和链接，禁止以HTTP200、隐藏文本、记录数量或生成自述替代完整性。每批只返回完成对象、缺口与证据的短摘要。':'';
       if(task.requirementsId&&!manifest)throw new GenerationInputError('固定交付清单不存在，禁止发送不完整委托');
+      const referenceImages=action?.action==='answer'?undefined:await prepareReferenceMedia(task,store,directory,{siteId:site.siteId,apiOrigin,token:environment.token!,request,input,includeBaseline:initial},signal);
       const prepared=action?.action==='answer'?undefined:await prepareGenerationContext(task,store,request,site.siteId,{
-        instructions:batch&&task.generation.repairBatch!.completed<adapted!.batches.length-1
-          ?'修复证据正在分批传递。此批仅研读附件，简要记录可见差异和图片区域对应关系，不修改目标站、不调用写入工具、不重新采集。后续批次将补齐证据，最后一批才会收到完整修复委托。读完本批后简短结束，等待调度器追加下一批。'
-          :action?.action==='continue'&&action.message!==task.message
+        instructions:action?.action==='continue'&&action.message!==task.message
           ?task.message+'\n\n本轮已核对的跟进要求：\n'+action.message:task.message,
-        guidance:adoptedGuidance(task,store,'generation',vault)+collectionGuidance+acceptedAssetGuidance+(baseline?.label||'')+(batch?`\n修复证据批次 ${(task.generation.repairBatch?.completed||0)+1}/${adapted!.batches.length}。${task.generation.repairBatch!.completed===adapted!.batches.length-1?'已到最后一批，结合前批已研读的证据统一执行本次完整修复，完成后按原完整范围独立复评。':'本批只研读，不执行修复。'}`+batch.label:''),
+        guidance:adoptedGuidance(task,store,'generation',vault)+collectionGuidance+acceptedAssetGuidance,
         manifest,
         materials,
+        ...(referenceImages?{referenceImages}:{}),
         ...(task.scenario==='site-template'?{sourceEvidence:task.templateWorkflow?templateGenerationSources(task,store,directory):generationSourceEvidence(manifest,store,directory)}:{}),
       },Boolean(vault.automation().learning?.use));
-      assertGenerationInput(prepared?.text,images,action?.action==='answer'?action.answer:undefined);
-      if(prepared){store.event(task.id,`生成委托资料：${prepared.mode}；最终文本 ${Buffer.byteLength(prepared.text)} bytes，图片 ${images?.length||0} 张；平台原件 ${prepared.packageId}`);}
+      assertGenerationInput(prepared?.text,undefined,action?.action==='answer'?action.answer:undefined);
+      if(prepared){store.event(task.id,`生成委托资料：${prepared.mode}；最终文本 ${Buffer.byteLength(prepared.text)} bytes，媒体库图片 ${referenceImages?.entries.length||0} 张；平台原件 ${prepared.packageId}`);}
       const id=randomUUID(),conversationId=task.generation.conversationId||state.conversationId;
-      const payload:Parameters<typeof session.deliver>[0]={id,conversationId,images,...(action?.action==='answer'?{answer:action.answer,callId:action.callId}:{text:prepared!.text})};
+      const payload:Parameters<typeof session.deliver>[0]={id,conversationId,...(action?.action==='answer'?{answer:action.answer,callId:action.callId}:{text:prepared!.text})};
       // Persist the real outgoing payload independently of mutable checkpoints and chat summaries.
       deliveries.archive({id,taskId:task.id,versionId:task.versionId,siteId:site.siteId,packageId:prepared?.packageId,
-        kind:action?.action==='answer'?'answer':batch||task.repairEvidence?'repair':action?.action==='continue'||!initial?'continue':'initial',
-        batch:batch?{number:(task.generation.repairBatch?.completed||0)+1,total:adapted!.batches.length}:undefined,
+        kind:action?.action==='answer'?'answer':task.repairEvidence?'repair':action?.action==='continue'||!initial?'continue':'initial',
         createdAt:Date.now(),conversationId,previousRunId:action?.action==='answer'?task.generation.previousRunId:state.runId||undefined,
-        state:'prepared',text:payload.text,answer:payload.answer,callId:payload.callId,textBytes:Buffer.byteLength(payload.text||''),images:archiveDeliveryImages(directory,images)});
+        state:'prepared',text:payload.text,answer:payload.answer,callId:payload.callId,textBytes:Buffer.byteLength(payload.text||''),images:[]});
       const priorGeneration=structuredClone(task.generation);
-      if(action?.action!=='answer')task.generation.previousRunId=state.runId||undefined;task.generation.deliveryId=id;task.generation.deliveryState='sending';if(task.generation.repairBatch&&task.generation.repairBatch.completed<task.generation.repairBatch.total)task.generation.repairBatch.deliveryId=id;delete task.generation.next;store.put(task);
+      if(action?.action!=='answer'){task.generation.previousRunId=state.runId||undefined;delete task.generation.repairBatch;}task.generation.deliveryId=id;task.generation.deliveryState='sending';delete task.generation.next;store.put(task);
       deliveries.sending(id);
       let receipt:Awaited<ReturnType<typeof session.deliver>>;
       try{receipt=await session.deliver(payload);}

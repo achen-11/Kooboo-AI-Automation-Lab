@@ -49,7 +49,7 @@ function evaluationPayload(options:any,task:AutomationTask,fail=false){const {ba
 
 test('checklists freeze at task creation; legacy tasks stay unsupported; baseline overwrite rejected',async()=>{const f=fixture();try{const old=f.task.templateWorkflow!.checklistId,latest=f.registry.publish({name:'Updated checks',checks:f.registry.current().checks});assert.notEqual(old,latest.id);assert.equal(f.registry.response(f.task).checklist?.id,old);const legacy=f.store.create({resourceIds:[f.resource.id],kind:'generation',scope:'homepage',environmentId:f.task.environmentId,requirements:''},defaultAutomationSettings)[0];assert.equal(f.registry.response(legacy).supported,false);await analyze(f);const record=f.registry.get(f.task)!;record.baseline!.pages[0].views=[];assert.throws(()=>f.registry.put(record),/不可覆盖/);}finally{f.close();}});
 
-test('source analysis captures dual viewport once and survives repeated calls; generator uses local baseline',async()=>{const f=fixture();try{const calls:any[]=[];assert.equal(await analyze(f,calls),1);const count=calls.length;await ensureTemplateAnalysis(f.task,f.store,f.vault,f.directory,new AbortController().signal,{openBrowser:async()=>{throw new Error('must not open reference again');},decide:async()=>{throw new Error('must not reanalyze');}});assert.equal(calls.length,count);assert.equal(calls.filter(call=>call.action==='take_page_screenshots').length,2);assert.ok(f.task.requirementsId);assert.match(siteTemplateReferenceStudy(f.task,f.store,'target')!,/不得再采集参考站/);const image=f.registry.get(f.task)!.sourceEvidence.find(file=>file.type==='image/png')!;assert.ok(readTemplateEvidence(f.directory,image));writeFileSync(resolve(f.directory,'automation-runs',image.ownerTaskId,'evidence',image.name),'tampered');assert.throws(()=>readTemplateEvidence(f.directory,image),/已变化/);}finally{f.close();}});
+test('source analysis captures dual viewport once and survives repeated calls; generator uses local baseline',async()=>{const f=fixture();try{const calls:any[]=[];assert.equal(await analyze(f,calls),1);const count=calls.length;await ensureTemplateAnalysis(f.task,f.store,f.vault,f.directory,new AbortController().signal,{openBrowser:async()=>{throw new Error('must not open reference again');},decide:async()=>{throw new Error('must not reanalyze');}});assert.equal(calls.length,count);assert.equal(calls.filter(call=>call.action==='take_page_screenshots').length,2);assert.ok(f.task.requirementsId);assert.match(siteTemplateReferenceStudy(f.task,f.store,'target')!,/每个 view 实施前实际 read_image/);const image=f.registry.get(f.task)!.sourceEvidence.find(file=>file.type==='image/png')!;assert.ok(readTemplateEvidence(f.directory,image));writeFileSync(resolve(f.directory,'automation-runs',image.ownerTaskId,'evidence',image.name),'tampered');assert.throws(()=>readTemplateEvidence(f.directory,image),/已变化/);}finally{f.close();}});
 
 test('frozen source handoff retains registered provenance and settlement without sending layout dumps',async()=>{
   const f=fixture();try{
@@ -255,7 +255,7 @@ test('external capture completes after 10s readiness retry while target stays st
     let capturedInternalLinks:string[]=[];
     let capturedMinutes=0;
     f.task.completenessPolicy={...defaultAutomationSettings.completeness!,maxMinutes:3};
-    await ensureTemplateAnalysis(f.task,f.store,f.vault,f.directory,new AbortController().signal,{
+    const incomplete=await ensureTemplateAnalysis(f.task,f.store,f.vault,f.directory,new AbortController().signal,{
       openBrowser:fakeBrowser(
         f,
         f.task,
@@ -265,11 +265,45 @@ test('external capture completes after 10s readiness retry while target stays st
       decide:(async(options:any)=>{
         capturedInternalLinks=options.context.captures[0]?.layout?.internalLinks||[];
         capturedMinutes=options.minutes;
-        return options.submit(analysisPayload(options.context));
+        const payload=analysisPayload(options.context);
+        assert.throws(()=>options.submit(payload),/来源覆盖未完成/);
+        assert.equal(f.registry.get(f.task)?.baseline,null);
+        payload.manifest.sourceComplete=false;
+        payload.manifest.limitations=['Budget reached; About and Pricing remain unstudied'] as any;
+        return options.submit(payload);
       }) as typeof localDecision
     });
     assert.deepEqual(capturedInternalLinks,['https://source.test/about','https://source.test/pricing']);
+    assert.equal(incomplete?.complete,false);
+    assert.equal(f.registry.get(f.task)?.baseline,null);
+    assert.ok(incomplete?.limitations.some(item=>item.includes('/pricing')));
     assert.ok(capturedMinutes>=15,'site-scope template analysis guarantees at least 15 minutes');
+  }finally{f.close();}
+});
+
+test('analysis exposes every normalized candidate and rejects complete submissions until pages are studied or explicitly excluded',async()=>{
+  const f=fixture();try{
+    const tools=['/style-guide','/licenses','/changelog','/instructions','/404','/password',...Array.from({length:40},(_,n)=>'/instructions?section='+n)];
+    const links=['/',...tools,'/about','/style-guide#intro','/logo.png','https://other.test/'];
+    let submissions=0;
+    const result=await ensureTemplateAnalysis(f.task,f.store,f.vault,f.directory,new AbortController().signal,{
+      openBrowser:fakeBrowser(f,f.task,[],value=>({...value,links})),
+      decide:(async(options:any)=>{
+        const candidates=options.context.captures[0].layout.internalLinks;
+        assert.equal(candidates.length,tools.length+2);assert.ok(candidates.includes('https://source.test/about'),'last candidate after the old 30-link cutoff is visible');
+        const schema=await options.read({kind:'schema',part:'submission'});assert.ok(schema.properties.excludedPaths);
+        const payload=analysisPayload(options.context);submissions++;
+        assert.throws(()=>options.submit(payload),/未归类.*\/about/s);assert.equal(f.registry.get(f.task)?.baseline,null);
+        const fixed={...payload,excludedPaths:tools.map(path=>({path,reason:'Template author documentation or utility page'}))};
+        submissions++;assert.throws(()=>options.submit(fixed),/未归类.*\/about/s);
+        const captures=[];for(const viewport of ['desktop','mobile'])captures.push(await options.read({kind:'page',role:'reference',url:'https://source.test/about',viewport}));
+        fixed.pages.push({path:'/about',title:'About',views:[{...payload.pages[0].views[0],layouts:captures.map(capture=>({viewport:capture.scope.viewport,selector:'#hero',evidence:capture.files.map((file:any)=>file.name),intent:'About layout',exceptions:'',constraints:[]}))}]});
+        fixed.manifest.items[0].paths.push('/about');submissions++;
+        return options.submit(fixed);
+      }) as typeof localDecision
+    });
+    assert.equal(submissions,3);assert.equal(result?.complete,true);assert.equal(result?.pages.length,2);
+    assert.equal(JSON.parse(JSON.stringify(f.registry.get(f.task)!.baseline)).excludedPaths.length,tools.length,'explicit exclusion reasons survive freezing');
   }finally{f.close();}
 });
 

@@ -99,7 +99,9 @@ AI Site 模板、迁移与升级的新建生成任务，执行目标默认“自
 
 站点汇总接口：`GET /api/automation/site-deliveries?page=1&pageSize=20&q=&state=`；单站 `/site-deliveries/:id`、执行历史 `/site-deliveries/:id/tasks?page=1&pageSize=10`、用量 `/site-deliveries/:id/usage?page=1&pageSize=20&stage=evaluation`。使用原本机会话认证。原始任务、当前结果、历史报告及外部 Admin 契约保留；站点汇总不是修改历史报告或承诺正式上线结果。
 
-系统设置可修改默认目标、轮数、可选费用上限和质量分析 SOP；已启动任务使用冻结配置。跟进 AI 接收经哈希校验的双端目标 / 参考 PNG 及报告，整理修复委托后，Kooboo 在原站原会话修改。独立评测重新采集并复评，二者串行。Kooboo automation bridge 必须支持 `imageInput`，缺失时保留明确错误，不静默丢弃图片。
+系统设置可修改默认目标、轮数、可选费用上限和质量分析 SOP；已启动任务使用冻结配置。跟进 AI 接收经哈希校验的双端目标 / 参考 PNG 及报告，整理修复委托后，Kooboo 在原站原会话修改。独立评测重新采集并复评，二者串行。新的 AI Site 模板流程将冻结参考 PNG 及本轮修复问题截图上传到目标站专属的隔离研究 Sandbox（`automation-ref-<siteId>`）媒体库，上传后回读原字节校验哈希；任务包 `referenceImages` 仅保存页面、视口、view、图片 ID、来源 Sandbox（`sandbox`）、来源角色与修订的索引。生成 AI 必须通过 `read_image` 实际看图，上传成功或读到索引不算看图，因此该流程不要求 bridge 支持 `imageInput`。旧流程的直接图片附件仍要求 `imageInput`，缺失时保留明确错误，不静默丢弃图片。
+
+生成侧优先复用已交付截图；需要补图或切片时复用同一研究 Sandbox（或已克隆参考站的研究 Sandbox），使用 `take_screenshot`，长页保持 `fullPage=true` 且不缩放，再通过 `process_image(operation="slice")` 切片，沿 `nextOffset` 续切，并逐段 `read_image`；`read_image` 与 `process_image` 均必须携带索引项给出的 `sandbox`，不写入目标实现站媒体库。Lab 本地采集器的 `take_page_screenshots` 属于独立工具接口，不能将其写成 Kooboo 生成侧的必需函数。参考 PNG 与修复截图按内容哈希存放在研究 Sandbox 的 `/_automation-reference/<基线或报告或输入版本>/`，重启校验后复用；保留供会话继续读取，不随临时 kfile 清理，不用于生成站业务展示。全站分析允许动态模板抽样，但必须保留完整交付路径；发现页面未声明、内部链接未分类或双端研究未覆盖时保存未完成草稿，不得通过删路径声明完整。
 
 概览展示当前阶段与目标；评测结果默认展示当前版本报告，并按轮次查看历史报告、修复要求及改善分析；执行记录和用量支持按阶段 / 轮次查看。任务列表隐藏内部修复子任务，队列统计仍包含它们。首次质量分析初始化独立跟进预算，后续各轮累计，Kooboo 和评测等待不计入该活动时间。
 

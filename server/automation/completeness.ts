@@ -146,6 +146,16 @@ export async function inspectImplementation(task:AutomationTask,store:Automation
   return store.sanitize({request:input,value,capturedAt:Date.now(),note:'仅代表当前分页；总量、逐条标识及路由对应需完整核对。权限或能力不足需标记未验证。'});
 }
 export function evidenceWriter(work:string,artifacts:MaterialFile[],role:'content'|'target',prefix:string,checkpoint?:(file:MaterialFile)=>void){mkdirSync(resolve(work,'evidence'),{recursive:true,mode:0o700});return (value:unknown)=>{const name=prefix+'-'+randomUUID()+'.json',bytes=Buffer.from(JSON.stringify(value));writeFileSync(resolve(work,'evidence',name),bytes,{mode:0o600});const file:MaterialFile={id:randomUUID(),name,type:'application/json',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex'),role};artifacts.push(file);checkpoint?.(file);return {evidence:name,result:value};};}
+export function compactSourceHtml(rawHtml:string,bodyCharacters:number):{body:string;truncated:boolean;inlineAssetsStripped?:boolean}{
+  if(rawHtml.length<=bodyCharacters)return {body:rawHtml,truncated:false};
+  const stripped=rawHtml
+    .replace(/<style\b[^>]*>[\s\S]*?(?:<\/style>|$)/gi,'')
+    .replace(/<script\b(?![^>]*\btype\s*=\s*["']?application\/(?:ld\+)?json\b)[^>]*>[\s\S]*?(?:<\/script>|$)/gi,'')
+    .replace(/data:[^"'\s)>]{256,}/gi,'data:[omitted]');
+  if(stripped===rawHtml)return {body:rawHtml.slice(0,bodyCharacters),truncated:true};
+  const normalized=stripped.replace(/\n(?:[ \t]*\n){2,}/g,'\n\n');
+  return {body:normalized.slice(0,bodyCharacters),truncated:true,inlineAssetsStripped:true};
+}
 export function sourceReader(task:AutomationTask,store:AutomationStore,directory:string,write:(value:unknown)=>unknown,options:{bodyCharacters?:number}={}){
   const input=effectiveCollectionInput(task,store,directory)!;
   return async(raw:unknown,signal:AbortSignal)=>{
@@ -153,7 +163,7 @@ export function sourceReader(task:AutomationTask,store:AutomationStore,directory
     if(spec.kind==='material'){const file=input.files.find(f=>f.id===spec.id);if(!file)throw new Error('资料不存在');const bytes=readMaterial(directory,file);if(/text|json|xml|csv|svg/.test(file.type)||/\.(md|txt|json|csv|xml|svg)$/i.test(file.name)){const text=bytes.toString('utf8');return write({kind:'material',id:file.id,name:file.name,text:text.slice(0,80000),truncated:text.length>80000});}const record=write({kind:'material',id:file.id,name:file.name,type:file.type,sha256:file.sha256,size:bytes.length});return {...record as object,...(file.type.startsWith('image/')?{imagePath:resolve(directory,'materials',file.id),note:'需实际查看图片后提炼要求'}:{filePath:resolve(directory,'materials',file.id),note:'使用本地只读工具检查原始文件，无法读取的资料需明确标记未验证'})};}
     const base=spec.role==='reference'?input.referenceUrl||input.contentUrl:input.contentUrl;if(!base)throw new Error('无此来源站');const url=new URL(spec.url||base,base);if(url.origin!==new URL(base).origin||url.username||url.password)throw new Error('只能读取本任务来源站域名');
     const bodyCharacters=Math.min(1024*1024,Math.max(1,options.bodyCharacters??100000));
-    const result=await httpRead(url,{signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),limit:1024*1024});return write({kind:'source',url:url.href,status:result.status,body:result.body.slice(0,bodyCharacters),truncated:result.body.length>bodyCharacters});
+    const result=await httpRead(url,{signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),limit:1024*1024});const compacted=compactSourceHtml(result.body,bodyCharacters);return write({kind:'source',url:url.href,status:result.status,...compacted});
   };
 }
 export async function ensureManifest(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal){

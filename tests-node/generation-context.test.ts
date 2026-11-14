@@ -51,6 +51,17 @@ test('small instructions and manifest stay in message and preserve a platform or
   } finally { await f.close(); }
 });
 
+test('media references travel through kfile without pixels and remain readable through the bounded context reader', async () => {
+  const f=await fixture();try{
+    const referenceImages={siteId:f.siteId,baselineId:randomUUID(),entries:[{name:'reference.png',url:'https://reference.test/',viewport:'mobile',imageId:randomUUID(),path:'/_automation-reference/image.png',views:[{pagePath:'/',viewId:'hero',viewport:'mobile'}]}]};
+    const result=await prepareGenerationContext(f.task,f.store,f.request,f.siteId,{instructions:'Implement from reference',referenceImages});
+    assert.equal(result.mode,'kfile');assert.match(result.text,/read_image/);assert.match(result.text,/process_image/);
+    const pkg=new GenerationContextStore(f.store).packages(f.task.id)[0],base=pkg.index.slice(0,pkg.index.lastIndexOf('/')+1);
+    const actual=runInNewContext(f.remote.get(base+'reader.js')+';JSON.stringify(automationRead("referenceImages"))',{k:{file:{read:(path:string)=>f.remote.get(path)??null}}});
+    assert.deepEqual(JSON.parse(actual),referenceImages);assert.doesNotMatch(pkg.original,/base64/);
+  }finally{await f.close();}
+});
+
 test('disabling experience removes historical baseline guidance from delivery while retaining the frozen baseline', async () => {
   const f = await fixture(); try {
     f.task.scenario = 'site-template';

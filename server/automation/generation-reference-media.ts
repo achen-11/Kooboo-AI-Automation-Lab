@@ -19,10 +19,14 @@ const digest=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
 const uuid=/^[a-f0-9]{8}(?:-[a-f0-9]{4}){3}-[a-f0-9]{12}$/i;
 const validId=(value:unknown):value is string=>typeof value==='string'&&uuid.test(value)&&value!=='00000000-0000-0000-0000-000000000000';
 
-async function researchSandbox(request:ContextRequest,siteId:string){
+export function researchSandboxName(siteId:string){
   if(!validId(siteId))throw new GenerationInputError('研究 Sandbox 缺少有效的目标站身份');
-  // Sandbox names are unique throughout the organization, not just this target.
-  const sandbox='automation-ref-'+siteId.replace(/-/g,'').toLowerCase();
+  return 'autoref-'+BigInt('0x'+siteId.replace(/-/g,'').toLowerCase()).toString(36).padStart(25,'0');
+}
+
+async function researchSandbox(request:ContextRequest,siteId:string){
+  // Sandbox names are unique across the organization and share Kooboo's 50-char __ai_sandbox__ name budget.
+  const sandbox=researchSandboxName(siteId),legacyTruncated=('automation-ref-'+siteId.replace(/-/g,'').toLowerCase()).slice(0,36);
   const call=async(name:string,args:Record<string,unknown>)=>{
     const response=await request('AI/CallFunction',{name,callId:randomUUID(),arguments:args},siteId),content=response?.contents?.[0];
     if(!content||content.isError||content.result?.error||content.result?.success===false)throw new Error('研究 Sandbox 工具未成功：'+name);
@@ -30,11 +34,12 @@ async function researchSandbox(request:ContextRequest,siteId:string){
   };
   const lookup=async()=>{
     const list=await call('list_sandbox',{});if(!Array.isArray(list))throw new Error('研究 Sandbox 列表回执无效');
-    const matches=list.filter(item=>item?.siteName===sandbox);
+    const exact=list.filter(item=>item?.siteName===sandbox);
+    const matches=exact.length?exact:list.filter(item=>item?.siteName===legacyTruncated);
     if(matches.length>1||matches.some(item=>!validId(item.id)||item.id===siteId))throw new GenerationInputError('研究 Sandbox 身份不唯一或无效');
     return matches[0] as {id:string;siteName:string}|undefined;
   };
-  const existing=await lookup();if(existing)return {sandbox,siteId:existing.id};
+  const existing=await lookup();if(existing)return {sandbox:existing.siteName,siteId:existing.id};
   try{
     const result=await call('create_sandbox',{siteName:sandbox,contentTypes:[]});
     const site=result?.site||result;
@@ -42,7 +47,7 @@ async function researchSandbox(request:ContextRequest,siteId:string){
     return {sandbox,siteId:site.id as string};
   }catch(error){
     // Reconcile lost creation responses or concurrent creators by name; never blindly recreate.
-    const recovered=await lookup();if(recovered)return {sandbox,siteId:recovered.id};throw error;
+    const recovered=await lookup();if(recovered)return {sandbox:recovered.siteName,siteId:recovered.id};throw error;
   }
 }
 

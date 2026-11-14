@@ -9,13 +9,55 @@ export async function layoutInventory() {
   const digest=async(value:string)=>crypto.subtle?Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',new TextEncoder().encode(value)))).map(v=>v.toString(16).padStart(2,'0')).join(''):hostDigest(value,'utf8');
   const digestBytes=async(bytes:ArrayBuffer)=>{if(crypto.subtle)return Array.from(new Uint8Array(await crypto.subtle.digest('SHA-256',bytes))).map(v=>v.toString(16).padStart(2,'0')).join('');let binary='';const values=new Uint8Array(bytes);for(let i=0;i<values.length;i+=8192)binary+=String.fromCharCode(...values.subarray(i,i+8192));return hostDigest(btoa(binary),'base64');};
   const selector=(el:Element):string=>{if(el===document.body)return 'body';if(el.id&&document.querySelectorAll('#'+CSS.escape(el.id)).length===1)return '#'+CSS.escape(el.id);const parts:string[]=[];for(let node:Element|null=el;node&&node!==document.body;node=node.parentElement){const siblings=Array.from(node.parentElement?.children||[]);parts.unshift(node.tagName.toLowerCase()+':nth-child('+(siblings.indexOf(node)+1)+')');}return 'body>'+parts.join('>');};
+  const structurallyVisible=(el:Element):boolean=>{
+    const style=getComputedStyle(el),r=el.getBoundingClientRect();
+    if(!r.width||!r.height||style.display==='none'||style.visibility==='hidden'||style.visibility==='collapse')return false;
+    for(let parent=el.parentElement;parent;parent=parent.parentElement){
+      const ancestor=getComputedStyle(parent);
+      if(ancestor.display==='none'||ancestor.visibility==='hidden'||ancestor.visibility==='collapse')return false;
+    }
+    return true;
+  };
+  const opacityVisible=(el:Element):boolean=>{
+    if(Number(getComputedStyle(el).opacity)===0)return false;
+    for(let parent=el.parentElement;parent;parent=parent.parentElement){
+      if(Number(getComputedStyle(parent).opacity)===0)return false;
+    }
+    return true;
+  };
+  const docHeight=()=>Math.max(document.body?.scrollHeight||0,document.documentElement?.scrollHeight||0);
+  const initialNodes=Array.from(document.body.querySelectorAll('*')).slice(0,3000);
+  const revealedByScroll=new Set<Element>();
+  if(docHeight()>innerHeight&&initialNodes.some(el=>structurallyVisible(el)&&!opacityVisible(el))){
+    const raf=()=>new Promise<void>(done=>typeof requestAnimationFrame==='function'?requestAnimationFrame(()=>done()):setTimeout(done,0));
+    const wait=(ms:number)=>new Promise<void>(done=>setTimeout(done,ms));
+    const step=Math.max(200,Math.floor(innerHeight*0.75));
+    let y=0;
+    for(let i=0;i<28;i++){
+      const maxScroll=Math.max(0,docHeight()-innerHeight);
+      window.scrollTo(0,y);
+      await raf();await raf();await wait(220);
+      const nodes=Array.from(document.body.querySelectorAll('*')).slice(0,3000);
+      const inView=nodes.filter(el=>{
+        if(!structurallyVisible(el))return false;
+        const b=el.getBoundingClientRect();
+        return b.bottom>0&&b.top<innerHeight;
+      });
+      if(inView.some(el=>!opacityVisible(el)))await wait(350);
+      for(const el of inView)if(opacityVisible(el))revealedByScroll.add(el);
+      if(y>=maxScroll-1)break;
+      y=Math.min(maxScroll,y+step);
+    }
+    window.scrollTo(0,0);
+    await raf();await raf();
+  }
   const candidates=Array.from(document.body.querySelectorAll('*'));
   if(candidates.length>3000)gaps.push('DOM 超过 3000 元素，测量不完整');
   const elements=[];
   for(const el of [document.body,...candidates.slice(0,3000)]){
+    if(!structurallyVisible(el))continue;
+    if(!opacityVisible(el)&&!revealedByScroll.has(el))continue;
     const style=getComputedStyle(el),r=el.getBoundingClientRect();
-    if(!r.width||!r.height||style.display==='none'||style.visibility==='hidden'||Number(style.opacity)===0)continue;
-    let hidden=false;for(let parent=el.parentElement;parent;parent=parent.parentElement){const ancestor=getComputedStyle(parent);if(ancestor.display==='none'||ancestor.visibility==='hidden'||ancestor.visibility==='collapse'||Number(ancestor.opacity)===0){hidden=true;break;}}if(hidden)continue;
     if(el.shadowRoot||['IFRAME','CANVAS','VIDEO'].includes(el.tagName))gaps.push('存在独立渲染或动态表面');
     if(style.animationName!=='none')gaps.push('存在运行中的动画');
     const rect={x:r.x+scrollX,y:r.y+scrollY,width:r.width,height:r.height};

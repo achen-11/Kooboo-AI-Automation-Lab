@@ -10,22 +10,37 @@ import { templateCandidateLinks } from './template-source-coverage.js';
 
 export type WorkflowBrowser=Awaited<ReturnType<typeof evaluationBrowser>>;
 export interface WorkflowCapture {layout:TemplateLayoutSnapshot;scope:TemplateCaptureScope;files:TemplateEvidence[]}
-export function compactLayout(layout:TemplateLayoutSnapshot,offset=0,limit=20){
-  const elements=layout.elements.slice(offset,offset+limit).map(({signature,...element})=>({...element,text:element.text.slice(0,240),textTruncated:element.text.length>240}));
-  const links=layout.links.slice(offset,offset+limit),count=Math.max(layout.elements.length,layout.links.length);
-  return {...layout,elements,links,elementCount:layout.elements.length,linkCount:layout.links.length,nextOffset:offset+limit<count?offset+limit:null,dependencyHash:layout.dependencyHash};
+export function compactLayout(layout:TemplateLayoutSnapshot,offset=0,limit=60){
+  const size=Math.max(1,Math.min(120,Math.trunc(limit)));
+  const elements=layout.elements.slice(offset,offset+size).map(({signature,...element})=>({...element,text:element.text.slice(0,240),textTruncated:element.text.length>240}));
+  const links=layout.links.slice(offset,offset+size),count=Math.max(layout.elements.length,layout.links.length);
+  return {...layout,elements,links,elementCount:layout.elements.length,linkCount:layout.links.length,nextOffset:offset+size<count?offset+size:null,dependencyHash:layout.dependencyHash};
 }
 export function compactCapture(capture:WorkflowCapture){return {...capture,layout:compactLayout(capture.layout)};}
 /** The model gets an index, not repeated hashes, URLs, full body text and API metadata. */
 export function analysisCaptureIndex(capture:WorkflowCapture,directory:string){
   const {url,viewport,width,height,truncated}=capture.layout;
-  const candidates=capture.layout.elements.filter(element=>element.selector!=='body'&&(/^(header|nav|main|section|footer|h1|h2)$/.test(element.tag)||element.parentSelector==='body'||element.rect.width>=width*.75&&element.rect.height>=140));
+  const landmark=/^(header|nav|main|section|footer|form)$/;
+  const rawCandidates=capture.layout.elements.filter(element=>element.selector!=='body'&&(/^(header|nav|main|section|footer|h1|h2|form)$/.test(element.tag)||element.parentSelector==='body'||element.rect.width>=width*.75&&element.rect.height>=140));
+  const bySelector=new Map(rawCandidates.map(element=>[element.selector,element]));
+  const siblingCounts=new Map<string,number>(),deduped=[];
+  for(const element of rawCandidates){
+    const parent=element.parentSelector?bySelector.get(element.parentSelector):undefined;
+    if(element.tag==='div'&&parent&&Math.abs(element.rect.y-parent.rect.y)<4&&Math.abs(element.rect.height-parent.rect.height)<4&&element.text.slice(0,60)===parent.text.slice(0,60))continue;
+    if(!landmark.test(element.tag)){
+      const siblingKey=`${element.parentSelector||''}|${element.tag}|${Math.round(element.rect.height/20)}`;
+      const seen=siblingCounts.get(siblingKey)||0;
+      if(seen>=2)continue;
+      siblingCounts.set(siblingKey,seen+1);
+    }
+    deduped.push(element);
+  }
   const frames=capture.files.filter(file=>file.type==='image/png').map(file=>{
     const proof=capture.files.find(item=>item.name===file.name.replace(/\.png$/,'.json'));if(!proof)throw new Error('逐屏来源缺少位置观察');
     const observation=JSON.parse(readTemplateEvidence(directory,proof).toString()),p=observation.position;
     return {file:file.name,settled:file.settled,...(p?{y:p.scrollY,width:p.viewportWidth,height:p.viewportHeight,documentHeight:p.documentHeight}:{}),stableForMs:observation.readiness?.stableForMs};
   });
-  return {scope:capture.scope,layout:{url,viewport,width,height,truncated,elementCount:capture.layout.elements.length,linkCount:capture.layout.links.length,internalLinks:templateCandidateLinks(url,capture.layout.links),candidates:candidates.slice(0,60).map(({selector,tag,text,rect})=>({selector,tag,text:text.slice(0,160),rect})),candidatesTruncated:candidates.length>60},frames,files:capture.files.map(({name,type,settled})=>({name,type,settled}))};
+  return {scope:capture.scope,layout:{url,viewport,width,height,truncated,elementCount:capture.layout.elements.length,linkCount:capture.layout.links.length,internalLinks:templateCandidateLinks(url,capture.layout.links),candidates:deduped.slice(0,120).map(({selector,tag,text,rect})=>({selector,tag,text:text.slice(0,160),rect})),candidatesTruncated:deduped.length>120},frames,files:capture.files.map(({name,type,settled})=>({name,type,settled}))};
 }
 export function recordTemplateLayout(task:AutomationTask,layout:TemplateLayoutSnapshot,role:TemplateEvidence['role'],directory:string,browser:WorkflowBrowser):TemplateEvidence {
   const name=randomUUID()+'.json',bytes=Buffer.from(JSON.stringify({kind:'template-layout',url:layout.url,viewport:layout.viewport,role,capturedAt:Date.now(),binding:{taskId:task.id,inputVersionId:task.versionId,siteRevision:role==='target'?task.siteRevision:null},layout}));

@@ -10,7 +10,7 @@ import { Database } from '../server/runtime.js';
 import { AutomationStore } from '../server/automation/store.js';
 import { defaultAutomationSettings } from '../shared/automation.js';
 import { TemplateWorkflowStore } from '../server/automation/template-workflow-store.js';
-import { prepareReferenceMedia } from '../server/automation/generation-reference-media.js';
+import { prepareReferenceMedia, researchSandboxName } from '../server/automation/generation-reference-media.js';
 import { templateCandidateLinks, templateSourceCoverage } from '../server/automation/template-source-coverage.js';
 import type { Requirement } from '../shared/completeness.js';
 import { Vault } from '../server/lib/vault.js';
@@ -91,6 +91,19 @@ test('sandbox creation reconciles a lost response and each target owns a distinc
     assert.deepEqual(await f.run(),first);assert.equal(f.calls.filter(call=>call.name==='create_sandbox').length,1);
     const second=await prepareReferenceMedia(f.task,f.store,f.directory,{...f.target,siteId:randomUUID()},new AbortController().signal,f.fetcher);
     assert.notEqual(second!.sandbox,first!.sandbox);assert.notEqual(second!.siteId,first!.siteId);assert.equal(f.sandboxes.length,2);
+    assert.ok(('__ai_sandbox__'+first!.sandbox).length<=50);
+  }finally{f.close();}
+});
+
+test('lookup reuses an existing legacy 36-char truncated sandbox without recreating',async()=>{
+  const f=fixture();try{
+    const legacyName=('automation-ref-'+f.target.siteId.replace(/-/g,'').toLowerCase()).slice(0,36);
+    assert.equal(legacyName.length,36);
+    f.sandboxes.push({id:randomUUID(),siteName:legacyName});
+    const res=await f.run();
+    assert.equal(f.calls.filter(call=>call.name==='create_sandbox').length,0,'reuses legacy truncated sandbox');
+    assert.equal(res!.sandbox,legacyName);
+    assert.ok(res!.entries.every(entry=>entry.sandbox===legacyName));
   }finally{f.close();}
 });
 
@@ -154,7 +167,7 @@ test('legacy repair PNGs and first-round migration baselines use sandbox media w
 });
 
 for(const mode of ['workflow','legacy-repair','migration-baseline'] as const)test('the real generator sends '+mode+' through sandbox media without bridge imageInput',async()=>{
-  const f=fixture(),kfiles=new Map<string,string>(),media=new Map<string,Buffer>(),sandbox={id:randomUUID(),siteName:'automation-ref-'+f.target.siteId.replace(/-/g,'')};let created=false;
+  const f=fixture(),kfiles=new Map<string,string>(),media=new Map<string,Buffer>(),sandbox={id:randomUUID(),siteName:researchSandboxName(f.target.siteId)};let created=false;
   if(mode!=='workflow'){
     delete f.task.templateWorkflow;delete f.task.autonomy;f.task.requirementsEnabled=false;
     if(mode==='legacy-repair'){

@@ -13,8 +13,8 @@ import { TemplateWorkflowStore, readTemplateEvidence, templateHash } from '../se
 import { ensureTemplateAnalysis } from '../server/automation/template-analysis.js';
 import { executeTemplateWorkflowEvaluation } from '../server/automation/template-workflow-evaluation.js';
 import { runTemplateScript } from '../server/automation/template-checks.js';
-import { planTemplateRegions } from '../server/automation/template-layout.js';
-import { captureWorkflowScope } from '../server/automation/template-workflow-capture.js';
+import { layoutInventory, planTemplateRegions } from '../server/automation/template-layout.js';
+import { analysisCaptureIndex, captureWorkflowScope, compactLayout } from '../server/automation/template-workflow-capture.js';
 import type { evaluationBrowser } from '../server/automation/browser.js';
 import type { localDecision } from '../server/automation/local-decision.js';
 import { siteTemplateReferenceStudy, templateGenerationSources } from '../server/automation/generation-reference.js';
@@ -403,4 +403,101 @@ test('POST /resume directly requeues site-template generation interrupted during
     assert.equal(body.followup?.state,'resolved');
     assert.equal(body.followup?.executionStopped,true);
   }finally{await f.app.close();rmSync(directory,{recursive:true,force:true});}
+});
+
+test('layoutInventory sweeps scroll-revealed Framer sections and keeps hidden overlays excluded',async()=>{
+  const keys=['innerWidth','innerHeight','scrollX','scrollY','window','document','getComputedStyle','performance','location','CSS','requestAnimationFrame','setTimeout'] as const;
+  const saved=Object.fromEntries(keys.map(key=>[key,Object.getOwnPropertyDescriptor(globalThis,key)]));
+  let currentY=0;
+  const makeNode=(opts:{id?:string;tag:string;top:number;height:number;width?:number;opacity?:()=>string;text:string})=>{
+    const node:any={
+      id:opts.id||'',tagName:opts.tag.toUpperCase(),outerHTML:`<${opts.tag}>${opts.text}</${opts.tag}>`,textContent:opts.text,
+      children:[],parentElement:null,shadowRoot:null,
+      getBoundingClientRect:()=>({x:0,y:opts.top-currentY,top:opts.top-currentY,bottom:opts.top+opts.height-currentY,width:opts.width??1200,height:opts.height}),
+      _opacity:opts.opacity||(()=>'1')
+    };
+    return node;
+  };
+  const body:any=makeNode({tag:'body',top:0,height:3000,width:1440,text:'page'});
+  const hero=makeNode({id:'hero',tag:'section',top:0,height:600,text:'Hero'});
+  const revealed=makeNode({id:'newsletter',tag:'section',top:2000,height:400,text:'Newsletter',opacity:()=>currentY<=2400&&currentY+900>=2000&&currentY>0?'1':'0'});
+  const hiddenModal=makeNode({id:'modal',tag:'div',top:100,height:300,text:'Hidden modal',opacity:()=>'0'});
+  const nodes=[hero,revealed,hiddenModal];
+  body.children=nodes;body.scrollHeight=3000;body.querySelectorAll=()=>nodes;
+  for(const n of nodes)n.parentElement=body;
+  try{
+    Object.assign(globalThis,{
+      innerWidth:1440,innerHeight:900,scrollX:0,
+      window:{scrollTo:(_x:number,y:number)=>{currentY=y;}},
+      document:{
+        body,documentElement:{scrollHeight:3000},
+        querySelectorAll:(sel:string)=>sel==='*'?nodes:nodes.filter(n=>n.id&&sel==='#'+n.id),
+        createRange:()=>({selectNodeContents:()=>{},getClientRects:()=>[]})
+      },
+      getComputedStyle:(el:any)=>({
+        display:'block',visibility:'visible',animationName:'none',overflowX:'visible',position:'static',paddingLeft:'0',paddingRight:'0',cssText:'',
+        opacity:el._opacity(),length:0,[Symbol.iterator]:function*(){},getPropertyValue:()=>''
+      }),
+      performance:{getEntriesByType:()=>[]},
+      location:{origin:'https://source.test',href:'https://source.test/'},
+      CSS:{escape:(s:string)=>s},
+      requestAnimationFrame:(cb:FrameRequestCallback)=>{queueMicrotask(()=>cb(0));return 0;},
+      setTimeout:(cb:()=>void)=>{queueMicrotask(cb);return 0 as any;}
+    });
+    Object.defineProperty(globalThis,'scrollY',{configurable:true,get:()=>currentY});
+    const snapshot=await layoutInventory();
+    assert.equal(currentY,0,'resets scroll back to top after sweep');
+    assert.ok(snapshot.elements.some((el:any)=>el.selector==='#hero'),'includes visible hero');
+    assert.ok(snapshot.elements.some((el:any)=>el.selector==='#newsletter'),'keeps scroll-revealed section even if opacity returns to 0 at y=0');
+    assert.ok(!snapshot.elements.some((el:any)=>el.selector==='#modal'),'keeps permanently opacity:0 modal excluded');
+  }finally{
+    for(const key of keys){
+      const desc=saved[key];
+      if(desc)Object.defineProperty(globalThis,key,desc);
+      else delete (globalThis as any)[key];
+    }
+  }
+});
+
+test('analysisCaptureIndex preserves deep landmarks past repeated marquee items and compactLayout defaults to 60',()=>{
+  const f=fixture();try{
+    const mkEl=(selector:string,tag:string,y:number,height:number,parentSelector='body',text='item')=>({selector,tag,text,rect:{x:0,y,width:1440,height},visible:true,lines:1,display:'block',position:'static',overflowX:'visible',paddingLeft:0,paddingRight:0,parentSelector,signature:'sig-'+selector});
+    const marquee=Array.from({length:50},(_,i)=>mkEl(`ul>li:nth-child(${i+1})`,'li',2000,180,'ul','Actor '+i));
+    const elements=[
+      mkEl('header','header',0,80),
+      mkEl('#hero','section',80,800),
+      mkEl('#hero>div','div',80,800,'#hero'),
+      ...marquee,
+      mkEl('#newsletter','form',4500,400,'#main','Subscribe Now'),
+      mkEl('#news','section',8200,600,'#main','Latest News'),
+      mkEl('#footer','footer',9400,500,'body','Footer')
+    ];
+    const big=layout();
+    big.elements=elements;
+    assert.equal(compactLayout(big).elements.length,elements.length);
+    const padded={...big,elements:Array.from({length:80},(_,i)=>mkEl(`#n${i}`,'div',i*10,10,'body'))};
+    assert.equal(compactLayout(padded).elements.length,60);
+    assert.equal(compactLayout(padded).nextOffset,60);
+    assert.equal(compactLayout(padded,0,15).elements.length,15);
+    const proofName=randomUUID()+'.json',folder=resolve(f.directory,'automation-runs',f.task.id,'evidence');
+    mkdirSync(folder,{recursive:true});
+    const pngName=proofName.replace('.json','.png'),proofBytes=Buffer.from(JSON.stringify({position:{scrollY:0,viewportWidth:1440,viewportHeight:900,documentHeight:9900}})),pngBytes=Buffer.alloc(0);
+    writeFileSync(resolve(folder,proofName),proofBytes);
+    writeFileSync(resolve(folder,pngName),pngBytes);
+    const idx=analysisCaptureIndex({
+      layout:big,
+      files:[
+        {name:pngName,ownerTaskId:f.task.id,role:'reference',viewport:'desktop',url:'https://source.test/',type:'image/png',sha256:hash(pngBytes),size:pngBytes.length,siteRevision:null,href:''},
+        {name:proofName,ownerTaskId:f.task.id,role:'reference',viewport:'desktop',url:'https://source.test/',type:'application/json',sha256:hash(proofBytes),size:proofBytes.length,siteRevision:null,href:''}
+      ],
+      scope:{pagePath:'/',viewport:'desktop',mode:'page',selectors:[],reason:'ok',evidence:[],complete:true}
+    },f.directory);
+    const selectors=idx.layout.candidates.map(c=>c.selector);
+    assert.ok(selectors.includes('#newsletter'));
+    assert.ok(selectors.includes('#news'));
+    assert.ok(selectors.includes('#footer'));
+    assert.ok(!selectors.includes('#hero>div'),'deduplicates identical wrapper div');
+    assert.equal(selectors.filter(s=>s.startsWith('ul>li:')).length,2,'caps repeated non-landmark siblings');
+    assert.equal(idx.layout.candidatesTruncated,false);
+  }finally{f.close();}
 });

@@ -46,7 +46,8 @@ async function runLocalDecision<T>(options:LocalDecisionOptions<T>) {
     if(req.method!=='POST'||req.url!=='/tools')return reply(404,{error:'Not found'});
     if(busy)return reply(409,{error:'请顺序调用工具'});busy=true;
     try{
-      toolsSignal.throwIfAborted();if(++calls>100)throw new Error('本次决策工具调用达到上限');
+      const maxCalls=Math.max(100,options.policy.maxRequests);
+      toolsSignal.throwIfAborted();if(++calls>maxCalls)throw new Error('本次决策工具调用达到上限');
       let text='';for await(const chunk of req){text+=chunk;if(text.length>1000000)throw new Error('工具请求过大');}
       const raw=JSON.parse(text);
       // A reflection payload is an unambiguous submit intent. Normalize the envelope only;

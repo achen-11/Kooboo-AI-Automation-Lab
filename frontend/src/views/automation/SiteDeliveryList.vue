@@ -5,6 +5,7 @@ import BaseSelect from '../../components/BaseSelect.vue';
 import TablePagination from '../../components/TablePagination.vue';
 import EnvironmentName from '../../components/EnvironmentName.vue';
 import DispositionDialog from './DispositionDialog.vue';
+import QueueDiagnostics from './QueueDiagnostics.vue';
 import { formatDate } from '../../api';
 import { scoreTone, siteLink } from '../../lib/task-list';
 import { siteReportLink } from '../../lib/site-reports';
@@ -70,7 +71,7 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
 </script>
 
 <template>
-  <header class="page-header"><h1>任务中心</h1><a class="button primary" href="#/resources"><Play :size="16" />从资源创建任务</a></header>
+  <header class="page-header"><h1>任务中心</h1><div class="toolbar-actions"><QueueDiagnostics @changed="reload" /><a class="button primary" href="#/resources"><Play :size="16" />从资源创建任务</a></div></header>
   <p v-if="!workspace.settings.enabled" class="alert info"><Clock3 :size="17" /><span>自动执行已暂停，队列中的任务会保留。</span><a href="#/settings">前往设置<ArrowUpRight :size="15" /></a></p>
   <div class="queue-summary">
     <div><span>生成执行</span><strong>{{ workspace.queue?.generation ?? 0 }}<small>/ {{ workspace.settings.generationConcurrency }}</small></strong></div>

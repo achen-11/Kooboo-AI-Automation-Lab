@@ -302,7 +302,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   });
 
   registerPublicApi(app, store, vault, artifacts);
-  registerAutomationApi(app, automationStore, vault, directory, id => automationWorker.cancel(id), id => automationWorker.owns(id));
+  registerAutomationApi(app, automationStore, vault, directory, id => automationWorker.cancel(id), id => automationWorker.owns(id), () => automationWorker instanceof BackgroundWorkers ? automationWorker.healthy : options.startWorker !== false);
   const diagnosticExports = registerDiagnosticApi(app, automationStore, vault, directory);
   registerUpdateApi(app, { directory, vault, transport: options.updateTransport, active: async () => {
     const owned = automationWorker instanceof BackgroundWorkers ? await automationWorker.quiesce() : automationWorker.ownedIds().length + Number(worker.busy);

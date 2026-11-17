@@ -6,7 +6,7 @@ import { resolve } from 'node:path';
 import { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { materialPath, uniqueMaterialPaths } from '../../shared/materials.js';
-import { scenarios, defaultFollowupSettings, defaultOptimizationPolicy, supportsAutomaticOptimization } from '../../shared/automation.js';
+import { scenarios, defaultFollowupSettings, defaultOptimizationPolicy, supportsAutomaticOptimization, type AutomationTask } from '../../shared/automation.js';
 import { stopOptimization } from './optimization.js';
 import { Conflict } from '../lib/store.js';
 import { queueDelivery, deliveryReceipt } from './delivery.js';
@@ -42,6 +42,8 @@ import { taskSiteNaming } from './site-naming.js';
 import { registerLiveComparisonApi } from './live-comparison.js';
 import { registerTemplateWorkflowApi } from './template-workflow-api.js';
 import { TemplateWorkflowStore } from './template-workflow-store.js';
+import { diagnoseQueue } from './queue-diagnostics.js';
+import { inMaintenance } from '../updates/maintenance.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -72,7 +74,7 @@ const params=z.object({id:uuid});
 const pageNumber=z.coerce.number().int().min(1).max(1000000),pageSizeNumber=z.coerce.number().int().min(1).max(100);
 const pagination=z.object({page:pageNumber.default(1),pageSize:pageSizeNumber.default(20)});
 
-export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,cancel:(id:string)=>void|Promise<void>,owns:(id:string)=>boolean){
+export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,vault:Vault,directory:string,cancel:(id:string)=>void|Promise<void>,owns:(id:string)=>boolean,workerReady:()=>boolean=()=>true){
   registerResourceFolderApi(app,store.resourceFolders);
   registerDispositionApi(app,store,()=>vault.get().threshold,cancel,owns);
   registerSiteDomainApi(app,store,vault,owns);
@@ -88,6 +90,16 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerGenerationContextApi(app,store,vault,owns,directory);
   registerCollectionApi(app,store,directory,owns);
   let probing=false;
+  const confirmation=z.object({expectedUpdatedAt:z.number().int().nonnegative().optional()});
+  function checkConfirmation(body:unknown,task:AutomationTask){
+    const {expectedUpdatedAt}=confirmation.parse(body??{});
+    if(expectedUpdatedAt!==undefined&&task.updatedAt!==expectedUpdatedAt)throw new Conflict('任务状态已变化，请刷新队列诊断后重新核实');
+  }
+  app.get('/api/automation/queue-diagnostics',async(request,reply)=>{
+    const query=z.object({page:z.coerce.number().int().min(1).default(1),reservationPage:z.coerce.number().int().min(1).default(1),pageSize:z.coerce.number().int().min(1).max(100).default(10),summaryOnly:z.enum(['0','1']).optional()}).parse(request.query);
+    reply.header('Cache-Control','no-store');
+    return diagnoseQueue(store,vault.automation(),{...query,summaryOnly:query.summaryOnly==='1',workerReady:workerReady(),maintenance:inMaintenance(directory),owns});
+  });
   const executionSettings=()=>({...vault.automation(),evaluationEndpoint:vault.automation().evaluationEndpoint||vault.get().model.endpoint});
   const files=resolve(directory,'materials');mkdirSync(files,{recursive:true,mode:0o700});
   store.db.exec(`CREATE TABLE IF NOT EXISTS auto_files(id TEXT PRIMARY KEY,json TEXT NOT NULL); CREATE INDEX IF NOT EXISTS auto_files_content ON auto_files(json_extract(json,'$.name'),json_extract(json,'$.sha256'));`);
@@ -364,7 +376,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.post('/api/automation/tasks/:id/delivery/receipt',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||!['uncertain','failed'].includes(task.delivery.status))throw new Conflict('只能为已停止且待核查的交付补录回执');if(task.delivery.target)throw new Conflict('已有目标回执，请恢复核验；不能替换目标');task.delivery.target=deliveryReceipt(request.body);task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'操作者补录目标回执；仅核验目标环境，不重发迁移');return task;});
   app.post('/api/automation/tasks/:id/delivery/retry',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||task.delivery.target||task.delivery.status!=='failed'||task.delivery.attemptedAt)throw new Conflict('只有确认从未发出迁移请求的交付才可直接重试');task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'重新排队未发送过的迁移准备；保留源站与评测记录');return task;});
   app.post('/api/automation/tasks/:id/delivery/verify',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery?.target||task.delivery.stopped===false||owns(id)||!['failed','completed'].includes(task.delivery.status))throw new Conflict('请先取得目标回执并等待本轮结束');task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'已安排恢复交付核验，保留原迁移目标');return task;});
-  app.post('/api/automation/tasks/:id/delivery/confirm-stopped',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||task.delivery.stopped!==false||!['failed','uncertain'].includes(task.delivery.status))throw new Conflict('只能确认已中断且停止状态不明的交付');task.delivery.stopped=true;store.put(task);store.event(id,'操作者已确认原交付执行停止，可恢复原目标核验');return task;});
+  app.post('/api/automation/tasks/:id/delivery/confirm-stopped',async(request)=>store.db.transaction(()=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||task.delivery.stopped!==false||!['failed','uncertain'].includes(task.delivery.status))throw new Conflict('只能确认已中断且停止状态不明的交付');checkConfirmation(request.body,task);task.delivery.stopped=true;store.put(task);store.event(id,'操作者已确认原交付执行停止，可恢复原目标核验');return task;}));
   app.post('/api/automation/tasks/:id/delivery/cancel',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||!['queued','running','verifying'].includes(task.delivery.status))throw new Conflict('当前没有可停止的交付');if(owns(id))cancel(id);else{task.delivery.status=task.delivery.attemptedAt&&!task.delivery.target?'uncertain':'failed';task.delivery.error='操作者已停止交付。源站及原报告保留。';store.put(task);}return task;});
   app.get('/api/v1/automation/reports/:id/delivery/artifacts/:file',async(request,reply)=>{const{id,file:name}=params.extend({file:z.string().regex(/^[a-f0-9-]{36}\.[a-z0-9]{1,8}$/)}).parse(request.params);const task=store.task(id),delivery=task?.delivery;const artifact=delivery?.artifacts?.find(f=>f.name===name);if(!artifact||!delivery)return reply.code(404).send({error:'交付证据不存在'});const bytes=readFileSync(resolve(directory,'automation-runs',id,'delivery',delivery.id,'evidence',name));if(createHash('sha256').update(bytes).digest('hex')!==artifact.sha256)throw new Conflict('交付证据校验失败');return reply.type(artifact.type).send(bytes);});
   app.post('/api/automation/tasks/:id/cancel',async(request)=>{
@@ -398,15 +410,16 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       store.put(task);store.event(id,'操作者明确开启自动优化；原站、输入、规则与初评报告保留。');
     });return taskSummary(task);
   });
-  app.post('/api/automation/tasks/:id/confirm-stopped',async(request)=>{
+  app.post('/api/automation/tasks/:id/confirm-stopped',async(request)=>store.db.transaction(()=>{
     const{id}=params.parse(request.params);const task=store.task(id);
     const queuedEvaluation=task?.kind==='evaluation'&&task.status==='following-up'&&task.followup?.state==='queued';
     if(!task||!['pending','interrupted'].includes(task.status)&&!queuedEvaluation||owns(id))throw new Conflict('只能确认服务中断且没有本机执行器运行的待跟进任务');
+    checkConfirmation(request.body,task);
     if(task.kind==='evaluation')store.evaluations.confirmStopped(id);
     task.stopped=true;if(task.followup)task.followup.executionStopped=true;
     if(queuedEvaluation){task.status='interrupted';task.followup!.state='interrupted';}
     store.put(task);store.event(id,'操作者已确认原执行停止，允许重新排队和跟进');return task;
-  });
+  }));
   app.post('/api/automation/tasks/:id/reassess',async request=>{
     const {id}=params.parse(request.params);
     return store.db.transaction(()=>{

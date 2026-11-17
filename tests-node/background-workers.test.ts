@@ -24,6 +24,8 @@ test('unexpected worker rejection preserves redacted diagnostics and leaves API 
     const login=await f.app.inject({method:'POST',url:'/api/login'}),headers={cookie:String(login.headers['set-cookie']).split(';')[0]};
     assert.equal((await f.app.inject({url:'/api/session',headers})).statusCode,200);
     assert.equal((await f.app.inject({url:'/api/health',headers})).json().workerReady,false);
+    const queue=await f.app.inject({url:'/api/automation/queue-diagnostics?summaryOnly=1',headers});
+    assert.equal(queue.statusCode,200);assert.equal(queue.json().workerReady,false);
     assert.equal(f.automationStore.tasks().length,0);
   }finally{await f.app.close();rmSync(directory,{recursive:true,force:true});}
 });

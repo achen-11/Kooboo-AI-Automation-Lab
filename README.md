@@ -1,5 +1,7 @@
 # Kooboo AI Automation Lab
 
+v0.7.15 在任务中心提供“队列诊断”，解释排队原因并链接阻塞任务。已核实原执行停止后，可逐项确认并释放未知占位，保留输入、站点、会话、证据和用量，不自动重发或恢复任务。本维护版沿用 v0.7.13 的建站流程；旧任务和新建“仅首页”资料建站／旧站升级不会接入开发中的负责人流程。升级与验证边界见 [v0.7.15 发布说明](docs/release-notes-0.7.15.md)。
+
 统一管理资源库、生成 / 评测队列、报告、评测规则与系统设置，沿用 CPR 界面。新功能使用 `frontend/src/views/automation/`、`server/automation/` 和 `shared/automation.ts`；原有评测记录、接口和执行器保留。
 
 v0.7.0 的新建 AI Site 模板任务支持生成前参考分析、冻结双端基线、版本化检查集和逐项独立复验。默认检查集包含区块检查与设计规范，已有安装可在规则页编辑检查集、点击“加入设计规范”并发布新版本；旧任务保留原绑定。经验使用与沉淀在新安装中默认关闭，升级保留已有设置。升级步骤及验收边界见 [v0.7.0 发布说明](docs/release-notes-0.7.0.md)、[v0.7.1 修复说明](docs/release-notes-0.7.1.md)、[v0.7.2 修复说明](docs/release-notes-0.7.2.md)、[v0.7.3 修复说明](docs/release-notes-0.7.3.md)、[v0.7.4 修复说明](docs/release-notes-0.7.4.md)、[v0.7.5 修复说明](docs/release-notes-0.7.5.md)、[v0.7.6 修复说明](docs/release-notes-0.7.6.md)、[v0.7.8 修复说明](docs/release-notes-0.7.8.md)、[v0.7.9 修复说明](docs/release-notes-0.7.9.md) 、[v0.7.10 修复说明](docs/release-notes-0.7.10.md)、[v0.7.12 修复说明](docs/release-notes-0.7.12.md) 与 [v0.7.13 修复说明](docs/release-notes-0.7.13.md)。

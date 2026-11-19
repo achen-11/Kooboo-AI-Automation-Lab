@@ -3,6 +3,7 @@ import type { Database } from '../runtime.js';
 import { UsageLedger, mergeUsage } from './billing.js';
 import { taskHeader as projectTask, type TaskHeader } from './task-index.js';
 import type { TaskSummary } from '../../shared/task-presentation.js';
+import { deriveHumanNotice } from '../../shared/human-diagnostics.js';
 import { Conflict } from '../lib/store.js';
 import type { AutomationRule, AutomationSettings, AutomationTask, AutomationNotice, FollowupSettings, TaskInterruption, GeneratedSite, InputVersion, Resource, ResourceInput, OptimizationPolicy } from '../../shared/automation.js';
 import { defaultOptimizationPolicy, effectiveReferenceUrl, effectiveTemplateUsageMode, supportsAutomaticOptimization } from '../../shared/automation.js';
@@ -356,8 +357,10 @@ export class AutomationStore {
     });
   }
   interrupt(task:AutomationTask,value:Omit<TaskInterruption,'time'|'stage'>) {
-    task.status='interrupted';task.interruption={...value,stage:task.stage||(task.kind==='generation'?'generation':'evaluation'),time:Date.now()};task.error=value.reason;
-    if(task.followup)task.followup.state='interrupted';this.put(task);this.event(task.id,'任务已中断：'+value.reason+'\n下一步：'+value.nextSteps.join('；'));this.notice(task,'任务已中断',task.resourceName+'：'+value.reason+'\n下一步：'+value.nextSteps.join('；'));
+    const stage=task.stage||(task.kind==='generation'?'generation':'evaluation');
+    const userSummary=deriveHumanNotice({reason:value.reason,error:task.error,stage,scenario:task.scenario,generatedSiteId:task.generatedSiteId,evidence:value.evidence,nextSteps:value.nextSteps,userSummary:value.userSummary,lastAction:task.followup?.lastAction});
+    task.status='interrupted';task.interruption={...value,userSummary,stage,time:Date.now()};task.error=value.reason;
+    if(task.followup)task.followup.state='interrupted';this.put(task);this.event(task.id,'任务已中断：'+value.reason+'\n下一步：'+value.nextSteps.join('；'));this.notice(task,'任务已中断',task.resourceName+'：'+userSummary.headline+'\n下一步：'+userSummary.userActions.join('；'));
   }
   ensureEvaluation(task:AutomationTask,settings:AutomationSettings) {
     return this.db.transaction(()=>{

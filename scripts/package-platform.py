@@ -13,7 +13,7 @@ import tempfile
 import zipfile
 
 
-SOURCE_DIRS = ('frontend', 'server', 'shared', 'sop', 'engines', 'scripts',
+SOURCE_DIRS = ('frontend', 'server', 'shared', 'sop', 'harness', 'engines', 'scripts',
                'tests-node', 'tests-python', 'docs', 'examples', 'deploy')
 SOURCE_FILES = ('package.json', 'package-lock.json', 'tsconfig.json',
                 'tsconfig.server.json', 'tsconfig.server.build.json',

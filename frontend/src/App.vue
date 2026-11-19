@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ClipboardCheck, SlidersHorizontal, FolderOpen, Settings2, ChevronLeft, RotateCw, BookOpen, ArrowUpCircle, ChartNoAxesCombined } from '@lucide/vue';
+import { ClipboardCheck, SlidersHorizontal, FolderOpen, Settings2, ChevronLeft, RotateCw, BookOpen, ArrowUpCircle, ChartNoAxesCombined, Compass } from '@lucide/vue';
 import { initialize, platform } from './api';
 import MessageHost from './components/MessageHost.vue';
 import SystemUpdateDialog from './components/SystemUpdateDialog.vue';
@@ -14,6 +14,7 @@ import SettingsView from './views/automation/SettingsView.vue';
 import RulesView from './views/automation/RulesView.vue';
 import ExperiencesView from './views/automation/ExperiencesView.vue';
 import DashboardView from './views/automation/DashboardView.vue';
+import HarnessView from './views/automation/HarnessView.vue';
 const experienceEditor=ref<{dirty:boolean}>();
 const experienceId=computed(()=>/^\/experiences\/([a-f0-9-]+|new)$/.exec(route.value)?.[1]);
 
@@ -27,6 +28,7 @@ const nav = [
   { path: '/dashboard', label: '耗时与成本', icon: ChartNoAxesCombined },
   {path:'/experiences',label:'经验库',icon:BookOpen},
   { path: '/rules', label: '评测规则', icon: SlidersHorizontal },
+  { path: '/harness', label: 'AI 蓝图', icon: Compass },
   { path: '/settings', label: '系统设置', icon: Settings2 },
 ];
 const detailId = computed(() => /^\/evaluations\/([a-f0-9-]+)$/.exec(route.value)?.[1]);
@@ -82,6 +84,7 @@ onUnmounted(() => { window.removeEventListener('hashchange', onHash); window.rem
         <AutomationTasks v-else-if="route.startsWith('/reports')" :key="route" reports />
         <ExperiencesView v-else-if="route.startsWith('/experiences')" ref="experienceEditor" :id="experienceId" />
         <RulesView v-else-if="route === '/rules'" ref="ruleEditor" />
+        <HarnessView v-else-if="route.startsWith('/harness')" />
         <SettingsView v-else-if="route.startsWith('/settings') || route === '/environments'" :key="route" ref="settingsEditor" />
         <TasksView v-else-if="route === '/legacy-evaluations' || route === '/evaluations'" />
         <AutomationTasks v-else />

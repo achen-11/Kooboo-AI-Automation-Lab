@@ -7,6 +7,8 @@ import { Conflict } from './store.js';
 import type { KoobooConnectionInput } from '../../shared/kooboo-auth.js';
 import { defaultAutomationSettings, defaultFollowupSettings, defaultOptimizationPolicy, type AutomationSettings } from '../../shared/automation.js';
 import { defaultUpdateRepository, type UpdateSource } from '../../shared/update.js';
+import { builtInHarnessSop, resolveHarnessSop } from '../automation/harness.js';
+import type { HarnessSopKey } from '../../shared/harness.js';
 
 export class Vault {
   private key: Buffer;
@@ -89,9 +91,40 @@ export class Vault {
     this.persist();
     return this.public().environments.find(env => env.id === connection.id)!;
   }
+  rawAutomation(): AutomationSettings | undefined {
+    const saved = this.get().automation;
+    return saved ? structuredClone(saved) : undefined;
+  }
   automation(): AutomationSettings {
     const saved = this.get().automation;
-    return structuredClone({ ...defaultAutomationSettings, ...saved, completeness:{...defaultAutomationSettings.completeness!,...saved?.completeness}, learning:{...defaultAutomationSettings.learning!,...saved?.learning}, optimization: {...defaultOptimizationPolicy,...saved?.optimization}, followup: { ...defaultFollowupSettings, ...saved?.followup }, prompts: { ...defaultAutomationSettings.prompts, ...saved?.prompts } });
+    const followup = { ...defaultFollowupSettings, ...saved?.followup };
+    followup.sop = resolveHarnessSop('followup.sop', saved?.followup?.sop).value;
+    const optimization = { ...defaultOptimizationPolicy, ...saved?.optimization };
+    optimization.sop = resolveHarnessSop('optimization.sop', saved?.optimization?.sop).value;
+    const completeness = { ...defaultAutomationSettings.completeness!, ...saved?.completeness };
+    completeness.sop = resolveHarnessSop('completeness.sop', saved?.completeness?.sop).value;
+    const learning = { ...defaultAutomationSettings.learning!, ...saved?.learning };
+    learning.selectionSop = resolveHarnessSop('learning.selectionSop', saved?.learning?.selectionSop).value;
+    learning.reflectionSop = resolveHarnessSop('learning.reflectionSop', saved?.learning?.reflectionSop).value;
+    return structuredClone({
+      ...defaultAutomationSettings,
+      ...saved,
+      completeness,
+      learning,
+      optimization,
+      followup,
+      prompts: { ...defaultAutomationSettings.prompts, ...saved?.prompts },
+    });
+  }
+  resetHarnessSop(key: Exclude<HarnessSopKey, 'delivery.sop'> | 'all'): AutomationSettings {
+    this.refresh();
+    const current = this.automation();
+    if (key === 'all' || key === 'followup.sop') current.followup.sop = builtInHarnessSop('followup.sop');
+    if (key === 'all' || key === 'optimization.sop') current.optimization!.sop = builtInHarnessSop('optimization.sop');
+    if (key === 'all' || key === 'completeness.sop') current.completeness!.sop = builtInHarnessSop('completeness.sop');
+    if (key === 'all' || key === 'learning.selectionSop') current.learning!.selectionSop = builtInHarnessSop('learning.selectionSop');
+    if (key === 'all' || key === 'learning.reflectionSop') current.learning!.reflectionSop = builtInHarnessSop('learning.reflectionSop');
+    return this.updateAutomation(current);
   }
   updateSource(): UpdateSource { return structuredClone(this.get().updateSource || { repository: defaultUpdateRepository, token: '' }); }
   setUpdateSource(input: UpdateSource & { clearToken: boolean }) {

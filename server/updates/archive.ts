@@ -4,7 +4,7 @@ import { updateProduct, type UpdateManifest } from '../../shared/update.js';
 
 export const sha256 = (bytes: Uint8Array | string) => createHash('sha256').update(bytes).digest('hex');
 const prefix = 'Kooboo-AI-Automation-Lab/';
-const sourceDirs = new Set(['frontend', 'server', 'shared', 'sop', 'engines', 'scripts', 'tests-node', 'tests-python', 'docs', 'examples', 'deploy', 'dist', 'dist-server', '.kooboo-ai']);
+const sourceDirs = new Set(['frontend', 'server', 'shared', 'sop', 'harness', 'engines', 'scripts', 'tests-node', 'tests-python', 'docs', 'examples', 'deploy', 'dist', 'dist-server', '.kooboo-ai']);
 const rootFiles = new Set(['package.json', 'package-lock.json', 'tsconfig.json', 'tsconfig.server.json', 'tsconfig.server.build.json', 'tsconfig.web.json', 'README.md', 'AGENTS.md', '.gitignore', 'READ_FIRST.md', 'DELIVERY_MANIFEST.json']);
 const crcTable = Array.from({ length: 256 }, (_, value) => { for (let i = 0; i < 8; i++) value = value & 1 ? 0xedb88320 ^ (value >>> 1) : value >>> 1; return value >>> 0; });
 function crc32(data: Buffer) { let crc = 0xffffffff; for (const byte of data) crc = crcTable[(crc ^ byte) & 255] ^ (crc >>> 8); return (crc ^ 0xffffffff) >>> 0; }

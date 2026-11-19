@@ -26,7 +26,16 @@ export function templateReviewBatches(task:AutomationTask,manifest?:RequirementM
   return batches;
 }
 
-export function rawBatchReport(report:AutomationReport){return {summary:report.summary,assessments:report.assessments,issues:report.issues,coverage:report.coverage,...(report.rechecks?{rechecks:report.rechecks}:{}),...(report.completeness?{completeness:report.completeness.checks}:{})};}
+const VERDICT_RANK:Record<NonNullable<AutomationReport['humanSummary']>['verdict'],number>={blocked:3,'needs-fixes':2,'incomplete-check':1,ready:0};
+function mergeHumanSummaries(reports:AutomationReport[]):AutomationReport['humanSummary']|undefined{
+  const summaries=reports.map(r=>r.humanSummary).filter((s):s is NonNullable<AutomationReport['humanSummary']>=>Boolean(s?.headline?.trim()));
+  if(!summaries.length)return undefined;
+  const best=[...summaries].sort((a,b)=>VERDICT_RANK[b.verdict]-VERDICT_RANK[a.verdict])[0];
+  const dedupe=(items:string[],max:number)=>[...new Set(items.map(s=>s.trim()).filter(Boolean))].slice(0,max);
+  const notes=dedupe(summaries.map(s=>s.unverifiedNote||''),3);
+  return {verdict:best.verdict,headline:best.headline,highlights:dedupe(summaries.flatMap(s=>s.highlights||[]),5),topFixes:dedupe(summaries.flatMap(s=>s.topFixes||[]),5),...(notes.length?{unverifiedNote:notes.join('；').slice(0,480)}:{})};
+}
+export function rawBatchReport(report:AutomationReport){return {summary:report.summary,assessments:report.assessments,issues:report.issues,coverage:report.coverage,...(report.humanSummary?{humanSummary:report.humanSummary}:{}),...(report.rechecks?{rechecks:report.rechecks}:{}),...(report.completeness?{completeness:report.completeness.checks}:{})};}
 export function mergeTemplateReports(reports:AutomationReport[],manifest?:RequirementManifest){
   const unique=(values:string[])=>[...new Set(values)];
   const grouped=new Map<string,RequirementCheck[]>();for(const check of reports.flatMap(report=>report.completeness?.checks||[])){const values=grouped.get(check.id)||[];values.push(check);grouped.set(check.id,values);}
@@ -36,7 +45,8 @@ export function mergeTemplateReports(reports:AutomationReport[],manifest?:Requir
   });
   const rechecks=reports.flatMap(report=>report.rechecks||[]);
   if(new Set(rechecks.map(c=>c.id)).size!==rechecks.length)throw new Error('问题复验ID不能在多个批次重复提交');
-  return {summary:reports.map(report=>report.summary).join('\n\n').slice(0,20000),assessments:reports.flatMap(report=>report.assessments),issues:[...new Map(reports.flatMap(report=>report.issues).map(issue=>[JSON.stringify(issue),issue])).values()],coverage:{verified:unique(reports.flatMap(report=>report.coverage.verified)),unverified:unique(reports.flatMap(report=>report.coverage.unverified)),outOfScope:unique(reports.flatMap(report=>report.coverage.outOfScope))},...(rechecks.length?{rechecks}:{}),...(manifest?{completeness:checks}:{})};
+  const humanSummary=mergeHumanSummaries(reports);
+  return {summary:reports.map(report=>report.summary).join('\n\n').slice(0,20000),assessments:reports.flatMap(report=>report.assessments),issues:[...new Map(reports.flatMap(report=>report.issues).map(issue=>[JSON.stringify(issue),issue])).values()],coverage:{verified:unique(reports.flatMap(report=>report.coverage.verified)),unverified:unique(reports.flatMap(report=>report.coverage.unverified)),outOfScope:unique(reports.flatMap(report=>report.coverage.outOfScope))},...(humanSummary?{humanSummary}:{}),...(rechecks.length?{rechecks}:{}),...(manifest?{completeness:checks}:{})};
 }
 
 /** Only host-validated batch results are checkpointed. Any change of the frozen contract invalidates them. */

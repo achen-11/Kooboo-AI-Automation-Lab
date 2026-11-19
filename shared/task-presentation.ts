@@ -1,5 +1,6 @@
 import type { AutomationReport, AutomationTask, TaskStatus, OptimizationPolicy, OptimizationRun } from './automation.js';
 import type { ItemDisposition } from './dispositions.js';
+import { deriveHumanNotice, type DiagnosticCategory, type HumanNotice } from './human-diagnostics.js';
 export interface OptimizationSummary { state: OptimizationRun['state']; policy: Omit<OptimizationPolicy,'sop'>; round: number; activeTaskId: string; reportId: string | null; reason: string; nextStep: string }
 
 export type TaskTab = 'overview' | 'report' | 'execution' | 'usage' | 'input' | 'delivery';
@@ -26,6 +27,8 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   /** Compact list results remain accessible when a later task changes the site. */
   reportCurrent?: boolean;
   attention: string;
+  attentionCategory?: DiagnosticCategory;
+  humanAttention?: HumanNotice;
   nextStep: string;
   canAdjustSiteNames?: boolean;
   deliveryStatus?: string;
@@ -53,13 +56,29 @@ export function brief(text: string, max = 160): string {
 }
 export function taskSummary(task: AutomationTask): TaskSummary {
   const { id, kind, resourceId, resourceName, scenario, scope, environmentId, generatedSiteId, parentId, evaluationTaskId, stage, status, stopped, createdAt, updatedAt, siteUrl, usage } = task;
+  const needsAttention = ['pending', 'failed', 'interrupted'].includes(status);
+  const adjustNames = canAdjustTaskSiteNames(task);
+  const humanAttention = needsAttention
+    ? deriveHumanNotice({
+        reason: task.interruption?.reason,
+        error: task.error,
+        stage: task.interruption?.stage || stage,
+        scenario,
+        generatedSiteId,
+        evidence: task.interruption?.evidence,
+        nextSteps: task.interruption?.nextSteps,
+        userSummary: task.interruption?.userSummary,
+        lastAction: task.followup?.lastAction,
+      })
+    : undefined;
   return { id, kind, resourceId, resourceName, scenario, scope, environmentId, generatedSiteId, parentId, evaluationTaskId, stage, status, stopped, createdAt, updatedAt, siteUrl, usage,
     optimization: task.optimization ? {state:task.optimization.state,policy:{targetScore:task.optimization.policy.targetScore,maxRounds:task.optimization.policy.maxRounds,maxCostCny:task.optimization.policy.maxCostCny},round:task.optimization.rounds.at(-1)!.number,activeTaskId:task.optimization.activeTaskId,reportId:task.optimization.reportId,reason:brief(task.optimization.reason),nextStep:brief(task.optimization.nextSteps[0]||'')} : undefined,
     optimizationRootId: task.optimizationRootId, optimizationRound: task.optimizationRound,completionFirst:!!task.autonomy,hardMaxRounds:task.autonomy?.policy.hardMaxRounds,
     report: task.report ? { quality: task.report.quality, scores: task.report.scores, issueCount: task.report.issues.length, unverifiedCount: task.report.coverage.unverified.length } : null,
-    attention: ['pending', 'failed', 'interrupted'].includes(status) ? brief(task.interruption?.reason || task.error || '当前阶段未完成，请查看执行记录。') : '',
-    nextStep: canAdjustTaskSiteNames(task) ? '自动调整被占用的站点名称或子域名后继续原任务。' : brief(task.interruption?.nextSteps[0] || ''),
-    canAdjustSiteNames: canAdjustTaskSiteNames(task), deliveryStatus: task.delivery?.status, delivery: task.delivery ? { status: task.delivery.status } : undefined };
+    attention: humanAttention ? brief(humanAttention.headline) : '',
+    ...(humanAttention ? { attentionCategory: humanAttention.category, humanAttention } : {}),
+    nextStep: adjustNames ? '自动调整被占用的站点名称或子域名后继续原任务。' : brief(humanAttention?.userActions[0] || task.interruption?.nextSteps[0] || ''),
+    canAdjustSiteNames: adjustNames, deliveryStatus: task.delivery?.status, delivery: task.delivery ? { status: task.delivery.status } : undefined };
 }
 export function initialTaskTab(search: string): TaskTab {
   const value = new URLSearchParams(search).get('tab');

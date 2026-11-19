@@ -22,8 +22,79 @@ import { generationSourceEvidence, templateGenerationSources } from './generatio
 import { GenerationDeliveryStore, isPreSendBridgeRejection } from './generation-delivery.js';
 import { assertSiteNaming, availableSiteNames } from './site-naming.js';
 import { prepareReferenceMedia } from './generation-reference-media.js';
+import { deriveHumanNotice } from '../../shared/human-diagnostics.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
+
+function zeroPageTransferError(contentUrl:string,siteId:string,sandboxName?:string){
+  const techReason=sandboxName
+    ?`旧内容站 Sandbox 克隆完成但导入 0 页（${contentUrl} -> ${sandboxName}），已重试后仍无法获取源站页面`
+    :`内容站克隆完成但导入 0 页（${contentUrl}），已重试后仍无法获取源站页面`;
+  const nextSteps=[
+    `在浏览器打开 ${contentUrl}，确认原网站可公开访问且未被验证码或登录拦截。`,
+    `如原站开启了防抓取限制，可在 Kooboo ${sandboxName?'源站 Sandbox':'目标站'}手动导入页面后，回到此处点击「恢复执行」。`,
+    `如果原网址无效或已更换，请调整输入中的源站地址或改用上传资料重新生成。`,
+  ];
+  const userSummary=deriveHumanNotice({
+    reason:`pages=0 ${sandboxName?'sourceSandbox':'transferTaskId'} ${techReason}`,
+    error:techReason,
+    stage:'generation',
+    generatedSiteId:siteId,
+    nextSteps,
+  });
+  return new FollowupRuntimeError(techReason,nextSteps,userSummary);
+}
+
+async function waitForTransferPages(params:{
+  request:(path:string,body?:unknown,siteId?:string)=>Promise<any>;
+  siteId:string;
+  transferTaskId:string;
+  signal:AbortSignal;
+  allowInitialCheck:boolean;
+  pollMs?:number;
+  maxEmptyPolls?:number;
+}):Promise<{pages:number;done:boolean}>{
+  const {request,siteId,transferTaskId,signal,allowInitialCheck}=params;
+  const pollMs=params.pollMs??2000;
+  const emptyDoneDelayMs=Math.min(pollMs,500);
+  const maxEmptyPolls=params.maxEmptyPolls??12;
+  if(allowInitialCheck){
+    const existing=await request('Transfer/GetTaskStatus',undefined,siteId);
+    if(Number(existing?.pages||0)>0&&existing?.done!==false){
+      return {pages:Number(existing.pages),done:true};
+    }
+  }
+  let previous=-1,stable=0,emptyPolls=0,emptyDoneChecks=0;
+  while(stable<2){
+    signal.throwIfAborted();
+    const status=await request(`Transfer/GetStatus?id=${encodeURIComponent(transferTaskId)}`,undefined,siteId);
+    const pages=Array.isArray(status)?status:[];
+    if(pages.length>0){
+      const done=pages.every((p:any)=>p?.done===true);
+      stable=done&&previous===pages.length?stable+1:0;
+      previous=pages.length;
+      emptyPolls=0;
+      emptyDoneChecks=0;
+      if(stable<2)await delay(pollMs,signal);
+      continue;
+    }
+    emptyPolls++;
+    const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
+    if(Number(summary?.pages||0)>0&&summary?.done!==false){
+      return {pages:Number(summary.pages),done:true};
+    }
+    if(summary?.done===true){
+      emptyDoneChecks++;
+      if(emptyDoneChecks>=2)return {pages:0,done:true};
+      await delay(emptyDoneDelayMs,signal);
+      continue;
+    }
+    if(emptyPolls>=maxEmptyPolls)return {pages:0,done:Boolean(summary?.done)};
+    await delay(pollMs,signal);
+  }
+  const status=await request('Transfer/GetTaskStatus',undefined,siteId);
+  return {pages:Number(status?.pages||0),done:status?.done!==false};
+}
 
 function isValidHttpUrl(value:string){
   try{const url=new URL(value);return /^https?:$/i.test(url.protocol)&&Boolean(url.hostname);}catch{return false;}
@@ -83,6 +154,7 @@ function buildTemplateExecutionGuidance(task:AutomationTask,input:InputVersion,t
 
 /** Existing Kooboo APIs + the existing frontend stream/function loop. No server generation API is introduced. */
 export async function executeGeneration(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,openSession:typeof generationSession=generationSession){
+  const hadTransferTaskBeforeRun=Boolean(task.generation?.transferTaskId);
   const versionInput=store.version(task.versionId);
   if(versionInput?.referenceTemplateId)await resolveTaskReferenceTemplate(task,versionInput,store,vault,signal);
   const templateBaseline=await ensureTemplateAnalysis(task,store,vault,directory,signal);
@@ -152,6 +224,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   const directTemplate=templateRef?.mode==='direct-template';
   if(task.scenario==='upgrade'&&directTemplate&&!task.generation.sourceSandbox?.complete&&!task.generation.prepared){
     let sourceSandbox=task.generation.sourceSandbox;
+    const hadSandboxTransfer=Boolean(sourceSandbox?.siteId&&sourceSandbox.transferTaskId);
     if(!sourceSandbox?.siteId||!sourceSandbox.transferTaskId){
       const transferred=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
       const sandboxSiteId=siteIdentity(transferred),sandbox=String(transferred?.sandbox||'').trim(),transferTaskId=String(transferred?.taskId||'').trim(),previewUrl=String(transferred?.previewUrl||'').trim();
@@ -161,31 +234,50 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       task.generation.sourceSandbox=sourceSandbox;store.put(task);
       store.event(task.id,`已创建只读源站 Sandbox ${sandbox}（${sandboxSiteId}），正在同步旧内容站`);
     }
-    let previous=-1,stable=0;
-    while(stable<2){
-      signal.throwIfAborted();
-      const status=await request(`Transfer/GetStatus?id=${encodeURIComponent(sourceSandbox.transferTaskId!)}`,undefined,sourceSandbox.siteId);
-      const pages=Array.isArray(status)?status:[];const done=pages.length>0&&pages.every((p:any)=>p.done===true);
-      stable=done&&previous===pages.length?stable+1:0;previous=pages.length;
-      if(stable<2)await delay(2000,signal);
+    let transfer=await waitForTransferPages({request,siteId:sourceSandbox.siteId,transferTaskId:sourceSandbox.transferTaskId!,signal,allowInitialCheck:hadSandboxTransfer});
+    if(!transfer.pages&&!task.generation.transferFallbackAttempted){
+      task.generation.transferFallbackAttempted=true;store.put(task);
+      store.event(task.id,'旧内容站 Sandbox 克隆完成但导入 0 页，尝试重建 1 次只读源站抓取');
+      try{
+        const retried=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
+        const sandboxSiteId=siteIdentity(retried),sandbox=String(retried?.sandbox||'').trim(),transferTaskId=String(retried?.taskId||'').trim(),previewUrl=String(retried?.previewUrl||'').trim();
+        if(sandbox&&/^[a-f0-9-]{36}$/i.test(sandboxSiteId)&&!/^00000000-0000-0000-0000-000000000000$/i.test(sandboxSiteId)&&transferTaskId){
+          sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
+          task.generation.sourceSandbox=sourceSandbox;store.put(task);
+          transfer=await waitForTransferPages({request,siteId:sandboxSiteId,transferTaskId,signal,allowInitialCheck:false});
+        }
+      }catch(err:any){store.event(task.id,`重建只读源站抓取失败：${err?.message||'请求异常'}`);}
     }
-    const status=await request('Transfer/GetTaskStatus',undefined,sourceSandbox.siteId);
-    if(!status?.pages)throw new Pending('旧内容站 Sandbox 克隆未确认有页面导入，需检查原站与源站 Sandbox');
+    if(!transfer.pages)throw zeroPageTransferError(input.contentUrl,site.id,sourceSandbox.sandbox);
     sourceSandbox.complete=true;task.generation.sourceSandbox=sourceSandbox;task.generation.transferComplete=true;store.put(task);
     store.event(task.id,`旧内容站已克隆至源站 Sandbox ${sourceSandbox.sandbox}（目标站保留原生 Kooboo 模板）`);
   }else if(task.scenario==='upgrade'&&!directTemplate&&!task.generation.transferComplete&&!task.generation.prepared){
       const siteId=site.siteId;
-      const taskId=task.generation.transferTaskId;if(!taskId)throw new Pending('内容站克隆未返回任务标识，请检查实际克隆状态');
-      let previous=-1,stable=0;
-      while(stable<2){
-        signal.throwIfAborted();
-        const status=await request(`Transfer/GetStatus?id=${encodeURIComponent(taskId)}`,undefined,siteId);
-        const pages=Array.isArray(status)?status:[];const done=pages.length>0&&pages.every((p:any)=>p.done===true);
-        stable=done&&previous===pages.length?stable+1:0;previous=pages.length;await delay(2000,signal);
+      const taskId=task.generation.transferTaskId;
+      if(!taskId){
+        const existing=await request('Transfer/GetTaskStatus',undefined,siteId);
+        if(!existing?.pages)throw new Pending('内容站克隆未返回任务标识，请检查实际克隆状态');
+        task.generation.transferComplete=true;store.put(task);
+        store.event(task.id,'已确认目标站存在导入页面，继续准备参考站');
+      }else{
+        let transfer=await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:hadTransferTaskBeforeRun});
+        if(!transfer.pages&&!task.generation.transferFallbackAttempted){
+          task.generation.transferFallbackAttempted=true;store.put(task);
+          store.event(task.id,'内容站克隆完成但导入 0 页，尝试通过 Transfer/Single 降级抓取首页 1 次');
+          try{
+            const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
+            if(single?.taskId){
+              transfer=await waitForTransferPages({request,siteId,transferTaskId:String(single.taskId),signal,allowInitialCheck:false});
+            }else{
+              const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
+              transfer={pages:Number(summary?.pages||0),done:summary?.done!==false};
+            }
+          }catch(err:any){store.event(task.id,`单页降级抓取失败：${err?.message||'请求异常'}`);}
+        }
+        if(!transfer.pages)throw zeroPageTransferError(input.contentUrl,site.id);
+        task.generation.transferComplete=true;store.put(task);
+        store.event(task.id,'内容站克隆完成；参考站由 Kooboo AI 使用 Sandbox tools 准备');
       }
-      const status=await request('Transfer/GetTaskStatus',undefined,siteId);if(!status?.pages)throw new Pending('内容站克隆未确认有页面导入，需检查原站与目标站');
-      task.generation.transferComplete=true;store.put(task);
-      store.event(task.id,'内容站克隆完成；参考站由 Kooboo AI 使用 Sandbox tools 准备');
   }
   if(templateRef?.mode==='reference-sandbox'&&(!task.generation.referenceTemplateSandbox||task.generation.referenceTemplateSandbox.templateId!==templateRef.templateId)){
     const imported=await request('AISandbox/ImportFromTemplate',{templateId:templateRef.templateId,templateName:templateRef.templateName||templateRef.templateId},site.siteId);

@@ -12,10 +12,17 @@ import EnvironmentSettings from '../SettingsView.vue';
 import { api, message, platform } from '../../api';
 import { workspace, refresh } from './common';
 import { defaultAutomationSettings, defaultOptimizationPolicy, scenarios, type AutomationSettings } from '../../../../shared/automation';
+import type { HarnessCatalog, HarnessSettingBinding, HarnessSopKey } from '../../../../shared/harness';
 import type { PublicSettings } from '../../../../shared/types';
 
 const form = ref<AutomationSettings>(structuredClone(defaultAutomationSettings));
-const error = ref(''), busy = ref(false), saved = ref('');
+const error = ref(''), busy = ref(false), resetBusy = ref(false), saved = ref('');
+const harnessBindings = ref<HarnessSettingBinding[]>([]);
+const bindingByKey = computed(() => {
+  const map = new Map<HarnessSopKey, HarnessSettingBinding>();
+  for (const item of harnessBindings.value) map.set(item.key, item);
+  return map;
+});
 const tab = ref('runtime'), scenario = ref<keyof typeof scenarios>('materials');
 const evaluationModel = ref({ name: '', endpoint: '', apiKey: '' });
 const savedModel = ref('');
@@ -30,6 +37,13 @@ const apiExample = `GET ${window.location.origin}/api/v1/automation/reports?exte
 const importRequestExample = `POST ${window.location.origin}/api/v1/resources/import\nAuthorization: Bearer <资源导入令牌>\nContent-Type: application/json`;
 const importExample = JSON.stringify([{ name: '资源名称', scenario: 'migration', description: '资料说明', contentUrl: 'https://example.com', referenceUrl: '', externalSource: 'your-admin', externalId: 'record-001', siteName: 'salon', subDomain: 'salon_public', rootDomain: '-shawnchen-hk.kooboo.io', files: [] }], null, 2);
 
+async function loadHarnessBindings() {
+  try {
+    const catalog = await api<HarnessCatalog>('/automation/harness');
+    harnessBindings.value = catalog.bindings || [];
+  } catch { /* non-blocking if backend has not reloaded */ }
+}
+
 async function load() {
   await refresh();
   if (workspace.error) throw new Error(workspace.error);
@@ -42,6 +56,7 @@ async function load() {
     apiKey: '',
   };
   savedModel.value = JSON.stringify(modelFields());
+  void loadHarnessBindings();
 }
 onMounted(() => { void load().catch(reason => { error.value = message(reason); }); });
 
@@ -51,9 +66,30 @@ async function save() {
     form.value = await api<AutomationSettings>('/automation/settings', { method: 'PUT', body: JSON.stringify(form.value) });
     saved.value = JSON.stringify(form.value);
     await refresh();
+    await loadHarnessBindings();
     notify.success('设置已保存');
   } catch (reason) { error.value = message(reason); }
   finally { busy.value = false; }
+}
+
+async function resetSop(key: Exclude<HarnessSopKey, 'delivery.sop'>) {
+  resetBusy.value = true; error.value = '';
+  try {
+    const result = await api<{ settings: AutomationSettings; bindings: HarnessSettingBinding[] }>('/automation/harness/reset', {
+      method: 'POST',
+      body: JSON.stringify({ key }),
+    });
+    harnessBindings.value = result.bindings;
+    if (key === 'followup.sop') form.value.followup.sop = result.settings.followup.sop;
+    else if (key === 'optimization.sop' && form.value.optimization && result.settings.optimization) form.value.optimization.sop = result.settings.optimization.sop;
+    else if (key === 'completeness.sop' && form.value.completeness && result.settings.completeness) form.value.completeness.sop = result.settings.completeness.sop;
+    else if (key === 'learning.selectionSop' && form.value.learning && result.settings.learning) form.value.learning.selectionSop = result.settings.learning.selectionSop;
+    else if (key === 'learning.reflectionSop' && form.value.learning && result.settings.learning) form.value.learning.reflectionSop = result.settings.learning.reflectionSop;
+    await refresh();
+    saved.value = JSON.stringify(form.value);
+    notify.success('已恢复为新版内置规则');
+  } catch (reason) { error.value = message(reason); }
+  finally { resetBusy.value = false; }
 }
 
 async function saveModel() {
@@ -110,10 +146,10 @@ async function copy(text: string) {
 
 <template><header class="page-header"><div><h1>系统设置</h1></div><div class="settings-header-actions"><button class="button secondary" @click="openUpdatePanel">检查更新</button><button v-if="['runtime','prompts','followup','learning','completeness'].includes(tab)" class="button primary" :disabled="busy||!settingsDirty" @click="save"><LoaderCircle v-if="busy" class="spin" :size="16" /><Save v-else :size="16" />保存设置</button></div></header><div class="segmented view-tabs"><button v-for="item in [{id:'runtime',label:'任务执行'},{id:'environment',label:'Kooboo 连接'},{id:'model',label:'评测模型'},{id:'followup',label:'AI 跟进'},{id:'learning',label:'经验学习'},{id:'completeness',label:'全站交付'},{id:'billing',label:'费用'},{id:'prompts',label:'场景提示词'},{id:'api',label:'外部 API'}]" :key="item.id" :class="{selected:tab===item.id}" @click="tab=item.id">{{item.label}}</button></div><p v-if="error" class="alert error" role="alert">{{error}}</p>
 <form v-if="tab==='runtime'" @submit.prevent="save"><section class="panel settings-panel"><h2>自动执行队列</h2><div class="choice-grid"><label class="choice-card" :class="{chosen:form.enabled}"><input v-model="form.enabled" type="radio" :value="true" /><span><strong>持续执行</strong><small>服务自动补入排队任务</small></span></label><label class="choice-card" :class="{chosen:!form.enabled}"><input v-model="form.enabled" type="radio" :value="false" /><span><strong>暂停队列</strong><small>已开始的任务继续，保留排队任务</small></span></label></div><label class="check-label"><input v-model="form.autoEvaluate" type="checkbox" />生成完成后自动创建独立评测任务</label><div class="form-grid three-columns"><label class="field"><span>生成并发数</span><input v-model.number="form.generationConcurrency" class="input" type="number" min="1" max="10" required /></label><label class="field"><span>评测并发数</span><input v-model.number="form.evaluationConcurrency" class="input" type="number" min="1" max="5" required /></label><label class="field"><span>单任务时限（分钟）</span><input v-model.number="form.timeoutMinutes" class="input" type="number" min="1" max="240" required /></label></div></section><section class="panel settings-panel"><h2>本机运行</h2><div class="resource-meta"><div><span>API 与队列服务</span><p>{{platform.online?'已连接':'未连接'}}</p></div><div><span>浏览器运行环境</span><p>{{platform.browserReady?'已安装':'待安装'}}</p></div><div><span>任务数据</span><p>SQLite 持久化</p></div></div><p class="text-muted">生成执行由服务保持 Kooboo AI Chat 页面运行；关闭管理页面不影响队列。执行异常会交给内置 AI 查证和跟进；确实无法继续时提供中断原因和下一步。</p><Disclosure label="高级设置"><label class="check-label"><input v-model="form.showExecutionBrowser" type="checkbox" />显示执行浏览器窗口</label><p class="text-muted">用于生成和 AI 跟进排障，仅影响新启动的执行会话。</p></Disclosure></section></form>
-<section v-if="tab==='runtime'&&form.optimization" class="panel settings-panel"><h2>站点自动优化默认值</h2><div class="form-grid three-columns"><label class="field"><span>双端目标分数</span><input v-model.number="form.optimization.targetScore" class="input" type="number" min="1" max="100" required /></label><label class="field"><span>最多修复轮数</span><input v-model.number="form.optimization.maxRounds" class="input" type="number" min="1" max="10" required /></label><label class="field"><span>费用上限（元，可选）</span><input :value="form.optimization.maxCostCny??''" class="input" type="number" min="0.0001" step="any" placeholder="不设置" @input="form.optimization.maxCostCny=($event.target as HTMLInputElement).value===''?null:Number(($event.target as HTMLInputElement).value)" /></label></div><Disclosure label="优化 Skill / SOP"><textarea v-model="form.optimization.sop" class="input code-editor" rows="12" /></Disclosure><p class="text-muted">仅用于明确开启自动优化的新任务。费用上限在模型阶段之间检查；已开始的调用可能继续产生费用。</p></section>
-<section v-if="tab==='followup'" class="panel settings-panel"><h2>流程跟进 Agent</h2><label class="check-label"><input v-model="form.followup.enabled" type="checkbox" />自动处理准备、生成、交接和评测中的异常</label><div class="form-grid"><label class="field"><span>跟进并发数</span><input v-model.number="form.followup.concurrency" class="input" type="number" min="1" max="3" /></label><label class="field"><span>最多跟进次数</span><input v-model.number="form.followup.maxAttempts" class="input" type="number" min="1" max="20" /></label><label class="field"><span>跟进累计执行时限（分钟）</span><input v-model.number="form.followup.maxMinutes" class="input" type="number" min="1" max="120" /></label><label class="field"><span>跟进累计 token 预算</span><input v-model.number="form.followup.maxTokens" class="input" type="number" min="1000" max="1000000000" /></label><label class="field"><span>最多模型请求次数</span><input v-model.number="form.followup.maxRequests" class="input" type="number" min="1" max="1000" /></label></div><label class="field"><span>跟进 Skill / SOP</span><textarea v-model="form.followup.sop" class="input code-editor" rows="18" /></label><p class="text-muted">使用已配置的评测模型，以独立 Codex 会话跟进。仅累计跟进 Agent 实际执行的时间，排队、定时等待、Kooboo 生成和独立评测均不计入。首次介入时固定本任务的 SOP 与预算；修改用于后续任务，点击恢复会采用新设置，但不清零累计用量、次数或活动时间。每次上游调用前检查额度并限制输出；未知用量保留预占。预占是接入估算，不能保证第三方计费 token 绝对不超额。系统保留每次决策和工具结果。</p></section>
-<CompletenessSettings v-if="tab==='completeness'&&form.completeness" v-model="form.completeness" />
-<LearningSettings v-if="tab==='learning'&&form.learning" v-model="form.learning" />
+<section v-if="tab==='runtime'&&form.optimization" class="panel settings-panel"><h2>站点自动优化默认值</h2><div class="form-grid three-columns"><label class="field"><span>双端目标分数</span><input v-model.number="form.optimization.targetScore" class="input" type="number" min="1" max="100" required /></label><label class="field"><span>最多修复轮数</span><input v-model.number="form.optimization.maxRounds" class="input" type="number" min="1" max="10" required /></label><label class="field"><span>费用上限（元，可选）</span><input :value="form.optimization.maxCostCny??''" class="input" type="number" min="0.0001" step="any" placeholder="不设置" @input="form.optimization.maxCostCny=($event.target as HTMLInputElement).value===''?null:Number(($event.target as HTMLInputElement).value)" /></label></div><Disclosure label="优化 Skill / SOP"><div v-if="bindingByKey.get('optimization.sop')" class="harness-sop-bar"><span class="status-badge" :class="bindingByKey.get('optimization.sop')?.customized ? 'pending' : 'completed'">{{ bindingByKey.get('optimization.sop')?.customized ? '当前使用自定义规则' : bindingByKey.get('optimization.sop')?.migratedLegacy ? '已自动同步至新版内置' : '使用新版内置 Harness' }}</span><div class="harness-sop-actions"><a class="text-action" href="#/harness">查看 AI 蓝图</a><button v-if="bindingByKey.get('optimization.sop')?.customized" type="button" class="text-action" :disabled="resetBusy" @click="resetSop('optimization.sop')">恢复为新版内置</button></div></div><textarea v-model="form.optimization.sop" class="input code-editor" rows="12" /></Disclosure><p class="text-muted">仅用于明确开启自动优化的新任务。费用上限在模型阶段之间检查；已开始的调用可能继续产生费用。</p></section>
+<section v-if="tab==='followup'" class="panel settings-panel"><h2>流程跟进 Agent</h2><label class="check-label"><input v-model="form.followup.enabled" type="checkbox" />自动处理准备、生成、交接和评测中的异常</label><div class="form-grid"><label class="field"><span>跟进并发数</span><input v-model.number="form.followup.concurrency" class="input" type="number" min="1" max="3" /></label><label class="field"><span>最多跟进次数</span><input v-model.number="form.followup.maxAttempts" class="input" type="number" min="1" max="20" /></label><label class="field"><span>跟进累计执行时限（分钟）</span><input v-model.number="form.followup.maxMinutes" class="input" type="number" min="1" max="120" /></label><label class="field"><span>跟进累计 token 预算</span><input v-model.number="form.followup.maxTokens" class="input" type="number" min="1000" max="1000000000" /></label><label class="field"><span>最多模型请求次数</span><input v-model.number="form.followup.maxRequests" class="input" type="number" min="1" max="1000" /></label></div><div class="field"><span>跟进 Skill / SOP</span><div v-if="bindingByKey.get('followup.sop')" class="harness-sop-bar"><span class="status-badge" :class="bindingByKey.get('followup.sop')?.customized ? 'pending' : 'completed'">{{ bindingByKey.get('followup.sop')?.customized ? '当前使用自定义规则' : bindingByKey.get('followup.sop')?.migratedLegacy ? '已自动同步至新版内置' : '使用新版内置 Harness' }}</span><div class="harness-sop-actions"><a class="text-action" href="#/harness">查看 AI 蓝图</a><button v-if="bindingByKey.get('followup.sop')?.customized" type="button" class="text-action" :disabled="resetBusy" @click="resetSop('followup.sop')">恢复为新版内置</button></div></div><textarea v-model="form.followup.sop" class="input code-editor" rows="18" /></div><p class="text-muted">使用已配置的评测模型，以独立 Codex 会话跟进。仅累计跟进 Agent 实际执行的时间，排队、定时等待、Kooboo 生成和独立评测均不计入。首次介入时固定本任务的 SOP 与预算；修改用于后续任务，点击恢复会采用新设置，但不清零累计用量、次数或活动时间。每次上游调用前检查额度并限制输出；未知用量保留预占。预占是接入估算，不能保证第三方计费 token 绝对不超额。系统保留每次决策和工具结果。</p></section>
+<CompletenessSettings v-if="tab==='completeness'&&form.completeness" v-model="form.completeness" :binding="bindingByKey.get('completeness.sop')" :reset-busy="resetBusy" @reset="resetSop('completeness.sop')" />
+<LearningSettings v-if="tab==='learning'&&form.learning" v-model="form.learning" :selection-binding="bindingByKey.get('learning.selectionSop')" :reflection-binding="bindingByKey.get('learning.reflectionSop')" :reset-busy="resetBusy" @reset="resetSop($event)" />
 <BillingSettings v-if="tab==='billing'"/>
 <div v-if="tab==='environment'" class="embedded-settings"><EnvironmentSettings :environments-only="true" /></div>
 <form v-if="tab==='model'" class="panel settings-panel settings-stack" @submit.prevent="saveModel">
@@ -153,4 +189,6 @@ async function copy(text: string) {
 .settings-stack{display:flex;flex-direction:column;gap:20px;}
 .settings-stack>h2,.settings-stack>.text-muted{margin:0;}
 .model-actions{display:flex;flex-wrap:wrap;align-items:center;gap:12px;}
+.harness-sop-bar{display:flex;align-items:center;justify-content:space-between;flex-wrap:wrap;gap:8px;margin-bottom:8px}
+.harness-sop-actions{display:flex;align-items:center;gap:12px}
 </style>

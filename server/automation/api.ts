@@ -45,6 +45,8 @@ import { TemplateWorkflowStore } from './template-workflow-store.js';
 import { diagnoseQueue } from './queue-diagnostics.js';
 import { inMaintenance } from '../updates/maintenance.js';
 import { koobooClient, fetchKoobooTemplateDetail, searchKoobooTemplates } from './kooboo.js';
+import { buildHarnessCatalog, harnessBindings } from './harness.js';
+import { deriveHumanNotice } from '../../shared/human-diagnostics.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -227,19 +229,21 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       if(task.autonomy){delete task.autonomy.stopReason;delete task.autonomy.checkpoint.nextAt;}
       const preCreateCollection=Boolean(task.autonomy&&!task.generatedSiteId&&task.collectionId);
       const prePrepareTemplate=Boolean(task.templateWorkflow)&&task.scenario==='site-template'&&task.kind==='generation'&&task.stage==='prepare'&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted;
+      const preTransferUpgrade=Boolean(task.kind==='generation'&&task.scenario==='upgrade'&&!task.generation?.prepared&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!wasCancelled&&(task.generation?.transferFallbackAttempted||task.interruption?.userSummary?.category==='source-access'));
+      if(task.generation?.transferFallbackAttempted)delete task.generation.transferFallbackAttempted;
       const neverStartedGeneration=wasCancelled&&task.kind==='generation'&&!task.followup&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted;
       if(root?.optimization){
         const run=root.optimization;
-        run.state=preCreateCollection||neverStartedGeneration||prePrepareTemplate?'waiting-evaluation':task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';
+        run.state=preCreateCollection||neverStartedGeneration||prePrepareTemplate||preTransferUpgrade?'waiting-evaluation':task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';
         run.reason='';run.nextSteps=[];delete run.stoppedAt;store.put(root,true);
         if(task.id===root.id)task.optimization=run;
       }
       if(preCreateCollection){task.status='queued';store.put(task);store.event(task.id,'按原输入和采集检查点恢复A段');return task;}
-      if(neverStartedGeneration||prePrepareTemplate){
+      if(neverStartedGeneration||prePrepareTemplate||preTransferUpgrade){
         task.status='queued';delete task.interruption;task.error='';
         if(task.followup){task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);task.followup.state='resolved';task.followup.executionStopped=true;}
         clearSiteRetry(task,store);
-        store.put(task);store.event(id,prePrepareTemplate?'按原固定输入与已采集证据直接恢复模板分析准备；保留累计用量。':'重新启动已取消的未建站任务，按原固定输入与规则排队执行。');return task;
+        store.put(task);store.event(id,preTransferUpgrade?'已清理源站克隆失败标记，按当前站点/Sandbox 状态重新检查并恢复执行。':prePrepareTemplate?'按原固定输入与已采集证据直接恢复模板分析准备；保留累计用量。':'重新启动已取消的未建站任务，按原固定输入与规则排队执行。');return task;
       }
       // The user explicitly resumed a stopped evaluation. No AI decision is
       // needed to decide whether to retry, nor another spent followup window.
@@ -281,6 +285,12 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.post('/api/automation/rules',async(request,reply)=>reply.code(201).send(store.publish(ruleInput.parse(request.body))));
   app.get('/api/automation/settings',async()=>vault.automation());
   app.put('/api/automation/settings',async(request)=>vault.updateAutomation({...vault.automation(),...settingsInput.parse(request.body),learning:settingsInput.parse(request.body).learning||vault.automation().learning,completeness:settingsInput.parse(request.body).completeness||vault.automation().completeness}));
+  app.get('/api/automation/harness',async()=>buildHarnessCatalog(vault.rawAutomation()));
+  app.post('/api/automation/harness/reset',async(request)=>{
+    const { key }=z.object({ key:z.enum(['followup.sop','optimization.sop','completeness.sop','learning.selectionSop','learning.reflectionSop','all']) }).parse(request.body||{});
+    const settings=vault.resetHarnessSop(key);
+    return { settings, bindings: harnessBindings(vault.rawAutomation()) };
+  });
   app.get('/api/automation/prices',async()=>({items:store.usage.prices()}));
   app.post('/api/automation/prices',async(request,reply)=>{const rate=z.object({cached:z.number().min(0).max(100000),input:z.number().min(0).max(100000),output:z.number().min(0).max(100000)});const value=z.object({verifiedAt:z.number().int().positive(),effectiveFrom:z.number().int().min(Date.now()-60000).max(Date.now()+60000),source:url.refine(Boolean),currency:z.literal('CNY'),models:z.array(z.string().trim().min(1).max(200)).min(1).max(100),peak:rate,offpeak:rate,holidays:z.record(z.string().regex(/^20[0-9]{2}$/),z.array(z.string().regex(/^20[0-9]{2}-[0-9]{2}-[0-9]{2}$/)).max(366))}).superRefine((v,ctx)=>{for(const[year,dates]of Object.entries(v.holidays))for(const date of dates)if(!date.startsWith(year)||!Number.isFinite(Date.parse(date))||new Date(date).toISOString().slice(0,10)!==date)ctx.addIssue({code:'custom',message:'节假日日历含无效日期'});}).parse(request.body);return reply.code(201).send(store.usage.publish(value));});
   app.post('/api/automation/model/test',async(_request,reply)=>{
@@ -341,6 +351,11 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const latest=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT 1').get(latestId);
     const active=task.optimization?.activeTaskId&&task.optimization.activeTaskId!==id?store.header(task.optimization.activeTaskId)||task:undefined;
     const summaries=new Map(store.summaries([...new Map([task,...(evaluation?[evaluation]:[]),...(active?[active]:[])].map(t=>[t.id,t])).values()]).map(t=>[t.id,t]));
+    for(const item of [task,evaluation,active]){
+      if(!item||!['pending','failed','interrupted'].includes(item.status)||summaries.get(item.id)?.attentionCategory)continue;
+      const full=store.task(item.id);
+      if(full)summaries.set(item.id,{...summaries.get(item.id)!,...taskSummary(full)});
+    }
     const disposition=store.dispositions.get('delivery',task.generatedSiteId||task.id),resourceDisposition=store.dispositions.get('resource',task.resourceId);
     const versionUrls=store.db.prepare("SELECT json_extract(json,'$.referenceUrl') AS referenceUrl,json_extract(json,'$.contentUrl') AS contentUrl,json_extract(json,'$.referenceTemplateId') AS referenceTemplateId FROM auto_versions WHERE id=?").get(task.versionId) as {referenceUrl?:string|null;contentUrl?:string|null;referenceTemplateId?:string|null}|undefined;
     const siteUrl=task.siteUrl||(task.generatedSiteId?(store.db.prepare("SELECT json_extract(json,'$.url') AS url FROM auto_sites WHERE id=?").get(task.generatedSiteId) as {url?:string|null}|undefined)?.url:'')||'';
@@ -371,7 +386,22 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const items=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT ? OFFSET ?').all(selected.id,q.pageSize,(page-1)*q.pageSize);
       const canAdjustSiteNames=canAdjustTaskSiteNames(selected);
       const interruption=selected.interruption&&canAdjustSiteNames?{...selected.interruption,nextSteps:['点击“自动调整名称并继续”，检查可用的名称和子域名后恢复原任务。']}:selected.interruption;
-      return {task:{id:selected.id,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{})},context:selected.context,followup:selected.followup,interruption,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
+      const humanNotice=(interruption||selected.error||['pending','failed','interrupted'].includes(selected.status))
+        ?(canAdjustSiteNames
+          ?{headline:'目标站点名称或域名已被占用',category:'site-collision' as const,explanation:'准备创建的站点名称或子域名与环境中已有站点冲突，任务已安全暂停。',userActions:['点击「自动调整名称并继续」，系统将自动更换可用的站点名称或子域名并恢复任务。']}
+          :deriveHumanNotice({
+            reason:interruption?.reason,
+            error:selected.error,
+            stage:interruption?.stage||selected.stage,
+            scenario:selected.scenario,
+            generatedSiteId:selected.generatedSiteId,
+            evidence:interruption?.evidence,
+            nextSteps:interruption?.nextSteps,
+            userSummary:interruption?.userSummary,
+            lastAction:selected.followup?.lastAction,
+          }))
+        :undefined;
+      return {task:{id:selected.id,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{})},context:selected.context,followup:selected.followup,interruption,humanNotice,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
     }
     const source=task.kind==='evaluation'?task:task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
     if(section==='delivery')return {task:source?{id:source.id,kind:source.kind,environmentId:source.environmentId,status:source.status,delivery:source.delivery,report:source.report?{quality:source.report.quality}:null}:null};

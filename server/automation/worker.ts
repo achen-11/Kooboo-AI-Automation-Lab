@@ -1,4 +1,5 @@
 import type { AutomationTask, FollowupAction } from '../../shared/automation.js';
+import type { HumanNotice } from '../../shared/human-diagnostics.js';
 import { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { executeGeneration } from './generator.js';
@@ -119,8 +120,8 @@ export class AutomationWorker{
     return Promise.race([Promise.allSettled(pending).then(()=>{}),new Promise<void>(r=>{const t=setTimeout(r,5000);t.unref();})]);
   }
   owns(id:string){return this.running.has(id)||this.learning.has(id);}
-  private interrupt(task:AutomationTask,reason:string,nextSteps:string[],evidence:string[]=[]) {
-    this.store.interrupt(task,{reason,evidence,attempted:this.store.events(task.id).filter(e=>/AI 决策|工具失败|执行失败|重试/.test(e.message)).slice(-12).map(e=>e.message),nextSteps,resumeFrom:task.generatedSiteId?'沿用当前生成站、输入版本和已保存证据，从当前阶段继续。':'确认环境及建站结果后，从资料准备阶段继续。'});
+  private interrupt(task:AutomationTask,reason:string,nextSteps:string[],evidence:string[]=[],userSummary?:HumanNotice) {
+    this.store.interrupt(task,{reason,evidence,attempted:this.store.events(task.id).filter(e=>/AI 决策|工具失败|执行失败|重试/.test(e.message)).slice(-12).map(e=>e.message),nextSteps,resumeFrom:task.generatedSiteId?'沿用当前生成站、输入版本和已保存证据，从当前阶段继续。':'确认环境及建站结果后，从资料准备阶段继续。',...(userSummary?{userSummary}:{})});
     if(task.optimization){task.optimization.state='stopped';task.optimization.reason=reason;task.optimization.nextSteps=nextSteps;task.optimization.stoppedAt=Date.now();this.store.put(task);}
   }
   private recoverTask(task:AutomationTask) {
@@ -227,7 +228,7 @@ export class AutomationWorker{
         task.error=reason instanceof Error?reason.message:'执行失败，需要查证当前任务';this.store.event(task.id,task.error);
         if(this.retainCollectionShutdown(task)){}
         else if(this.autonomousRecovery(task,reason)){}
-        else if(reason instanceof FollowupRuntimeError)this.interrupt(task,task.error,reason.nextSteps);
+        else if(reason instanceof FollowupRuntimeError)this.interrupt(task,task.error,reason.nextSteps,[],reason.userSummary);
         else this.recoverTask(task);
       }
     }finally{
@@ -299,7 +300,7 @@ export class AutomationWorker{
       else if(this.autonomousRecovery(task,reason,true)){}
       else if(isModelBillingOrAuthError(reason)){this.interrupt(task,detail,['请检查模型账户余额、额度及服务配置，确认恢复后再点击“恢复任务”。'],followup.observations);}
       else if(error instanceof ModelBudgetExceeded){this.interrupt(task,detail,['检查用量、未知请求及预算配置，确认后再恢复。恢复不会清零已用额度。'],followup.observations);}
-      else if(error instanceof FollowupRuntimeError){this.interrupt(task,detail,error.nextSteps,followup.observations);}
+      else if(error instanceof FollowupRuntimeError){this.interrupt(task,detail,error.nextSteps,followup.observations,error.userSummary);}
       else if(!this.stopping&&autonomousWindowRemaining(task).attempts<=0){this.interrupt(task,`${task.error}；AI 跟进未能继续：${detail}`,['查看跟进记录，检查模型连接、环境及任务条件，处理后恢复本任务。'],followup.observations);}
       else{task.status='following-up';followup.state='waiting';followup.nextAt=Date.now()+5000;this.store.put(task);}
     }finally{clearTimeout(timer);clearInterval(heartbeat);const elapsed=Math.max(0,Math.round(performance.now()-monotonicStart));followup.elapsedMs=(followup.elapsedMs||0)+elapsed;if(task.autonomy&&task.autonomy.window.index!==windowAtStart)task.autonomy.window.elapsedMsBase+=elapsed;if(followup.window&&followup.window.index!==followupWindowAtStart)followup.window.elapsedMsBase+=elapsed;delete followup.activeStartedAt;delete followup.activeHeartbeatAt;delete followup.activeElapsedMs;this.store.put(task);}
@@ -309,7 +310,7 @@ export class AutomationWorker{
     if(task.optimization?.state==='planning'){
       applyOptimizationAction(task,action,this.store,this.vault.automation(),this.directory);return;
     }
-    if(action.action==='interrupt'){this.interrupt(task,action.reason,action.nextSteps||['检查当前任务条件后恢复。'],action.evidence);return;}
+    if(action.action==='interrupt'){this.interrupt(task,action.reason,action.nextSteps||['检查当前任务条件后恢复。'],action.evidence,action.userSummary);return;}
     if(task.autonomy){
       const stop=recordAutonomousAttempt(task,autonomousActionStrategy(action),'已核对当前执行并安排 '+action.action);
       if(stop){this.interrupt(task,stop,['查看重复恢复操作和已有证据，补齐新的恢复路径后继续。'],action.evidence);return;}

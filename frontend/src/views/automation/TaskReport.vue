@@ -2,6 +2,7 @@
 import { computed, ref } from 'vue';
 import { LoaderCircle, FileText, ExternalLink, ChevronDown, ChevronRight, Columns2, Image, Download } from '@lucide/vue';
 import { taskStatusNames, type AutomationReport, type AutomationRule, type OptimizationProgress } from '../../../../shared/automation';
+import { deriveEvaluationHumanSummary, evaluationVerdictLabels } from '../../../../shared/human-diagnostics';
 import Disclosure from '../../components/Disclosure.vue';
 import TablePagination from '../../components/TablePagination.vue';
 import CompletenessReport from '../../components/CompletenessReport.vue';
@@ -40,6 +41,13 @@ function label(name: string, index: number) { const file = images.value.find(fil
 function openGallery(name: string) {
   void viewer.value?.open([{ title: '全部截图', detail: '', evidence: images.value.map(file => file.name) }], 0, name, false);
 }
+const humanSummary = computed(() => (data.value?.report ? deriveEvaluationHumanSummary(data.value.report) : null));
+const verdictClass: Record<string, string> = {
+  ready: 'completed',
+  'needs-fixes': 'pending',
+  blocked: 'failed',
+  'incomplete-check': 'pending',
+};
 </script>
 <template>
   <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
@@ -64,6 +72,29 @@ function openGallery(name: string) {
       <div class="section-heading"><h2>资料 → 站点核验</h2><span>{{ {complete:'通过',incomplete:'有缺失',unverified:'未验证',pending:'取证中'}[data.report.collectionTarget.state] }}</span></div>
       <p>已核对 {{ data.report.collectionTarget.checkedPages }} / {{ data.report.collectionTarget.expectedPages }} 个来源路径。</p>
       <Disclosure label="程序检查明细"><ul class="task-text-list"><li v-for="check in data.report.collectionTarget.checks" :key="check.id">{{ check.sourcePath || check.requirementId || check.id }}：{{ {verified:'通过',missing:'有缺失',unverified:'未验证'}[check.status] }} · {{ check.reason }}</li></ul></Disclosure>
+    </section>
+    <section v-if="humanSummary" class="panel settings-panel human-eval-card">
+      <div class="section-heading">
+        <div class="human-eval-title">
+          <h2>一眼看懂本次评测</h2>
+          <span class="status-badge" :class="verdictClass[humanSummary.verdict]">{{ evaluationVerdictLabels[humanSummary.verdict] }}</span>
+        </div>
+        <button type="button" class="text-action" @click="liveComparison?.open(data.taskId)"><Columns2 :size="14" />实时站点对比</button>
+      </div>
+      <p class="human-eval-headline">{{ humanSummary.headline }}</p>
+      <div class="human-eval-cols">
+        <div class="human-eval-block">
+          <h3>做得好的地方</h3>
+          <ul v-if="humanSummary.highlights.length" class="task-text-list"><li v-for="item in humanSummary.highlights" :key="item">{{ item }}</li></ul>
+          <p v-else class="text-muted small-text">暂无突出亮点记录，请参考下方指标评分。</p>
+        </div>
+        <div class="human-eval-block">
+          <h3>建议优先调整</h3>
+          <ul v-if="humanSummary.topFixes.length" class="task-text-list"><li v-for="item in humanSummary.topFixes" :key="item">{{ item }}</li></ul>
+          <p v-else class="text-muted small-text">未发现必须修复的阻塞问题。</p>
+        </div>
+      </div>
+      <p v-if="humanSummary.unverifiedNote" class="alert info human-eval-note">{{ humanSummary.unverifiedNote }}</p>
     </section>
     <div class="report-score-grid"><section class="panel report-verdict"><span>质量结论</span><h2 :class="data.report.quality === 'passed' ? 'success-text' : 'warning-text'">{{ qualities[data.report.quality] }}</h2></section><section v-for="item in data.report.scores" :key="item.viewport" class="panel report-score"><span>{{ names[item.viewport] || item.viewport }}</span><strong>{{ item.value ?? '—' }}</strong><small>{{ item.value === null ? '未验证' : '按本轮规则计算' }}</small></section></div>
     <section class="panel settings-panel">
@@ -97,3 +128,13 @@ function openGallery(name: string) {
     <LiveSiteComparisonDialog :key="'report-live-' + taskId" ref="liveComparison" :task-id="taskId" :default-report-id="data.taskId" />
   </template>
 </template>
+<style scoped>
+.human-eval-card{display:flex;flex-direction:column;gap:12px}
+.human-eval-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.human-eval-title h2{margin:0}
+.human-eval-headline{margin:0;font-size:16px;font-weight:650;color:var(--ink);line-height:1.5}
+.human-eval-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.human-eval-block{background:var(--field);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
+.human-eval-block h3{margin:0 0 8px;font-size:13.5px;color:var(--ink)}
+.human-eval-note{margin:0}
+</style>

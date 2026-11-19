@@ -1,3 +1,4 @@
+import { accessibleSiteUrl } from '../../../shared/site-delivery.js';
 import type { TaskSnapshot, TaskSummary } from '../../../shared/task-presentation.js';
 
 /** A task's own results remain useful history after a later task changes the same site. */
@@ -36,6 +37,5 @@ export function scoreTone(value: number | null, threshold: number): 'good' | 'wa
 }
 
 export function siteLink(value: string): string | undefined {
-  try { const url = new URL(value); return ['http:', 'https:'].includes(url.protocol) ? url.href : undefined; }
-  catch { return; }
+  return accessibleSiteUrl(value);
 }

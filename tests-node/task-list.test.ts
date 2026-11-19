@@ -1,6 +1,7 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
 import type { TaskSummary } from '../shared/task-presentation.js';
+import { hasAccessibleSiteUrl } from '../shared/site-delivery.js';
 import { createTaskEvaluationLoader, scoreTone, siteLink, taskEvaluation } from '../frontend/src/lib/task-list.js';
 
 function task(id: string, kind: TaskSummary['kind'], extra: Partial<TaskSummary> = {}): TaskSummary {
@@ -96,5 +97,10 @@ test('score colors honor the target threshold and distinguish a real zero from m
 test('generated site shortcuts only navigate to HTTP or HTTPS addresses', () => {
   assert.equal(siteLink('https://site.test/path?q=a&b=2'), 'https://site.test/path?q=a&b=2');
   assert.equal(siteLink('http://localhost:4180/'), 'http://localhost:4180/');
-  for (const value of ['', 'not a url', 'javascript:alert(1)', 'data:text/html,test', '//site.test']) assert.equal(siteLink(value), undefined);
+  assert.equal(hasAccessibleSiteUrl('https://site.test/path?q=a&b=2'), true);
+  assert.equal(hasAccessibleSiteUrl('http://localhost:4180/'), true);
+  for (const value of ['', 'not a url', 'javascript:alert(1)', 'data:text/html,test', '//site.test']) {
+    assert.equal(siteLink(value), undefined);
+    assert.equal(hasAccessibleSiteUrl(value), false);
+  }
 });

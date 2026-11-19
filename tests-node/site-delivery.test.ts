@@ -247,3 +247,82 @@ test('report routes enforce site identity, pagination and local authentication i
     assert.equal((await f.app.inject({ url: url + '/' + report.id })).statusCode, 401);
   } finally { await f.close(); }
 });
+
+test('site deliveries support filtering attention rows by accessible site address and return missing count', async () => {
+  const f = await fixture(); try {
+    const withUrl = f.create();
+    withUrl.status = 'interrupted'; withUrl.error = '已有地址但中断'; f.store.put(withUrl);
+
+    const resNoUrl = f.store.saveResource({ name: 'No URL Yet', scenario: 'site-template', description: '', contentUrl: '', referenceUrl: 'https://ref.test', files: [], externalSource: '', externalId: '' });
+    const siteNoUrl = { id: randomUUID(), resourceId: resNoUrl.id, versionId: f.store.versions(resNoUrl.id)[0].id, environmentId: f.site.environmentId, siteId: randomUUID(), name: 'NoUrlTarget', url: '', createdAt: 2 };
+    f.store.saveSite(siteNoUrl);
+    const noUrl = f.store.create({ resourceIds: [resNoUrl.id], generatedSiteId: siteNoUrl.id, kind: 'generation', scope: 'site', environmentId: siteNoUrl.environmentId, requirements: '' }, f.settings)[0];
+    noUrl.status = 'interrupted'; noUrl.error = '创建后尚无域名'; f.store.put(noUrl);
+
+    const resPendingSite = f.store.saveResource({ name: 'Pending Site Creation', scenario: 'site-template', description: '', contentUrl: '', referenceUrl: 'https://ref2.test', files: [], externalSource: '', externalId: '' });
+    const pendingSite = f.store.create({ resourceIds: [resPendingSite.id], kind: 'generation', scope: 'site', environmentId: f.site.environmentId, requirements: '' }, f.settings)[0];
+    pendingSite.status = 'failed'; pendingSite.error = '建站失败'; f.store.put(pendingSite);
+
+    const resQueued = f.store.saveResource({ name: 'Queued No URL', scenario: 'materials', description: '', contentUrl: '', referenceUrl: '', files: [], externalSource: '', externalId: '' });
+    f.store.create({ resourceIds: [resQueued.id], kind: 'generation', scope: 'homepage', environmentId: f.site.environmentId, requirements: '' }, f.settings);
+
+    const missing = (await f.app.inject({ url: '/api/automation/site-deliveries?state=attention&address=missing', headers: f.headers })).json();
+    assert.equal(missing.total, 2);
+    assert.equal(missing.attentionMissingAddress, 2);
+    assert.deepEqual(missing.items.map((item: any) => item.resourceName).sort(), ['No URL Yet', 'Pending Site Creation']);
+    assert.ok(missing.items.every((item: any) => item.state === 'attention'));
+
+    const accessible = (await f.app.inject({ url: '/api/automation/site-deliveries?state=attention&address=accessible', headers: f.headers })).json();
+    assert.equal(accessible.total, 1);
+    assert.equal(accessible.attentionMissingAddress, 2);
+    assert.equal(accessible.items[0].resourceName, 'Migration');
+
+    assert.equal((await f.app.inject({ url: '/api/automation/site-deliveries?address=invalid', headers: f.headers })).statusCode, 400);
+  } finally { await f.close(); }
+});
+
+test('site deliveries project safe recovery metadata consistent with per-task resume guards', async () => {
+  const f = await fixture(); try {
+    const makeRes = (name: string) => f.store.saveResource({ name, scenario: 'site-template', description: '', contentUrl: '', referenceUrl: 'https://ref.test', files: [], externalSource: '', externalId: '' });
+
+    // 1. Confirmed-stopped interrupted task -> resume
+    const rResume = makeRes('Resume Ready');
+    const tResume = f.store.create({ resourceIds: [rResume.id], kind: 'generation', scope: 'site', environmentId: f.site.environmentId, requirements: '' }, f.settings)[0];
+    tResume.status = 'interrupted'; tResume.stopped = true; tResume.error = '超时中断'; f.store.put(tResume);
+
+    // 2. Naming conflict -> adjust-site-names
+    const rNaming = makeRes('Naming Conflict');
+    const tNaming = f.store.create({ resourceIds: [rNaming.id], kind: 'generation', scope: 'site', environmentId: f.site.environmentId, requirements: '' }, f.settings)[0];
+    tNaming.status = 'interrupted'; tNaming.stopped = true; tNaming.error = '自定义站点名或子域名已被占用'; f.store.put(tNaming);
+
+    // 3. Unconfirmed-stopped -> confirm-stopped
+    const rUnconfirmed = makeRes('Unconfirmed Stop');
+    const tUnconfirmed = f.store.create({ resourceIds: [rUnconfirmed.id], kind: 'generation', scope: 'site', environmentId: f.site.environmentId, requirements: '' }, f.settings)[0];
+    tUnconfirmed.status = 'interrupted'; tUnconfirmed.stopped = false; tUnconfirmed.error = '进程异常退出'; f.store.put(tUnconfirmed);
+
+    // 4. Cancelled task -> resume
+    const rCancelled = makeRes('Cancelled Task');
+    const tCancelled = f.store.create({ resourceIds: [rCancelled.id], kind: 'generation', scope: 'site', environmentId: f.site.environmentId, requirements: '' }, f.settings)[0];
+    tCancelled.status = 'cancelled'; tCancelled.stopped = true; f.store.put(tCancelled);
+
+    // 5. Archived interrupted task -> recovery undefined
+    const rArchived = makeRes('Archived Task');
+    const tArchived = f.store.create({ resourceIds: [rArchived.id], kind: 'generation', scope: 'site', environmentId: f.site.environmentId, requirements: '' }, f.settings)[0];
+    tArchived.status = 'interrupted'; tArchived.stopped = true; tArchived.error = '已中断'; f.store.put(tArchived);
+    const archivedResp = await f.app.inject({ method: 'POST', url: '/api/automation/dispositions', headers: f.headers, payload: { kind: 'delivery', ids: [tArchived.id], state: 'discarded', note: '' } });
+    assert.equal(archivedResp.statusCode, 200);
+
+    const all = (await f.app.inject({ url: '/api/automation/site-deliveries?disposition=all', headers: f.headers })).json();
+    const byName = (name: string) => all.items.find((item: any) => item.resourceName === name);
+
+    assert.deepEqual(byName('Resume Ready').recovery, { action: 'resume', taskId: tResume.id });
+    assert.deepEqual(byName('Naming Conflict').recovery, { action: 'adjust-site-names', taskId: tNaming.id });
+    assert.deepEqual(byName('Unconfirmed Stop').recovery, { action: 'confirm-stopped', taskId: tUnconfirmed.id });
+    assert.deepEqual(byName('Cancelled Task').recovery, { action: 'resume', taskId: tCancelled.id });
+    assert.equal(byName('Archived Task').recovery, undefined);
+
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${tUnconfirmed.id}/resume`, headers: f.headers })).statusCode, 409);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${tResume.id}/resume`, headers: f.headers })).statusCode, 200);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${tCancelled.id}/resume`, headers: f.headers })).statusCode, 200);
+  } finally { await f.close(); }
+});

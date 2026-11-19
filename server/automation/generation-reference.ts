@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync, statSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { AutomationTask } from '../../shared/automation.js';
+import { effectiveReferenceUrl, effectiveTemplateUsageMode, type AutomationTask } from '../../shared/automation.js';
 import type { RequirementManifest } from '../../shared/completeness.js';
 import type { AutomationStore } from './store.js';
 import { GenerationInputError } from './errors.js';
@@ -22,7 +22,20 @@ export function siteTemplateReferenceStudy(task: AutomationTask, store: Automati
   if(task.templateWorkflow){const baseline=new TemplateWorkflowStore(store).get(task)?.baseline;if(!baseline)throw new GenerationInputError('本地参考分析尚未完成');return 'AI Site 新流程：Lab 已冻结参考基线和截图。按任务包 templateBaseline 的 pages/views/layouts/intents/constraints 与 contentMapping 实施，保留完整页面顺序和双端设计；先加载现有 Kooboo 编码能力，通过 use_function 加载 read_image；需要补图或切片时加载 take_screenshot、process_image，未知工具按 Media 标签发现。参考 PNG 已上传目标站专属的隔离研究 Sandbox 媒体库，read_image({imageId,sandbox}) 和 process_image({imageId,sandbox,operation:"slice"}) 必须使用索引每项的 sandbox，不能省略或改用目标站。按 referenceImages 的 url/viewport/views 索引定位，每个 view 实施前实际 read_image 查看桌面与移动参考，再结合约束实现；图片不随 bridge 附件发送也能看图。索引、HTML 和来源分析文字不等于视觉输入。现有逐屏 PNG 可直接读取，长图用 process_image(operation="slice") 后 read_image；返回引用不等于已查看。复用已冻结证据与已有研究 Sandbox；证据足够时不重复采集。缺失或失败时仅补所需页面/区段：take_screenshot → process_image(operation="slice") → read_image。补图不能覆盖冻结基线或缩减交付范围。图片继续 imagePlaceholder，参考截图不能用作业务素材，文案沿用既有模板策略。来源限制见 limitations，不得虚构证据。修复按 templateRepairIssues 定位页面/view/视口及预期/实际/验收条件，批量实施后交独立评测。只修改问题涉及的 views 与必要依赖，保留其余实现；明确核对尺寸、行数、对齐、断点和显隐。独立视觉评分与交互复验由 Lab 执行。完成回执列出实际看过的图片ID、页面/view/视口、修改及未验证范围，不能自行把问题标 done。目标 siteId：'+siteId;}
   const input = store.version(task.versionId);
   if (!input) throw new GenerationInputError('AI Site 缺少固定输入版本，不能确定参考站');
-  const reference = input.referenceUrl || input.contentUrl;
+  const reference = effectiveReferenceUrl(input, task, store.root(task)) || input.contentUrl;
+  if (input.referenceTemplateId?.trim()) {
+    const mode = task.generation?.referenceTemplate?.mode || effectiveTemplateUsageMode(input, Boolean(task.generatedSiteId));
+    const templateLabel = task.generation?.referenceTemplate?.templateName || input.referenceTemplateName || input.referenceTemplateId;
+    if (mode === 'direct-template') {
+      return `AI Site 执行路线：kooboo-site-redesign（Kooboo 模板原位适配），直接基于当前目标站中的 Kooboo 原生模板「${templateLabel}」（ID：${input.referenceTemplateId}）改造，不从零重写，不对模板 URL 执行 transfer_page。
+内容来源：${input.contentUrl || reference || '见任务资料'}；模板预览参考：${reference || '由当前环境模板提供'}；实现目标 siteId：${siteId}。
+先加载 kooboo-coding、kooboo-site-redesign，依次读取 references/template-adaptation.md、references/workflow.md、references/architecture.md，并先读取当前目标站的原生 Page/Layout/View/ContentType/Content/File/Menu/Style/Script，再结合业务资料与来源内容在原位完成适配替换与零残留清理（严禁遗留模板原品牌名、演示文案、示例图及未使用的演示页面）。
+目标站与模板均已在当前站或隔离研究沙箱就绪；若需补抓视图对比图，仍遵循 Media 标签 take_screenshot → process_image(operation="slice") → read_image；所有业务图片按资料或 imagePlaceholder 处理，严禁伪造未验证视觉证据。`;
+    }
+    return `AI Site 执行路线：kooboo-site-redesign（Kooboo 模板参考 Sandbox 模式），参考模板「${templateLabel}」（ID：${input.referenceTemplateId}）视觉预览：${reference || '见参考 Sandbox'}；内容来源：${input.contentUrl || reference || '见资料'}；实现目标 siteId：${siteId}。
+先加载 kooboo-coding、kooboo-site-redesign，读取 references/workflow.md、references/reference-site.md、references/architecture.md、references/design-and-implementation.md。
+参考模板已预先导入隔离研究 Sandbox（tpl-*，详见 templateExecutionGuidance），优先通过 list_sandbox / read_object_text / take_screenshot 直接查看 Sandbox 原生 Kooboo 对象与视觉效果，不要再对模板预览 URL 执行 transfer_page。${task.scope === 'homepage' ? '本次只做首页，研究首页区段与对应组件。' : '按固定清单覆盖所需页面族与双端视口，所有业务图片遵循 imagePlaceholder，严禁跳过看图直接照抄或将参考源码直接导入目标站。'}`;
+  }
   if (!reference) throw new GenerationInputError('AI Site 缺少参考站 URL，不能执行参考重建');
   return `AI Site 执行路线：kooboo-site-redesign，按参考站重建视觉，不按行业主题自由设计。
 固定内容来源：${input.contentUrl || reference}；视觉参考：${reference}；实现目标 siteId：${siteId}。当前目标站由平台绑定；研究 Sandbox 与实现目标必须分开。

@@ -1,5 +1,5 @@
 import { createHash, randomUUID } from 'node:crypto';
-import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
+import { effectiveReferenceUrl, type AutomationTask, type MaterialFile } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { ContextRequest } from './generation-context.js';
 import { GenerationInputError } from './errors.js';
@@ -88,7 +88,7 @@ export async function prepareReferenceMedia(task:AutomationTask,store:Automation
       for(const name of new Set(task.repairEvidence.files)){
         const file=report.report.artifacts.find(file=>file.name===name&&file.type==='image/png');
         if(!file||!['reference','target'].includes(file.role||''))throw new GenerationInputError('修复图片未登记在原报告：'+name);
-        sources.push({name:file.name,ownerTaskId:report.id,sha256:file.sha256,size:file.size,url:file.role==='target'?report.siteUrl:(reportInput?.referenceUrl||reportInput?.contentUrl||''),
+        sources.push({name:file.name,ownerTaskId:report.id,sha256:file.sha256,size:file.size,url:file.role==='target'?report.siteUrl:(effectiveReferenceUrl(reportInput,report,store.root(report))||reportInput?.contentUrl||''),
           role:file.role as 'reference'|'target',siteRevision:file.role==='target'?report.siteRevision||null:null,viewport:file.viewport,views:[],read:()=>readEvidence(directory,report.id,file).bytes});
       }
     }

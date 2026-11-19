@@ -1,6 +1,6 @@
 import { copyFileSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { AutomationReport, AutomationTask, EvaluationRecheck, MaterialFile } from '../../shared/automation.js';
+import { effectiveReferenceUrl, type AutomationReport, type AutomationTask, type EvaluationRecheck, type MaterialFile } from '../../shared/automation.js';
 import type { RequirementManifest } from '../../shared/completeness.js';
 import type { AutomationStore } from './store.js';
 import type { TemplateReviewBatch } from './template-review.js';
@@ -209,11 +209,12 @@ export async function prepareTemplateReassessment(input:{task:AutomationTask;sto
       // separately, while every non-image dependency remains mandatory for each.
       const site=store.site(task.generatedSiteId||''),version=store.version(task.versionId);
       if(!site||!version)continue;
+      const resolvedRef=effectiveReferenceUrl(version,task,store.root(task));
       const equalPaths:string[]=[],equalMapped:string[]=[];
       if(!prevDeferredRequirements.has(item.id)){
         for(const path of item.paths)try{
           if(itemDeferredPaths?.has(path))continue;
-          const url=new URL(templateTargetPath(path,site.url,version.contentUrl||version.referenceUrl),site.url).href;
+          const url=new URL(templateTargetPath(path,site.url,version.contentUrl||resolvedRef),site.url).href;
           const images=check.evidence.flatMap(name=>{const f=oldFile(name);if(!f||f.role!=='target'||f.type!=='image/png')return [];const o=oldObservation(f);return o?.url===url?[{name,viewport:o.viewport}]:[];});
           if(!item.viewports.filter(v=>v!=='business').every(v=>images.some(i=>i.viewport===v)))continue;
           const dependency=check.evidence.filter(name=>{
@@ -241,7 +242,7 @@ export async function prepareTemplateReassessment(input:{task:AutomationTask;sto
           for(const path of item.paths){
             if(equalPaths.includes(path))continue;
             try{
-              const url=new URL(templateTargetPath(path,site.url,version.contentUrl||version.referenceUrl),site.url).href;
+              const url=new URL(templateTargetPath(path,site.url,version.contentUrl||resolvedRef),site.url).href;
               if(isUrlTargeted(url)||!pageProgramSettled(item.id,path,nonBusinessViewports))continue;
               const pathProof:string[]=[];let allViewports=true;
               for(const v of nonBusinessViewports){
@@ -276,6 +277,7 @@ export async function prepareTemplateReassessment(input:{task:AutomationTask;sto
     if(item.kind==='template'){
       const site=store.site(task.generatedSiteId||''),version=store.version(task.versionId),nonBusinessViewports=item.viewports.filter(v=>v!=='business'),samples=item.samples||[];
       if(!site||!version||nonBusinessViewports.length>0&&!samples.length)continue;
+      const resolvedRef=effectiveReferenceUrl(version,task,store.root(task));
       let depsOk=true,expectedCapturePolicy:string|undefined;const bound:string[]=[];
       for(const name of check.evidence){
         const f=oldFile(name);if(!f){depsOk=false;break;}
@@ -290,7 +292,7 @@ export async function prepareTemplateReassessment(input:{task:AutomationTask;sto
       let samplesOk=allSamplePaths.length>0||nonBusinessViewports.length===0;
       for(const sample of allSamplePaths){
         try{
-          const url=new URL(templateTargetPath(sample,site.url,version.contentUrl||version.referenceUrl),site.url).href;
+          const url=new URL(templateTargetPath(sample,site.url,version.contentUrl||resolvedRef),site.url).href;
           if(isUrlTargeted(url)||samples.includes(sample)&&!pageProgramSettled(item.id,sample,nonBusinessViewports)){samplesOk=false;break;}
           for(const v of nonBusinessViewports){
             const settled=currentSettledTargetImages(url,v,expectedCapturePolicy);

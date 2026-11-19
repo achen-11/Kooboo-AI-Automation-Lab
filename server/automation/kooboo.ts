@@ -1,6 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
-import type { AutomationTask, GeneratedSite } from '../../shared/automation.js';
+import type { AutomationTask, GeneratedSite, KoobooTemplatePage, KoobooTemplateSummary } from '../../shared/automation.js';
 import type { Vault } from '../lib/vault.js';
 import type { AutomationStore } from './store.js';
 
@@ -38,7 +38,105 @@ export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vau
   return {origin,environment,request};
 }
 
-export const siteIdentity=(site:any)=>String(site?.siteId||site?.SiteId||site?.id||site?.Id||'');
+export const siteIdentity=(site:any)=>typeof site==='string'?site.trim():String(site?.siteId||site?.SiteId||site?.id||site?.Id||'');
+
+export type KoobooRequestFn = (path: string, body?: unknown, siteId?: string) => Promise<any>;
+export type { KoobooTemplateSummary, KoobooTemplatePage };
+
+export function resolveKoobooAssetUrl(raw: unknown, baseOrigin?: string): string {
+  const value = String(raw ?? '').trim();
+  if (!value) return '';
+  if (/^https?:\/\//i.test(value)) return value;
+  if (value.startsWith('//') || value.startsWith('/')) {
+    if (baseOrigin) {
+      try {
+        const resolved = new URL(value, baseOrigin);
+        if (/^https?:$/i.test(resolved.protocol)) return resolved.href;
+      } catch {
+        // Fall through to protocol-relative check or raw string.
+      }
+    }
+    if (value.startsWith('//')) return `https:${value}`;
+  }
+  return value;
+}
+
+export function normalizeKoobooTemplate(raw: any, baseOrigin?: string): KoobooTemplateSummary {
+  const obj = raw && typeof raw === 'object' ? raw : {};
+  return {
+    id: String(obj.id ?? obj.Id ?? '').trim(),
+    name: String(obj.name ?? obj.Name ?? '').trim(),
+    typeName: String(obj.typeName ?? obj.TypeName ?? '').trim(),
+    category: String(obj.category ?? obj.Category ?? '').trim(),
+    description: String(obj.description ?? obj.Description ?? '').trim(),
+    tags: String(obj.tags ?? obj.Tags ?? '').trim(),
+    previewUrl: resolveKoobooAssetUrl(obj.previewUrl ?? obj.PreviewUrl ?? '', baseOrigin),
+    thumbnailUrl: resolveKoobooAssetUrl(
+      obj.thunbnailUrl ??
+        obj.ThunbnailUrl ??
+        obj.thumbnailUrl ??
+        obj.ThumbnailUrl ??
+        obj.thumbNail ??
+        obj.ThumbNail ??
+        '',
+      baseOrigin,
+    ),
+    pageCount: Number(obj.pageCount ?? obj.PageCount ?? 0) || 0,
+    layoutCount: Number(obj.layoutCount ?? obj.LayoutCount ?? 0) || 0,
+    viewCount: Number(obj.viewCount ?? obj.ViewCount ?? 0) || 0,
+    contentCount: Number(obj.contentCount ?? obj.ContentCount ?? 0) || 0,
+    imageCount: Number(obj.imageCount ?? obj.ImageCount ?? 0) || 0,
+    menuCount: Number(obj.menuCount ?? obj.MenuCount ?? 0) || 0,
+    downloadCount: Number(obj.downloadCount ?? obj.DownloadCount ?? 0) || 0,
+  };
+}
+
+export async function fetchKoobooTemplateDetail(
+  request: KoobooRequestFn,
+  templateId: string,
+  baseOrigin?: string,
+): Promise<KoobooTemplateSummary> {
+  const id = String(templateId || '').trim();
+  if (!id) throw new Error('模板 ID 不能为空');
+  const raw = await request(`Template/Detail?Id=${encodeURIComponent(id)}`);
+  const detail = normalizeKoobooTemplate(raw, baseOrigin);
+  if (!raw || (!detail.id && !detail.name && !detail.previewUrl)) {
+    throw new Error(`当前 Kooboo 环境未找到模板 ${id}`);
+  }
+  return { ...detail, id: detail.id || id };
+}
+
+export async function searchKoobooTemplates(
+  request: KoobooRequestFn,
+  options: {
+    keyword?: string;
+    pageNr?: number;
+    pageSize?: number;
+    typeName?: string;
+    category?: string;
+    color?: string;
+    baseOrigin?: string;
+  } = {},
+): Promise<KoobooTemplatePage> {
+  const pageNr = Math.max(1, Number(options.pageNr || 1) || 1);
+  const pageSize = Math.min(100, Math.max(1, Number(options.pageSize || 24) || 24));
+  const raw = await request('Template/FullTextSearch', {
+    keyword: String(options.keyword || '').trim(),
+    pageNr,
+    pageSize,
+    typeName: options.typeName ?? 'Site',
+    category: options.category ?? '',
+    color: options.color ?? '',
+  });
+  const listRaw = Array.isArray(raw?.list ?? raw?.List) ? (raw.list ?? raw.List) : [];
+  return {
+    list: listRaw.map((item: any) => normalizeKoobooTemplate(item, options.baseOrigin)),
+    totalCount: Number(raw?.totalCount ?? raw?.TotalCount ?? listRaw.length) || 0,
+    pageNr: Number(raw?.pageNr ?? raw?.PageNr ?? pageNr) || pageNr,
+    pageSize: Number(raw?.pageSize ?? raw?.PageSize ?? pageSize) || pageSize,
+    totalPages: Number(raw?.totalPages ?? raw?.TotalPages ?? 1) || 1,
+  };
+}
 export async function refreshSite(task:AutomationTask,store:AutomationStore,vault:Vault,signal:AbortSignal):Promise<GeneratedSite|undefined> {
   if(!task.generatedSiteId)return;
   const site=store.site(task.generatedSiteId);if(!site)return;

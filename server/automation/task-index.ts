@@ -14,6 +14,7 @@ export type ReadinessReport = Pick<AutomationReport, 'quality' | 'scores' | 'sum
   };
 };
 export type ReadinessTask = Pick<AutomationTask, 'collectionVersionId' | 'versionId' | 'generatedSiteId' | 'siteRevision' | 'requirementsEnabled' | 'scope' | 'templateWorkflow'> & {
+  referencePreviewUrl?: string;
   optimization?: Pick<NonNullable<AutomationTask['optimization']>, 'state' | 'reportId' | 'activeTaskId' | 'currentRevision' | 'reason' | 'stoppedAt'> & { policy: { targetScore: number } };
   rule: { criteria: Pick<NonNullable<AutomationTask['rule']>['criteria'][number], 'id' | 'required' | 'scopes' | 'viewports'>[] } | null;
 };
@@ -38,8 +39,10 @@ export function taskHeader(task: AutomationTask): TaskHeader {
   const summary = taskSummary(task), report = task.report, optimization = task.optimization;
   delete summary.usage;
   const reflection = task.learningPolicy?.collect && task.stopped && (report && task.status === 'completed' || task.interruption && task.status === 'interrupted');
+  const referencePreviewUrl = task.generation?.referenceTemplate?.previewUrl?.trim() || task.generation?.referenceTemplateSandbox?.previewUrl?.trim() || undefined;
   return {
     ...summary, summary, versionId: task.versionId, siteRevision: task.siteRevision,
+    ...(referencePreviewUrl ? { referencePreviewUrl } : {}),
     workflowIds: [...new Set([task.id, ...(task.evaluationTaskId ? [task.evaluationTaskId] : []), ...(optimization?.rounds.flatMap(round => [round.generationTaskId, ...(round.previousEvaluationTaskIds || []), ...(round.evaluationTaskId ? [round.evaluationTaskId] : [])]) || [])])],
     collectionVersionId: task.collectionVersionId, requirementsEnabled: task.requirementsEnabled, templateWorkflow:task.templateWorkflow,
     error: brief(task.error),

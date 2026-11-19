@@ -44,18 +44,22 @@ import { registerTemplateWorkflowApi } from './template-workflow-api.js';
 import { TemplateWorkflowStore } from './template-workflow-store.js';
 import { diagnoseQueue } from './queue-diagnostics.js';
 import { inMaintenance } from '../updates/maintenance.js';
+import { koobooClient, fetchKoobooTemplateDetail, searchKoobooTemplates } from './kooboo.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
+const optionalText=(max=200)=>z.string().trim().max(max).optional().transform(v=>v||undefined);
+const optionalTemplateId=z.string().trim().optional().transform(v=>v||undefined).refine(v=>!v||z.string().uuid().safeParse(v).success,'模板 ID 需为有效的 UUID');
+const templateUsageModeSchema=z.enum(['direct-template','reference-sandbox']).optional();
 const logicalPath=z.string().min(1).max(300).refine(n=>{try{return materialPath(n)===n;}catch{return false;}},'附件路径不合法');
 const file=z.object({id:uuid,name:logicalPath,type:z.string().max(200),size:z.number().int().nonnegative(),sha256:z.string().regex(/^[a-f0-9]{64}$/)});
-const resource=z.object({folderId:uuid.nullable().optional(),name:z.string().trim().min(1).max(200),scenario:z.enum(Object.keys(scenarios) as [keyof typeof scenarios,...(keyof typeof scenarios)[]]),description:z.string().max(200000),contentUrl:url,referenceUrl:url,externalSource:z.string().max(200),externalId:z.string().max(200),files:z.array(file).max(1000),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional()}).superRefine((r,ctx)=>{
+const resource=z.object({folderId:uuid.nullable().optional(),name:z.string().trim().min(1).max(200),scenario:z.enum(Object.keys(scenarios) as [keyof typeof scenarios,...(keyof typeof scenarios)[]]),description:z.string().max(200000),contentUrl:url,referenceUrl:url,referenceTemplateId:optionalTemplateId,referenceTemplateName:optionalText(200),templateUsageMode:templateUsageModeSchema,externalSource:z.string().max(200),externalId:z.string().max(200),files:z.array(file).max(1000),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional()}).superRefine((r,ctx)=>{
   if(['migration','upgrade'].includes(r.scenario)&&!r.contentUrl)ctx.addIssue({code:'custom',message:'当前场景需要内容站 URL',path:['contentUrl']});
-  if(r.scenario==='site-template'&&!r.referenceUrl&&!r.contentUrl)ctx.addIssue({code:'custom',message:'模板需要参考站 URL',path:['referenceUrl']});
-  if(r.scenario==='upgrade'&&!r.referenceUrl)ctx.addIssue({code:'custom',message:'升级场景需要独立参考站',path:['referenceUrl']});
+  if(r.scenario==='site-template'&&!r.referenceUrl&&!r.contentUrl&&!r.referenceTemplateId)ctx.addIssue({code:'custom',message:'模板需要参考站 URL 或 Kooboo 模板 ID',path:['referenceUrl']});
+  if(r.scenario==='upgrade'&&!r.referenceUrl&&!r.referenceTemplateId)ctx.addIssue({code:'custom',message:'升级场景需要独立参考站 URL 或 Kooboo 模板 ID',path:['referenceUrl']});
   try{uniqueMaterialPaths(r.files);}catch(error){ctx.addIssue({code:'custom',message:(error as Error).message,path:['files']});}
   if(Boolean(r.externalId)!==Boolean(r.externalSource))ctx.addIssue({code:'custom',message:'外部来源与记录标识需要一起填写'});
-});
+}).transform(r=>r.referenceTemplateId?{...r,templateUsageMode:r.templateUsageMode||'direct-template'}:{...r,referenceTemplateId:undefined,referenceTemplateName:undefined,templateUsageMode:undefined});
 export const ruleInput=z.object({name:z.string().trim().min(1).max(200),kind:z.enum(['site','app']),scenarios:z.array(z.enum(Object.keys(scenarios) as [keyof typeof scenarios,...(keyof typeof scenarios)[]])).min(1).max(5).optional(),sop:z.string().trim().min(1).max(100000),references:z.string().max(200000),criteria:z.array(z.object({id:z.string().regex(/^[a-z][a-z0-9-]{0,60}$/),label:z.string().trim().min(1).max(100),weight:z.number().min(0).max(100),instruction:z.string().trim().min(1).max(10000),required:z.boolean(),viewports:z.array(z.enum(['desktop','mobile','business'])).min(1).max(3).refine(v=>new Set(v).size===v.length),scopes:z.array(z.enum(['homepage','site'])).min(1).max(2).refine(v=>new Set(v).size===v.length)})).min(1).max(30)}).superRefine((r,ctx)=>{
   if(Math.abs(r.criteria.reduce((s,c)=>s+c.weight,0)-100)>0.00001)ctx.addIssue({code:'custom',message:'权重总和必须为 100%'});
   if(new Set(r.criteria.map(c=>c.id)).size!==r.criteria.length)ctx.addIssue({code:'custom',message:'指标 ID 不能重复'});
@@ -338,9 +342,10 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const active=task.optimization?.activeTaskId&&task.optimization.activeTaskId!==id?store.header(task.optimization.activeTaskId)||task:undefined;
     const summaries=new Map(store.summaries([...new Map([task,...(evaluation?[evaluation]:[]),...(active?[active]:[])].map(t=>[t.id,t])).values()]).map(t=>[t.id,t]));
     const disposition=store.dispositions.get('delivery',task.generatedSiteId||task.id),resourceDisposition=store.dispositions.get('resource',task.resourceId);
-    const versionUrls=store.db.prepare("SELECT json_extract(json,'$.referenceUrl') AS referenceUrl,json_extract(json,'$.contentUrl') AS contentUrl FROM auto_versions WHERE id=?").get(task.versionId) as {referenceUrl?:string|null;contentUrl?:string|null}|undefined;
+    const versionUrls=store.db.prepare("SELECT json_extract(json,'$.referenceUrl') AS referenceUrl,json_extract(json,'$.contentUrl') AS contentUrl,json_extract(json,'$.referenceTemplateId') AS referenceTemplateId FROM auto_versions WHERE id=?").get(task.versionId) as {referenceUrl?:string|null;contentUrl?:string|null;referenceTemplateId?:string|null}|undefined;
     const siteUrl=task.siteUrl||(task.generatedSiteId?(store.db.prepare("SELECT json_extract(json,'$.url') AS url FROM auto_sites WHERE id=?").get(task.generatedSiteId) as {url?:string|null}|undefined)?.url:'')||'';
-    const canCompareLive=Boolean(siteUrl||versionUrls?.referenceUrl||versionUrls?.contentUrl);
+    const templatePreviewUrl=task.referencePreviewUrl||evaluation?.referencePreviewUrl||active?.referencePreviewUrl||(versionUrls?.referenceTemplateId&&task.generatedSiteId?store.headers(task.generatedSiteId).find(h=>h.referencePreviewUrl)?.referencePreviewUrl:'')||'';
+    const canCompareLive=Boolean(siteUrl||versionUrls?.referenceUrl||versionUrls?.contentUrl||templatePreviewUrl);
     const blockers=workflowBlockers(task,store,owns);
     const workflowActive=(blockers.tasks.length||blockers.learning.length)?{tasks:blockers.tasks.length,learning:blockers.learning.length,reason:workflowActiveReason(blockers.tasks.length,blockers.learning.length)}:undefined;
     return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),canCompareLive,...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),...(workflowActive?{workflowActive}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
@@ -450,6 +455,30 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const input=z.object({resourceId:uuid,environmentId:uuid,siteId:uuid,name:z.string().min(1).max(200),url:z.url().refine(v=>/^https?:/.test(v))}).parse(request.body);
     if(!store.resource(input.resourceId)||!vault.get().environments.some(e=>e.id===input.environmentId))throw new Conflict('资源或环境不存在');
     const site={...input,id:randomUUID(),versionId:store.versions(input.resourceId)[0].id,createdAt:Date.now()};store.saveSite(site);return site;
+  });
+  function templateEnvironment(environmentId?:string){
+    const envs=vault.get().environments;
+    const envId=environmentId||envs[0]?.id||'';
+    if(!envId)throw new Conflict('请先在系统设置中配置 Kooboo 环境');
+    const env=envs.find(e=>e.id===envId);
+    if(!env)throw new Conflict('所选 Kooboo 环境不存在');
+    if(!env.token)throw new Conflict('缺少 Kooboo 环境令牌，请在系统设置补齐');
+    return env;
+  }
+  app.get('/api/automation/kooboo/templates',async(request,reply)=>{
+    const q=z.object({environmentId:uuid.optional(),keyword:z.string().trim().max(200).optional(),typeName:z.string().trim().max(50).optional(),category:z.string().trim().max(100).optional(),page:z.coerce.number().int().min(1).default(1),pageSize:z.coerce.number().int().min(1).max(60).default(24)}).parse(request.query);
+    const env=templateEnvironment(q.environmentId);
+    const {origin,request:koobooRequest}=koobooClient({environmentId:env.id},vault,AbortSignal.timeout(30000));
+    try{return await searchKoobooTemplates(koobooRequest,{keyword:q.keyword,typeName:q.typeName??'Site',category:q.category,pageNr:q.page,pageSize:q.pageSize,baseOrigin:origin});}
+    catch(error){return reply.code(502).send({error:error instanceof Error?error.message:'查询 Kooboo 模板列表失败'});}
+  });
+  app.get('/api/automation/kooboo/templates/:templateId',async(request,reply)=>{
+    const {templateId}=z.object({templateId:z.string().trim().uuid('模板 ID 需为有效的 UUID')}).parse(request.params);
+    const q=z.object({environmentId:uuid.optional()}).parse(request.query);
+    const env=templateEnvironment(q.environmentId);
+    const {origin,request:koobooRequest}=koobooClient({environmentId:env.id},vault,AbortSignal.timeout(30000));
+    try{return await fetchKoobooTemplateDetail(koobooRequest,templateId,origin);}
+    catch(error){const message=error instanceof Error?error.message:'查询 Kooboo 模板详情失败';return reply.code(message.includes('未找到模板')?404:502).send({error:message});}
   });
   app.post('/api/v1/resources/import',async(request)=>{
     const values=z.array(resource).min(1).max(1000).parse(request.body);values.forEach(v=>checkFiles(v.files));

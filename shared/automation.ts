@@ -24,7 +24,32 @@ export type TaskStatus = 'queued' | 'running' | 'pending' | 'cancelling' | 'canc
 export const taskStatusNames: Record<TaskStatus, string> = { queued: '排队中', running: '执行中', pending: '待跟进', cancelling: '正在停止', cancelled: '已取消', completed: '执行结束', failed: '执行失败', 'following-up': 'AI 跟进中', interrupted: '已中断' };
 import type { ItemDisposition } from './dispositions.js';
 export interface MaterialFile { id: string; name: string; type: string; size: number; sha256: string; role?: 'target'|'reference'|'content'; viewport?: 'desktop'|'mobile'; /** false: captured while visible images or the load event were still pending. */ settled?: boolean }
-export interface ResourceInput { name: string; scenario: Scenario; description: string; contentUrl: string; referenceUrl: string; externalSource: string; externalId: string; files: MaterialFile[]; siteName?: string; subDomain?: string; rootDomain?: string }
+export type TemplateUsageMode = 'direct-template' | 'reference-sandbox';
+export interface KoobooTemplateSummary {
+  id: string;
+  name: string;
+  typeName: string;
+  category: string;
+  description: string;
+  tags: string;
+  previewUrl: string;
+  thumbnailUrl: string;
+  pageCount: number;
+  layoutCount: number;
+  viewCount: number;
+  contentCount: number;
+  imageCount: number;
+  menuCount: number;
+  downloadCount: number;
+}
+export interface KoobooTemplatePage {
+  list: KoobooTemplateSummary[];
+  totalCount: number;
+  pageNr: number;
+  pageSize: number;
+  totalPages: number;
+}
+export interface ResourceInput { name: string; scenario: Scenario; description: string; contentUrl: string; referenceUrl: string; referenceTemplateId?: string; referenceTemplateName?: string; templateUsageMode?: TemplateUsageMode; externalSource: string; externalId: string; files: MaterialFile[]; siteName?: string; subDomain?: string; rootDomain?: string }
 export interface Resource extends ResourceInput { id: string; folderId?: string | null; disposition?: ItemDisposition; revision: number; createdAt: number; updatedAt: number }
 export interface InputVersion extends ResourceInput { id: string; resourceId: string; revision: number; createdAt: number }
 export interface GeneratedSite { id: string; resourceId: string; versionId: string; environmentId: string; siteId: string; name: string; url: string; preferredDomain?: string; disposition?: ItemDisposition; createdAt: number }
@@ -52,7 +77,33 @@ export interface FollowupSettings { enabled: boolean; concurrency: number; maxAt
 export interface CollectionReportObservation { reportId:string; sourceGaps:string[] }
 export interface FollowupAction { /** Host-owned identity of the failed execution authorizing a fresh delivery. */ retryOf?: { deliveryId: string; runId: string }; action: 'retry' | 'continue' | 'answer' | 'evaluate' | 'wait' | 'interrupt' | 'repair' | 'collect'; reason: string; evidence: string[]; message?: string; imageEvidence?: string[]; progress?: OptimizationProgress; collectionObjective?:import('./collection.js').CollectionObjective; answer?: Record<string, unknown>; callId?: string; waitSeconds?: number; nextSteps?: string[] }
 export interface TaskInterruption { stage: AutomationStage; reason: string; evidence: string[]; attempted: string[]; nextSteps: string[]; resumeFrom: string; time: number }
-export interface GenerationCheckpoint { siteName?: string; subDomain?: string; rootDomain?: string; conversationHandoff?: { from: string; to: string }; repairBatch?: { planKey: string; completed: number; total: number; deliveryId?: string }; createAttempted?: boolean; transferTaskId?: string; transferComplete?: boolean; legacySubmitted?: boolean; prepared?: boolean; importedMaterials?: Record<string,string>; conversationId?: string; runId?: string; previousRunId?: string; deliveryId?: string; deliveryState?: 'sending' | 'accepted' | 'completed'; state?: string; observedAt?: number; ownerPid?: number; pending?: unknown; next?: FollowupAction }
+export interface GenerationCheckpoint { siteName?: string; subDomain?: string; rootDomain?: string; conversationHandoff?: { from: string; to: string }; repairBatch?: { planKey: string; completed: number; total: number; deliveryId?: string }; createAttempted?: boolean; transferTaskId?: string; transferComplete?: boolean; legacySubmitted?: boolean; prepared?: boolean; importedMaterials?: Record<string,string>; conversationId?: string; runId?: string; previousRunId?: string; deliveryId?: string; deliveryState?: 'sending' | 'accepted' | 'completed'; state?: string; observedAt?: number; ownerPid?: number; pending?: unknown; next?: FollowupAction; referenceTemplate?: { templateId: string; templateName: string; previewUrl: string; mode: TemplateUsageMode }; referenceTemplateSandbox?: { sandbox: string; siteId: string; previewUrl: string; templateId: string; templateName: string }; sourceSandbox?: { sandbox: string; siteId: string; previewUrl: string; transferTaskId?: string; complete?: boolean } }
+
+export function effectiveTemplateUsageMode(
+  input?: Pick<ResourceInput, 'referenceTemplateId' | 'templateUsageMode'> | null,
+  hasExistingTargetSite = false,
+): TemplateUsageMode | undefined {
+  if (!input?.referenceTemplateId?.trim()) return undefined;
+  if (input.templateUsageMode === 'reference-sandbox') return 'reference-sandbox';
+  if (input.templateUsageMode === 'direct-template') return 'direct-template';
+  return hasExistingTargetSite ? 'reference-sandbox' : 'direct-template';
+}
+
+export function effectiveReferenceUrl(
+  input?: Pick<ResourceInput, 'referenceUrl' | 'referenceTemplateId'> | null,
+  ...tasks: Array<{ generation?: Pick<GenerationCheckpoint, 'referenceTemplate' | 'referenceTemplateSandbox'> } | null | undefined>
+): string {
+  const explicit = input?.referenceUrl?.trim() || '';
+  if (!input?.referenceTemplateId?.trim()) return explicit;
+  for (const task of tasks) {
+    const previewUrl =
+      task?.generation?.referenceTemplate?.previewUrl?.trim() ||
+      task?.generation?.referenceTemplateSandbox?.previewUrl?.trim() ||
+      '';
+    if (previewUrl) return previewUrl;
+  }
+  return explicit;
+}
 export interface FollowupWindow { index: number; startedAt: number; attemptsBase: number; tokensBase: number; elapsedMsBase: number }
 export interface FollowupRun { reportObservations?:Record<string,CollectionReportObservation>; budgetId?: string; runId?: string; window?: FollowupWindow; budgetStartedAt?: number; elapsedMs?: number; activeStartedAt?: number; activeHeartbeatAt?: number; activeElapsedMs?:number; state: 'queued' | 'running' | 'waiting' | 'resolved' | 'interrupted'; attempts: number; startedAt: number; nextAt: number; tokens: number; threadId: string; imageThread?: { threadId: string; names: string[] }; policy: FollowupSettings; executionStopped: boolean; lastAction?: FollowupAction; observations: string[] }
 export interface AutomationNotice { id: string; taskId: string; title: string; message: string; createdAt: number; readAt: number | null }

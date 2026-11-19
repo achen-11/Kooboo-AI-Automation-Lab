@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, readFileSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
+import { effectiveReferenceUrl, type AutomationTask, type MaterialFile } from '../../shared/automation.js';
 import { defaultCompletenessSettings } from '../../shared/completeness.js';
 import type { Requirement, RequirementManifest, CompletenessReport } from '../../shared/completeness.js';
 import type { AutomationStore } from './store.js';
@@ -161,7 +161,8 @@ export function sourceReader(task:AutomationTask,store:AutomationStore,directory
   return async(raw:unknown,signal:AbortSignal)=>{
     const spec=z.object({kind:z.enum(['source','material']),role:z.enum(['content','reference']).optional(),url:z.string().max(2000).optional(),id:z.string().optional()}).strict().parse(raw);
     if(spec.kind==='material'){const file=input.files.find(f=>f.id===spec.id);if(!file)throw new Error('资料不存在');const bytes=readMaterial(directory,file);if(/text|json|xml|csv|svg/.test(file.type)||/\.(md|txt|json|csv|xml|svg)$/i.test(file.name)){const text=bytes.toString('utf8');return write({kind:'material',id:file.id,name:file.name,text:text.slice(0,80000),truncated:text.length>80000});}const record=write({kind:'material',id:file.id,name:file.name,type:file.type,sha256:file.sha256,size:bytes.length});return {...record as object,...(file.type.startsWith('image/')?{imagePath:resolve(directory,'materials',file.id),note:'需实际查看图片后提炼要求'}:{filePath:resolve(directory,'materials',file.id),note:'使用本地只读工具检查原始文件，无法读取的资料需明确标记未验证'})};}
-    const base=spec.role==='reference'?input.referenceUrl||input.contentUrl:input.contentUrl;if(!base)throw new Error('无此来源站');const url=new URL(spec.url||base,base);if(url.origin!==new URL(base).origin||url.username||url.password)throw new Error('只能读取本任务来源站域名');
+    const effectiveRef=effectiveReferenceUrl(input,task,store.root(task));
+    const base=spec.role==='reference'?effectiveRef||input.contentUrl:input.contentUrl;if(!base)throw new Error('无此来源站');const url=new URL(spec.url||base,base);if(url.origin!==new URL(base).origin||url.username||url.password)throw new Error('只能读取本任务来源站域名');
     const bodyCharacters=Math.min(1024*1024,Math.max(1,options.bodyCharacters??100000));
     const result=await httpRead(url,{signal:AbortSignal.any([signal,AbortSignal.timeout(20000)]),limit:1024*1024});const compacted=compactSourceHtml(result.body,bodyCharacters);return write({kind:'source',url:url.href,status:result.status,...compacted});
   };
@@ -169,7 +170,9 @@ export function sourceReader(task:AutomationTask,store:AutomationStore,directory
 export async function ensureManifest(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal){
   if(!task.requirementsEnabled||task.scope!=='site'||task.requirementsId)return;
   const manifests=new ManifestStore(store),work=resolve(directory,'manifest-runs',task.id),artifacts:MaterialFile[]=[],write=evidenceWriter(work,artifacts,'content','source',file=>store.db.prepare('INSERT INTO auto_manifest_artifacts VALUES(?,?,?)').run(file.name,task.id,file.sha256));
-  const input=store.version(task.versionId)!,policy=task.completenessPolicy||defaultCompletenessSettings;
+  const rawInput=effectiveCollectionInput(task,store,directory)||store.version(task.versionId)!,policy=task.completenessPolicy||defaultCompletenessSettings;
+  const resolvedRef=effectiveReferenceUrl(rawInput,task,store.root(task));
+  const input=resolvedRef&&resolvedRef!==rawInput.referenceUrl?{...rawInput,referenceUrl:resolvedRef}:rawInput;
   const context={scenario:task.scenario,scope:task.scope,input,message:task.message,submissionSchema:z.toJSONSchema(manifestInput),dataIdentityInstructions:'data项必须按来源声明计量域dataIdentity：page记录、relations精确页面成员边或assets素材；省略仅兼容旧page记录，不能按ID或标题自动猜测。每个域都需要完整expectedKeys及expectedCount，未知时保留未验证，不能以目标反推来源总量。relations键为JSON.stringify([parentSourceURL,childSourceURL])，保留分页及首页别名的精确页面身份；同源完整HTTP(S) URL须规范化，并引用本清单required page的全量paths或required data page域的全部expectedKeys。页面成员关系数量不能替换成去重后的业务实体关系数量；来源素材URL数量不能替换成去重文件数量。只有正常extend_manifest才能补充冻结范围，已显式计量域及父子引用不能缩减。'};
   try{await localDecision({task,store,vault,directory,id:'manifest-'+task.id,stage:'planning',sop:policy.sop+'\n从冻结资料与源站建立应交付清单，不能根据生成站已经做了什么缩减要求。先通过 read 查询来源：{kind:"source",role:"content"或"reference",url:同域URL}、{kind:"material",id:附件ID}。发现导航、sitemap、列表、动态内容、静态页面、交互和业务流程。覆盖范围不明确必须 sourceComplete=false 并说明缺口。每项来源必须引用读到的证据。动态内容列出全部 expectedKeys 和 expectedCount，不能只给采样数；静态页面全覆盖 PC/移动，动态模板声明边界样本。App 按业务流程列项。迁移/升级检查 URL 和 SEO，模板采用替代图片/示例内容，不要求搬运原站版权资源或继承原站 SEO。只读探查不可提交表单。submit.result 必须符合 context.submissionSchema。',context,policy:{key:'planning:'+task.id,runKey:task.id,maxTokens:policy.maxTokens,maxRequests:policy.maxRequests},minutes:policy.maxMinutes,signal,read:sourceReader(task,store,directory,write),submit:raw=>{
       const parsed=manifestInput.parse(raw);if(parsed.evidence.some(e=>!artifacts.some(f=>f.name===e)))throw new Error('清单引用了不存在的来源证据');if((input.contentUrl||input.referenceUrl||input.files.length)&&!parsed.evidence.length)throw new Error('清单必须先读取资料或来源站');return manifests.save(task,parsed,'ai');

@@ -5,7 +5,7 @@ import { taskHeader as projectTask, type TaskHeader } from './task-index.js';
 import type { TaskSummary } from '../../shared/task-presentation.js';
 import { Conflict } from '../lib/store.js';
 import type { AutomationRule, AutomationSettings, AutomationTask, AutomationNotice, FollowupSettings, TaskInterruption, GeneratedSite, InputVersion, Resource, ResourceInput, OptimizationPolicy } from '../../shared/automation.js';
-import { defaultOptimizationPolicy, supportsAutomaticOptimization } from '../../shared/automation.js';
+import { defaultOptimizationPolicy, effectiveReferenceUrl, effectiveTemplateUsageMode, supportsAutomaticOptimization } from '../../shared/automation.js';
 import type { NoticePage } from '../../shared/task-presentation.js';
 import { defaultCompletenessSettings } from '../../shared/completeness.js';
 import { defaultLearningSettings } from '../../shared/experience.js';
@@ -224,7 +224,22 @@ export class AutomationStore {
       const eligible=this.rules().filter(r=>r.kind===kind&&(!r.scenarios||r.scenarios.includes(version.scenario))&&r.criteria.some(c=>c.scopes.includes(input.scope)));
       const rule = input.ruleSnapshot || eligible.find(r=>r.id===input.ruleId) || (!input.ruleId?eligible.at(-1):undefined);
       if (input.kind==='evaluation' && !rule) throw new Conflict('没有适用于当前场景的已发布规则');
-      const message = [site && input.kind==='generation'?'在已有目标站继续生成，不新建站点。':settings.prompts[version.scenario], `本次范围：${input.scope==='homepage'?'仅首页，其他页面不属于本次交付范围。':'全站，按资料和用户目标完成全部范围。'}`, `内容站：${version.contentUrl||'未提供'}\n参考站：${version.referenceUrl||version.contentUrl||'未提供'}`, '资料说明（作为业务内容）：\n'+version.description, version.files.length?'资料清单：\n'+version.files.map(f=>f.name).join('\n'):'', input.requirements?'补充要求：\n'+input.requirements:'', '尽量一次自主完成，不反复询问。确实阻塞时说明已完成工作和需要的输入。'].filter(Boolean).join('\n\n');
+      const templateMode = effectiveTemplateUsageMode(version, Boolean(site));
+      const templateOpening =
+        site && input.kind === 'generation'
+          ? '在已有目标站继续生成，不新建站点。'
+          : templateMode === 'direct-template'
+            ? version.scenario === 'upgrade'
+              ? '本任务基于所选 Kooboo 原生模板直接建站并升级旧内容站：目标站直接从 Kooboo 模板创建，旧内容站将克隆到只读源站 Sandbox。保留原生模板框架与视觉体系，只做内容、字段与结构迁移替换，严禁把旧站模板/CSS 全盘搬入目标站，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
+              : '本任务基于所选 Kooboo 原生模板建站：目标站直接从 Kooboo 模板创建。遵循 kooboo-coding 与 kooboo-site-redesign 的模板原位适配规范，保留原生模板语法、布局结构与资源组织，在原位完成内容替换、品牌重设与动态数据结构对齐，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
+            : templateMode === 'reference-sandbox'
+              ? `${settings.prompts[version.scenario]}\n\n参考模板已预先导入隔离研究 Sandbox（tpl-*），请优先复用该 Sandbox 中的原生 Kooboo 对象与结构研究，不要再对参考站运行 transfer_page。`
+              : settings.prompts[version.scenario];
+      const templateLine = version.referenceTemplateId
+        ? `\nKooboo 参考模板：${version.referenceTemplateName || version.referenceTemplateId}（${version.referenceTemplateId}）；使用方式：${templateMode === 'reference-sandbox' ? '克隆到参考 Sandbox 供参考' : '直接作为目标站基础模板并原位适配'}`
+        : '';
+      const resolvedRef = effectiveReferenceUrl(version) || version.contentUrl || '未提供';
+      const message = [templateOpening, `本次范围：${input.scope==='homepage'?'仅首页，其他页面不属于本次交付范围。':'全站，按资料和用户目标完成全部范围。'}`, `内容站：${version.contentUrl||'未提供'}\n参考站：${resolvedRef}${templateLine}`, '资料说明（作为业务内容）：\n'+version.description, version.files.length?'资料清单：\n'+version.files.map(f=>f.name).join('\n'):'', input.requirements?'补充要求：\n'+input.requirements:'', '尽量一次自主完成，不反复询问。确实阻塞时说明已完成工作和需要的输入。'].filter(Boolean).join('\n\n');
       const now = Date.now();
       const task: AutomationTask = { id:randomUUID(),kind:input.kind,resourceId:id,versionId:version.id,resourceName:version.name,scenario:version.scenario,scope:input.scope,environmentId:site?.environmentId||input.environmentId,generatedSiteId:site?.id||null,parentId:input.parentId||null,message,status:'queued',stopped:true,createdAt:now,updatedAt:now,error:'',context:'',threadId:'',rule:rule||null,stage:input.kind==='generation'?'prepare':'evaluation',report:null,siteUrl:site?.url||'',model:null };
       task.optimizationRootId=input.optimizationRootId;task.optimizationRound=input.optimizationRound;

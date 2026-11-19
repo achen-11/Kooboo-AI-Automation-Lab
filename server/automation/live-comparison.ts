@@ -3,7 +3,7 @@ import https from 'node:https';
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { Conflict } from '../lib/store.js';
-import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
+import { effectiveReferenceUrl, type AutomationTask, type MaterialFile } from '../../shared/automation.js';
 import {
   evaluateFrameHeaders,
   resolveComparisonSources,
@@ -254,7 +254,23 @@ export function registerLiveComparisonApi(
 
     const version = store.version(task.versionId);
     const site = task.generatedSiteId ? store.site(task.generatedSiteId) : undefined;
-    const referenceUrl = version?.referenceUrl?.trim() || '';
+    const root = store.root(task);
+    const parent = task.parentId ? store.task(task.parentId) : undefined;
+    const siblingGen =
+      version?.referenceTemplateId && !version?.referenceUrl?.trim() && task.generatedSiteId
+        ? store
+            .tasks()
+            .find(
+              (item) =>
+                item.generatedSiteId === task.generatedSiteId &&
+                item.kind === 'generation' &&
+                Boolean(
+                  item.generation?.referenceTemplate?.previewUrl ||
+                    item.generation?.referenceTemplateSandbox?.previewUrl,
+                ),
+            )
+        : undefined;
+    const referenceUrl = effectiveReferenceUrl(version, task, root, parent, siblingGen);
     const contentUrl = version?.contentUrl?.trim() || '';
     const targetUrl = (site?.url || task.siteUrl || '').trim();
     const sources = resolveComparisonSources({

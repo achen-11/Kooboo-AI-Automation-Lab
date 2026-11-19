@@ -2,7 +2,7 @@ import { createHash, randomUUID } from 'node:crypto';
 import { mkdirSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import type { AutomationTask } from '../../shared/automation.js';
+import { effectiveReferenceUrl, type AutomationTask } from '../../shared/automation.js';
 import { defaultCompletenessSettings } from '../../shared/completeness.js';
 import type { TemplateBaseline } from '../../shared/template-workflow.js';
 import { templateDesignPrompt } from '../../shared/template-design.js';
@@ -37,7 +37,7 @@ export async function ensureTemplateAnalysis(task:AutomationTask,store:Automatio
   if(record.baseline){for(const file of record.baseline.evidence)readTemplateEvidence(directory,file);return record.baseline;}
   if(task.id!==record.rootTaskId)throw new Error('必须先完成根任务的参考分析，不能从目标产物反推基线');
   const input=store.version(task.versionId);if(!input)throw new Error('固定输入版本不存在');
-  const reference=input.referenceUrl||input.contentUrl,content=input.contentUrl&&input.contentUrl!==reference?input.contentUrl:'';
+  const reference=effectiveReferenceUrl(input,task,store.root(task))||input.contentUrl,content=input.contentUrl&&input.contentUrl!==reference?input.contentUrl:'';
   const work=resolve(directory,'automation-runs',task.id);mkdirSync(resolve(work,'evidence'),{recursive:true,mode:0o700});
   task.stage='prepare';store.put(task);
   const browser=await (dependencies.openBrowser||evaluationBrowser)({target:'',reference,content},work,signal,task.artifacts||[],files=>{task.artifacts=files;store.put(task);},{taskId:task.id,siteRevision:'',inputVersionId:task.versionId,sourceSnapshotId:task.id,viewportEvidence:true});

@@ -48,7 +48,7 @@ function recordBindingContext(task:AutomationTask,sections:Record<string,unknown
 }
 
 function contextText(sections:Record<string,unknown>) {
-  return (sections.referenceStudy?String(sections.referenceStudy)+'\n\n':'')+String(sections.instructions||'')+String(sections.guidance||'')+(sections.manifest?'\n\n本轮固定交付清单（不得缩减，逐项完成）：\n'+JSON.stringify(sections.manifest):'')+(sections.templateBaseline?'\n\n固定模板结构与设计约束：\n'+JSON.stringify(sections.templateBaseline):'')+(sections.templateRepairIssues?'\n\n本轮结构化修复问题：\n'+JSON.stringify(sections.templateRepairIssues):'')+(sections.collectionRecordBindings?'\n\n规范记录声明合同：\n'+JSON.stringify(sections.collectionRecordBindings):'')+(sections.sourceEvidence&&!hasSourceDocuments(sections)?'\n\n来源证据状态：\n'+JSON.stringify(sections.sourceEvidence):'');
+  return (sections.referenceStudy?String(sections.referenceStudy)+'\n\n':'')+String(sections.instructions||'')+String(sections.guidance||'')+(sections.templateExecutionGuidance?'\n\n'+String(sections.templateExecutionGuidance):'')+(sections.manifest?'\n\n本轮固定交付清单（不得缩减，逐项完成）：\n'+JSON.stringify(sections.manifest):'')+(sections.templateBaseline?'\n\n固定模板结构与设计约束：\n'+JSON.stringify(sections.templateBaseline):'')+(sections.templateRepairIssues?'\n\n本轮结构化修复问题：\n'+JSON.stringify(sections.templateRepairIssues):'')+(sections.collectionRecordBindings?'\n\n规范记录声明合同：\n'+JSON.stringify(sections.collectionRecordBindings):'')+(sections.sourceEvidence&&!hasSourceDocuments(sections)?'\n\n来源证据状态：\n'+JSON.stringify(sections.sourceEvidence):'');
 }
 
 function hasSourceDocuments(sections: Record<string, unknown>) {

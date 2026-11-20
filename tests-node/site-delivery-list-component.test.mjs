@@ -416,3 +416,77 @@ test('SiteDeliveryList batch resume skips confirm-stopped, reports per-item issu
     f.close();
   }
 });
+
+test('SiteDeliveryList prioritizes DE delivery URL alongside source HK URL even while verifying and keeps plain HK sites unbadged', async () => {
+  const f = await fixture((path) => {
+    const res = pageResponse(path);
+    res.items = [
+      {
+        ...res.items[0],
+        id: 'site-delivered',
+        generatedSiteId: 'site-delivered',
+        resourceName: 'Delivered DE Site',
+        siteUrl: 'https://hk-source.kooboo.io/',
+        state: 'ready',
+        reason: '已完成跨环境交付并通过核验。',
+        delivery: { taskId: 'eval-delivered', status: 'completed', targetUrl: 'https://demo.kooboo.de/' },
+      },
+      {
+        ...res.items[0],
+        id: 'site-verifying',
+        generatedSiteId: 'site-verifying',
+        resourceName: 'Verifying Site',
+        siteUrl: 'https://hk-verifying.kooboo.io/',
+        state: 'running',
+        reason: '正在迁移交付或核验目标环境。',
+        delivery: { taskId: 'eval-verifying', status: 'verifying', targetUrl: 'https://pending.kooboo.de/' },
+      },
+      {
+        ...res.items[0],
+        id: 'site-plain',
+        generatedSiteId: 'site-plain',
+        resourceName: 'Plain HK Site',
+        siteUrl: 'https://hk-plain.kooboo.io/',
+        state: 'ready',
+        reason: '尚未跨环境交付。',
+      },
+    ];
+    res.total = 3;
+    return res;
+  });
+  try {
+    const primaryLinks = f.nodes(n => n.tag === 'a' && String(n.props.class || '').includes('site-address') && !String(n.props.class || '').includes('site-address-secondary'));
+    assert.equal(primaryLinks.length, 3);
+    assert.equal(primaryLinks[0].props.href, 'https://demo.kooboo.de/');
+    assert.ok(String(primaryLinks[0].props.class).includes('site-address-delivered'));
+    assert.ok(text(primaryLinks[0]).includes('已交付'));
+    assert.ok(text(primaryLinks[0]).includes('https://demo.kooboo.de/'));
+
+    assert.equal(primaryLinks[1].props.href, 'https://pending.kooboo.de/');
+    assert.ok(!String(primaryLinks[1].props.class).includes('site-address-delivered'));
+    assert.ok(String(primaryLinks[1].props.class).includes('site-address-delivery-pending'));
+    assert.ok(text(primaryLinks[1]).includes('核验中'));
+    assert.ok(text(primaryLinks[1]).includes('https://pending.kooboo.de/'));
+    const pendingBadge = f.nodes(n => n.tag === 'span' && String(n.props.class || '').includes('delivery-link-badge') && String(n.props.class || '').includes('pending'));
+    assert.equal(pendingBadge.length, 1);
+
+    assert.equal(primaryLinks[2].props.href, 'https://hk-plain.kooboo.io/');
+    assert.ok(!String(primaryLinks[2].props.class).includes('site-address-delivered'));
+    assert.ok(!String(primaryLinks[2].props.class).includes('site-address-delivery-pending'));
+    assert.equal(text(primaryLinks[2]), 'https://hk-plain.kooboo.io/');
+
+    const secondaryLinks = f.nodes(n => n.tag === 'a' && String(n.props.class || '').includes('site-address-secondary'));
+    assert.equal(secondaryLinks.length, 2);
+    assert.equal(secondaryLinks[0].props.href, 'https://hk-source.kooboo.io/');
+    assert.ok(text(secondaryLinks[0]).includes('源站：https://hk-source.kooboo.io/'));
+    assert.equal(secondaryLinks[1].props.href, 'https://hk-verifying.kooboo.io/');
+    assert.ok(text(secondaryLinks[1]).includes('源站：https://hk-verifying.kooboo.io/'));
+
+    const statusLinks = f.nodes(n => n.tag === 'a' && String(n.props.class || '').includes('delivery-status-link'));
+    assert.equal(statusLinks.length, 1);
+    assert.equal(statusLinks[0].props.href, '#/tasks/eval-verifying?tab=delivery');
+    assert.ok(text(statusLinks[0]).includes('交付核验中'));
+  } finally {
+    f.close();
+  }
+});

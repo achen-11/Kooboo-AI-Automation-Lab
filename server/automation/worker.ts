@@ -80,6 +80,14 @@ export class AutomationWorker{
       for(const header of this.store.headers().filter(t=>t.optimization&&!['completed','stopped','planning'].includes(t.optimization.state)&&t.stopped&&!['following-up','pending','interrupted','cancelled','cancelling'].includes(t.status)&&!this.running.has(t.id))){
         const root=this.store.task(header.id,false)!;
         try{advanceOptimization(root,this.store,settings);}catch(error){stopOptimization(root,this.store,'优化调度无法继续：'+(error as Error).message,['查看执行记录，核实站点、原会话与报告。']);}
+        if(root.optimization?.state==='completed'&&root.optimization.reportId){
+          const finalEval=this.store.task(root.optimization.reportId,false);
+          if(finalEval)this.maybeQueueAutoDelivery(finalEval,root);
+        }else if(root.optimization?.state==='stopped'&&root.autoDelivery){
+          const message='自动优化未达到目标已停止，未自动触发跨环境交付；如需交付请在「交付」页手动发起。';
+          this.store.event(root.id,message);
+          this.store.notice(root,'自动交付未启动',message);
+        }
       }
       // Executor-injected test workers do not start real model side effects.
       if(settings.learning?.collect&&((this.execute.generation===executeGeneration&&this.execute.evaluation===executeEvaluation)||this.reflect!==reflectExperience)){
@@ -120,6 +128,26 @@ export class AutomationWorker{
     return Promise.race([Promise.allSettled(pending).then(()=>{}),new Promise<void>(r=>{const t=setTimeout(r,5000);t.unref();})]);
   }
   owns(id:string){return this.running.has(id)||this.learning.has(id);}
+  private shouldAutoDeliver(evalTask:AutomationTask,root?:AutomationTask){
+    const config=this.vault.get().environments.find(e=>e.id===evalTask.environmentId)?.delivery;
+    if(!config?.enabled)return false;
+    const explicit=evalTask.autoDelivery??root?.autoDelivery;
+    if(explicit!==undefined)return explicit;
+    return Boolean(config.auto&&evalTask.scope==='site'&&['migration','upgrade'].includes(evalTask.scenario));
+  }
+  private maybeQueueAutoDelivery(evalTask:AutomationTask,root?:AutomationTask){
+    if(!this.shouldAutoDeliver(evalTask,root))return;
+    if(evalTask.generatedSiteId&&this.store.headers(evalTask.generatedSiteId).some(t=>t.delivery)){
+      this.store.event(evalTask.id,'该生成站已有跨环境交付记录，跳过自动重复交付。');
+      return;
+    }
+    try{queueDelivery(evalTask,this.store,this.vault);}
+    catch(error){
+      const reason=(error as Error).message;
+      this.store.event(evalTask.id,'自动交付未启动：'+reason);
+      this.store.notice(evalTask,'自动交付未启动',reason);
+    }
+  }
   private interrupt(task:AutomationTask,reason:string,nextSteps:string[],evidence:string[]=[],userSummary?:HumanNotice) {
     this.store.interrupt(task,{reason,evidence,attempted:this.store.events(task.id).filter(e=>/AI 决策|工具失败|执行失败|重试/.test(e.message)).slice(-12).map(e=>e.message),nextSteps,resumeFrom:task.generatedSiteId?'沿用当前生成站、输入版本和已保存证据，从当前阶段继续。':'确认环境及建站结果后，从资料准备阶段继续。',...(userSummary?{userSummary}:{})});
     if(task.optimization){task.optimization.state='stopped';task.optimization.reason=reason;task.optimization.nextSteps=nextSteps;task.optimization.stoppedAt=Date.now();this.store.put(task);}
@@ -208,11 +236,11 @@ export class AutomationWorker{
         task.status='completed';task.error='';
         if(task.followup)task.followup.state='resolved';
         if(task.kind==='evaluation')this.store.publishSiteReport(task);
-        if(task.kind==='generation'&&(task.optimization||task.optimizationRootId||this.vault.automation().autoEvaluate)&&(!this.store.root(task)?.optimization||!['stopped','completed'].includes(this.store.root(task)!.optimization!.state))){task.stage='handoff';this.store.ensureEvaluation(task,this.vault.automation());}
+        if(task.kind==='generation'&&(task.optimization||task.optimizationRootId||task.autoDelivery||this.vault.automation().autoEvaluate)&&(!this.store.root(task)?.optimization||!['stopped','completed'].includes(this.store.root(task)!.optimization!.state))){task.stage='handoff';this.store.ensureEvaluation(task,this.vault.automation());}
         else this.store.notice(task,task.kind==='evaluation'?'评测报告已完成':'生成已结束',task.resourceName+(task.kind==='evaluation'?'：查看本轮报告、问题与证据。':'：自动评测已关闭。'));
       }
       this.store.put(task);this.store.event(task.id,task.status==='cancelled'?'任务已取消':'本阶段执行已结束');
-      if(task.kind==='evaluation'&&task.status==='completed'){const delivery=this.vault.get().environments.find(e=>e.id===task.environmentId)?.delivery;if(delivery?.enabled&&delivery.auto&&task.scope==='site'&&['migration','upgrade'].includes(task.scenario)){try{queueDelivery(task,this.store,this.vault);}catch(error){this.store.notice(task,'自动交付未启动',(error as Error).message);}}}
+      if(task.kind==='evaluation'&&task.status==='completed'){const root=this.store.root(task);if(!root?.optimization)this.maybeQueueAutoDelivery(task,root);}
     }catch(error){
       task.stopped=!(error instanceof UnconfirmedStop);
       const reason=error instanceof UnconfirmedStop?error:controller.signal.reason||error;
@@ -308,7 +336,13 @@ export class AutomationWorker{
   private applyAction(task:AutomationTask,action:FollowupAction){
     const followup=task.followup!;
     if(task.optimization?.state==='planning'){
-      applyOptimizationAction(task,action,this.store,this.vault.automation(),this.directory);return;
+      applyOptimizationAction(task,action,this.store,this.vault.automation(),this.directory);
+      if((task.optimization.state as string)==='stopped'&&task.autoDelivery){
+        const message='自动优化未达到目标已停止，未自动触发跨环境交付；如需交付请在「交付」页手动发起。';
+        this.store.event(task.id,message);
+        this.store.notice(task,'自动交付未启动',message);
+      }
+      return;
     }
     if(action.action==='interrupt'){this.interrupt(task,action.reason,action.nextSteps||['检查当前任务条件后恢复。'],action.evidence,action.userSummary);return;}
     if(task.autonomy){

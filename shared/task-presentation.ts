@@ -1,10 +1,11 @@
 import type { AutomationReport, AutomationTask, TaskStatus, OptimizationPolicy, OptimizationRun } from './automation.js';
 import type { ItemDisposition } from './dispositions.js';
 import { deriveHumanNotice, type DiagnosticCategory, type HumanNotice } from './human-diagnostics.js';
+import type { SiteDeliveryTarget } from './site-delivery.js';
 export interface OptimizationSummary { state: OptimizationRun['state']; policy: Omit<OptimizationPolicy,'sop'>; round: number; activeTaskId: string; reportId: string | null; reason: string; nextStep: string }
 
 export type TaskTab = 'overview' | 'report' | 'execution' | 'usage' | 'input' | 'delivery';
-export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { canAdjustSiteNames?: boolean };
+export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { kind?: AutomationTask['kind']; canAdjustSiteNames?: boolean };
 export type TaskRecoveryAction = 'resume' | 'force-resume' | 'confirm-stopped' | 'adjust-site-names';
 export function canAdjustTaskSiteNames(task: AutomationTask): boolean {
   const generation = task.generation;
@@ -31,17 +32,18 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   humanAttention?: HumanNotice;
   nextStep: string;
   canAdjustSiteNames?: boolean;
+  autoDelivery?: boolean;
   deliveryStatus?: string;
   optimization?: OptimizationSummary;
   optimizationRootId?: string;
   optimizationRound?: number;
   completionFirst?: boolean;
   hardMaxRounds?: number;
-  delivery?: Pick<NonNullable<AutomationTask['delivery']>, 'status'>;
+  delivery?: Pick<NonNullable<AutomationTask['delivery']>, 'status'> & { targetUrl?: string };
   disposition?: ItemDisposition;
 };
 export interface WorkflowActiveSummary { tasks: number; learning: number; reason: string }
-export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; canCompareLive?: boolean; disposition?: ItemDisposition; resourceDisposition?: ItemDisposition; workflowActive?: WorkflowActiveSummary; latest: { seq: number; time: number; message: string; taskId: string } | null }
+export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; delivery?: SiteDeliveryTarget | null; canCompareLive?: boolean; disposition?: ItemDisposition; resourceDisposition?: ItemDisposition; workflowActive?: WorkflowActiveSummary; latest: { seq: number; time: number; message: string; taskId: string } | null }
 export interface CompactNotice { id: string; taskId: string; resourceName: string; title: string; summary: string; tab: TaskTab; createdAt: number; readAt: number | null; currentStatus?: TaskStatus; superseded: boolean }
 export interface NoticePage<T = CompactNotice> { items: T[]; total: number; unread: number; page: number; pages: number; pageSize: number }
 
@@ -78,7 +80,10 @@ export function taskSummary(task: AutomationTask): TaskSummary {
     attention: humanAttention ? brief(humanAttention.headline) : '',
     ...(humanAttention ? { attentionCategory: humanAttention.category, humanAttention } : {}),
     nextStep: adjustNames ? '自动调整被占用的站点名称或子域名后继续原任务。' : brief(humanAttention?.userActions[0] || task.interruption?.nextSteps[0] || ''),
-    canAdjustSiteNames: adjustNames, deliveryStatus: task.delivery?.status, delivery: task.delivery ? { status: task.delivery.status } : undefined };
+    canAdjustSiteNames: adjustNames,
+    ...(task.autoDelivery !== undefined ? { autoDelivery: task.autoDelivery } : {}),
+    deliveryStatus: task.delivery?.status,
+    delivery: task.delivery ? { status: task.delivery.status, ...(task.delivery.target?.siteUrl ? { targetUrl: task.delivery.target.siteUrl } : {}) } : undefined };
 }
 export function initialTaskTab(search: string): TaskTab {
   const value = new URLSearchParams(search).get('tab');

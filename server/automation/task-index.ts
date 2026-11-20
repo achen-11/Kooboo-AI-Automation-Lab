@@ -21,7 +21,7 @@ export type ReadinessTask = Pick<AutomationTask, 'collectionVersionId' | 'versio
 export type TaskHeader = Omit<TaskSummary, 'report' | 'optimization' | 'delivery'> & ReadinessTask & {
   summary: TaskSummary;
   report: ReadinessReport | null;
-  delivery?: Pick<NonNullable<AutomationTask['delivery']>, 'status' | 'stopped' | 'nextAt' | 'error'>;
+  delivery?: Pick<NonNullable<AutomationTask['delivery']>, 'status' | 'stopped' | 'nextAt' | 'error'> & { targetUrl?: string; verifiedAt?: number };
   followup?: Pick<NonNullable<AutomationTask['followup']>, 'state' | 'nextAt'>;
   error: string;
   reflectionKey: string | null;
@@ -66,7 +66,7 @@ export function taskHeader(task: AutomationTask): TaskHeader {
         checks: report.collectionTarget.checks.length ? [{ status: report.collectionTarget.checks.find(check => check.status !== 'verified')?.status || 'verified' }] : [],
       } : undefined,
     } : null,
-    delivery: task.delivery ? { status: task.delivery.status, stopped: task.delivery.stopped, nextAt: task.delivery.nextAt, error: brief(task.delivery.error || '') } : undefined,
+    delivery: task.delivery ? { status: task.delivery.status, stopped: task.delivery.stopped, nextAt: task.delivery.nextAt, error: brief(task.delivery.error || ''), ...(task.delivery.target?.siteUrl ? { targetUrl: task.delivery.target.siteUrl } : {}), ...(task.delivery.verifiedAt ? { verifiedAt: task.delivery.verifiedAt } : {}) } : undefined,
     followup: task.followup ? { state: task.followup.state, nextAt: task.followup.nextAt } : undefined,
     reflectionKey: reflection ? reflectionDataKey(task) : null,
   };

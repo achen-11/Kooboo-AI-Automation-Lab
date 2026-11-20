@@ -2,7 +2,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { readFileSync, writeFileSync, mkdirSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { z } from 'zod';
-import type { AutomationTask } from '../../shared/automation.js';
+import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { UnconfirmedStop } from './errors.js';
@@ -14,13 +14,39 @@ import { usageCapture } from './usage-proxy.js';
 import { builtInHarnessSop } from './harness.js';
 
 const receiptSchema=z.object({siteId:z.string().uuid(),siteUrl:z.url().refine(v=>{const u=new URL(v);return /^https?:$/.test(u.protocol)&&!u.username&&!u.password;})});
+export function reportPassedDeliveryGate(task:AutomationTask,threshold:number):boolean{
+  const report=task.report;
+  if(!report)return false;
+  if(report.quality==='passed')return true;
+  if(report.quality==='failed')return false;
+  if(task.templateWorkflow||report.review?.scopeComplete===false)return false;
+  if((task.requirementsEnabled||report.completeness)&&(report.completeness?.state!=='complete'||report.completeness.sourceComplete===false))return false;
+  if(report.migrationCheck&&report.migrationCheck.state!=='complete')return false;
+  if((task.collectionVersionId||report.collectionTarget)&&(!report.collectionTarget||report.collectionTarget.state!=='complete'||!report.collectionTarget.checks.length||report.collectionTarget.checks.some(check=>check.status!=='verified')))return false;
+  if(report.issues.some(issue=>issue.severity==='critical'||issue.severity==='major'))return false;
+  const criteria=task.rule?.criteria.filter(c=>c.scopes.includes(task.scope))||[];
+  if(!criteria.length)return false;
+  if(report.assessments.some(a=>a.score===null))return false;
+  const criteriaOk=criteria.every(criterion=>criterion.viewports.every(viewport=>{
+    const assessment=report.assessments.find(a=>a.criterionId===criterion.id&&a.viewport===viewport);
+    return Boolean(assessment&&assessment.score!==null&&(!criterion.required||assessment.passed===true));
+  }));
+  if(!criteriaOk)return false;
+  const requiredViewports=[...new Set(criteria.flatMap(c=>c.viewports))];
+  return report.scores.every(s=>typeof s.value==='number'&&s.value>=threshold)
+    &&requiredViewports.every(viewport=>{
+      const score=report.scores.find(s=>s.viewport===viewport)?.value;
+      return typeof score==='number'&&score>=threshold;
+    });
+}
 export function queueDelivery(task:AutomationTask,store:AutomationStore,vault:Vault){
   if(store.domainReserved(task.generatedSiteId))throw new Conflict('站点正在换绑域名，请稍后安排交付');
   if(task.kind!=='evaluation'||task.status!=='completed'||!task.stopped||!task.report)throw new Conflict('请先完成源站的独立评测');
   if(task.delivery)return task;
   const env=vault.get().environments.find(e=>e.id===task.environmentId),config=env?.delivery;
   if(!config?.enabled||!config.token)throw new Conflict('当前连接未启用交付，或缺少迁移令牌');
-  if(config.requirePassed&&task.report.quality!=='passed')throw new Conflict('当前交付策略要求源站评测通过');
+  const threshold=store.root(task)?.optimization?.threshold??vault.get().threshold;
+  if(config.requirePassed&&!reportPassedDeliveryGate(task,threshold))throw new Conflict('当前交付策略要求源站评测通过');
   const site=task.generatedSiteId&&store.site(task.generatedSiteId);if(!site||!site.url)throw new Conflict('缺少生成站身份或地址');
   if(site.preferredDomain&&store.currentReport(task)?.id!==task.id)throw new Conflict('站点域名已变更，请先完成当前地址的独立评测再交付');
   const related=store.tasks().filter(t=>t.generatedSiteId===site.id);
@@ -38,7 +64,10 @@ export function expectedDeliveryPaths(task:AutomationTask,directory:string){
   }
   return [...paths].slice(0,100);
 }
-const verificationSchema=z.object({summary:z.string().min(1),verified:z.array(z.string()),unverified:z.array(z.string()),evidence:z.array(z.string()).min(1)}).strict();
+const evidenceFileName=z.string().regex(/^[a-f0-9-]{36}\.[a-z0-9]{1,8}$/,'evidence 每项必须是单个裸文件名（例如 xxxx.png），禁止拼接多个文件名或附带说明');
+const verificationOutputSchema=z.object({summary:z.string().min(1),verified:z.array(z.string()),unverified:z.array(z.string()),outOfScope:z.array(z.string()),evidence:z.array(z.string()).min(1)}).strict();
+const verificationSchema=verificationOutputSchema.extend({evidence:z.array(evidenceFileName).min(1)}).strict();
+export function parseDeliveryVerification(raw:unknown){return verificationSchema.parse(raw);}
 export async function checkDeliveryAccess(task:AutomationTask,store:AutomationStore,directory:string,signal:AbortSignal){
   signal.throwIfAborted();
   const delivery=task.delivery!;if(!delivery.target)throw new Error('缺少目标交付回执，不能核验');
@@ -56,8 +85,9 @@ export async function verifyDelivery(task:AutomationTask,store:AutomationStore,v
   const delivery=task.delivery!;
   const work=resolve(directory,'automation-runs',task.id,'delivery',delivery.id);mkdirSync(resolve(work,'evidence'),{recursive:true,mode:0o700});
   const retained=(delivery.artifacts||[]).filter(f=>{try{return createHash('sha256').update(readFileSync(resolve(work,'evidence',f.name))).digest('hex')===f.sha256;}catch{return false;}});
-  const browser=await evaluationBrowser({target:delivery.target!.siteUrl,reference:delivery.sourceUrl,content:''},work,signal,retained,files=>{delivery.artifacts=files;store.put(task);});
-  let usage:Awaited<ReturnType<typeof usageCapture>>|undefined;const startedAt=Date.now();
+  writeFileSync(resolve(work,'evidence-manifest.json'),JSON.stringify(retained),{mode:0o600});
+  const browser=await evaluationBrowser({target:delivery.target!.siteUrl,reference:delivery.sourceUrl,content:''},work,signal,retained,files=>{delivery.artifacts=files;writeFileSync(resolve(work,'evidence-manifest.json'),JSON.stringify(files),{mode:0o600});store.put(task);});
+  let usage:Awaited<ReturnType<typeof usageCapture>>|undefined;
   try{
     usage=await usageCapture(task.id,'delivery',store,vault,signal);
     writeFileSync(resolve(work,'task.json'),JSON.stringify(store.sanitize({scope:task.scope,sourceReport:task.report,delivery,paths}),null,2),{mode:0o600});
@@ -65,11 +95,31 @@ export async function verifyDelivery(task:AutomationTask,store:AutomationStore,v
     const client=codexClient(vault,directory,{...browser.env,...usage.env});
     const options={model:vault.automation().evaluationModel,workingDirectory:work,skipGitRepoCheck:true,sandboxMode:'workspace-write' as const,networkAccessEnabled:true,approvalPolicy:'never' as const,webSearchMode:'disabled' as const};
     const thread=delivery.verificationThreadId?client.resumeThread(delivery.verificationThreadId,options):client.startThread(options);
-    const stream=await thread.runStreamed('读取 SKILL.md 和 task.json，通过 node browser.mjs 工具核验交付站，保留原站报告。本次是交付核验，不重新评分。原有错误及证据见 task.json；恢复时复用仍有效证据。',{signal,outputSchema:z.toJSONSchema(verificationSchema)});let final='';
-    for await(const event of stream.events){signal.throwIfAborted();if(event.type==='thread.started'){delivery.verificationThreadId=event.thread_id;store.put(task);}else if(event.type==='turn.completed')usage.fallback(event.usage as unknown as Record<string,unknown>,startedAt);else if(event.type==='turn.failed')throw new Error(event.error.message);else if(event.type==='error')throw new Error(event.message);else if(event.type==='item.completed'&&event.item.type==='agent_message')final=event.item.text;}
-    const result=verificationSchema.parse(JSON.parse(final));const files=browser.artifacts;
-    if(result.evidence.some(name=>!files.some(f=>f.name===name)))throw new Error('交付核验引用了不存在的证据');
-    for(const viewport of ['desktop','mobile'])for(const role of ['target','reference'])if(!files.some(f=>f.viewport===viewport&&f.role===role&&f.type==='image/png'&&result.evidence.includes(f.name)))throw new Error('交付核验缺少两端 PC / 移动端的截图证据');
+    const outputSchema=z.toJSONSchema(verificationOutputSchema);
+    const runTurn=async(promptText:string)=>{
+      const turnStartedAt=Date.now();
+      const stream=await thread.runStreamed(promptText,{signal,outputSchema});let final='';
+      for await(const event of stream.events){signal.throwIfAborted();if(event.type==='thread.started'){delivery.verificationThreadId=event.thread_id;store.put(task);}else if(event.type==='turn.completed')usage!.fallback(event.usage as unknown as Record<string,unknown>,turnStartedAt);else if(event.type==='turn.failed')throw new Error(event.error.message);else if(event.type==='error')throw new Error(event.message);else if(event.type==='item.completed'&&event.item.type==='agent_message')final=event.item.text;}
+      return final;
+    };
+    const validateVerification=(rawText:string)=>{
+      const parsed=parseDeliveryVerification(JSON.parse(rawText));
+      const files=browser.artifacts;
+      if(parsed.evidence.some(name=>!files.some(f=>f.name===name)))throw new Error('交付核验引用了不存在的证据');
+      for(const viewport of ['desktop','mobile'])for(const role of ['target','reference'])if(!files.some(f=>f.viewport===viewport&&f.role===role&&f.type==='image/png'&&parsed.evidence.includes(f.name)))throw new Error('交付核验缺少两端 PC / 移动端的截图证据');
+      return {result:parsed,files};
+    };
+    let validated:{result:ReturnType<typeof parseDeliveryVerification>;files:MaterialFile[]};
+    const firstRaw=await runTurn('读取 SKILL.md 和 task.json（已有有效截图见 evidence-manifest.json，可按需复用），通过 node browser.mjs 工具核验交付站，保留原站报告。本次是交付核验，不重新评分，也不因源站原有轻微问题或目标预览域官方认领浮层（如 launch.kooboo.nl/promo）判失败。范围外事项写进 outOfScope，不要写进 unverified；evidence 每项只写单个裸文件名（如 "xxxx.png"），禁止拼接多个文件名、附带说明文字或 evidence/ 前缀。');
+    try{
+      validated=validateVerification(firstRaw);
+    }catch(firstError){
+      const errMsg=firstError instanceof Error?firstError.message:String(firstError);
+      store.event(task.id,'交付核验输出修正 1/1：'+errMsg);
+      const repairRaw=await runTurn(`上一次输出未通过校验：${errMsg}。\n请仅从 evidence-manifest.json 选择已采集的真实 PNG 裸文件名（每项一个 "uuid.png"，禁止拼接或附带说明文字，禁止 evidence/ 前缀），并确保 evidence 同时包含 target 与 reference 在 desktop / mobile 下的截图（含目标站根路径 / 截图）；如已存在有效截图请直接复用。`);
+      validated=validateVerification(repairRaw);
+    }
+    const {result,files}=validated;
     for(const f of files)if(createHash('sha256').update(readFileSync(resolve(work,'evidence',f.name))).digest('hex')!==f.sha256)throw new Error('交付证据校验失败');
     const observations=files.filter(f=>f.type==='application/json'&&f.role==='target').flatMap(f=>{try{return [JSON.parse(readFileSync(resolve(work,'evidence',f.name),'utf8'))];}catch{return [];}});
     for(const check of delivery.checks.filter(c=>c.ok))for(const viewport of ['desktop','mobile'])if(!observations.some(o=>o.url===check.url&&o.viewport===viewport&&result.evidence.includes(o.file)))result.unverified.push(`${viewport} 尚缺少已评测路径的交付证据：${check.url}`);

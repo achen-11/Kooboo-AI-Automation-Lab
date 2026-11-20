@@ -91,6 +91,15 @@ export class Vault {
     this.persist();
     return this.public().environments.find(env => env.id === connection.id)!;
   }
+  setEnvironmentDeliveryAuto(environmentId: string, auto: boolean): PublicSettings {
+    this.refresh();
+    const env = this.current.environments.find(item => item.id === environmentId);
+    if (!env) throw new Conflict('环境不存在，请先保存');
+    if (!env.delivery?.enabled) throw new Conflict('当前环境未启用跨环境交付');
+    env.delivery.auto = auto;
+    this.persist();
+    return this.public();
+  }
   rawAutomation(): AutomationSettings | undefined {
     const saved = this.get().automation;
     return saved ? structuredClone(saved) : undefined;

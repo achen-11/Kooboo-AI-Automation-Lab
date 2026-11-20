@@ -74,9 +74,11 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
       state = passed ? 'ready' : report.report.quality === 'unverified' ? 'unverified' : 'needs-improvement';
       reason = passed ? `${scope === 'homepage' ? '仅首页' : '全站'}已通过当前评测口径；正式上线与适用交付核验仍按环境处理。` : report.report.summary;
     }
-    const delivery = members.find(task => task.delivery && (!siteState || task.siteRevision === siteState.revision))?.delivery;
+    const deliveryTask = members.find(task => task.delivery && (!siteState || task.siteRevision === siteState.revision));
+    const delivery = deliveryTask?.delivery;
     if (delivery && ['failed', 'uncertain'].includes(delivery.status)) { state = 'attention'; reason = delivery.error || '交付核验尚未完成。'; recovery = undefined; }
     else if (delivery && ['queued', 'running', 'verifying'].includes(delivery.status)) { state = 'running'; reason = '正在迁移交付或核验目标环境。'; recovery = undefined; }
+    else if (delivery?.status === 'completed' && (state === 'ready' || state === 'unverified')) { reason = state === 'ready' ? '已完成跨环境交付并通过核验。' : '已完成跨环境交付并通过核验；源站报告含未验证说明。'; }
     const ids = members.map(task => task.id), entries=ids.flatMap(taskId=>[...(ledger.get(taskId)?.values()||[])]), usage = mergeUsage(entries,ids.slice(1));
     const stages = (Object.keys(usageStageNames) as UsageBreakdownStage[]).map(stage => ({ stage, usage: mergeUsage(members.flatMap(task=>[...(ledger.get(task.id)?.entries()||[])].filter(([raw])=>generationStage(raw,task.optimizationRound)===stage).map(([,value])=>value)),ids.slice(1)) }));
     const detail = controller?.optimization ? controller : latest?.kind === 'evaluation' && latestGeneration?.evaluationTaskId !== latest.id ? latest : latestGeneration || latest;
@@ -86,7 +88,9 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
       resourceName: resource?.name || latest?.resourceName || site?.name || '生成站', siteUrl: site?.url || latest?.siteUrl || '',
       environmentId: site?.environmentId || latest?.environmentId || '',
       scenario: latest?.scenario || resource!.scenario, scope, detailTaskId: busy?.id && !controller?.optimization ? (busy.optimizationRootId || busy.id) : detail?.id || null,
-      state, reason: brief(reason, 220), targetScore, ...(recovery ? { recovery } : {}), report: report ? { ...report.summary, usage:mergeUsage(report.workflowIds.flatMap(taskId=>[...(ledger.get(taskId)?.values()||[])]),report.workflowIds.filter(taskId=>taskId!==report.id)), reportCurrent: true } : null,
+      state, reason: brief(reason, 220), targetScore, ...(recovery ? { recovery } : {}),
+      ...(deliveryTask && delivery ? { delivery: { taskId: deliveryTask.id, status: delivery.status, ...(delivery.targetUrl ? { targetUrl: delivery.targetUrl } : {}) } } : {}),
+      report: report ? { ...report.summary, usage:mergeUsage(report.workflowIds.flatMap(taskId=>[...(ledger.get(taskId)?.values()||[])]),report.workflowIds.filter(taskId=>taskId!==report.id)), reportCurrent: true } : null,
       usage, stages, ...(disposition ? { disposition } : {}), ...(resourceDisposition ? { resourceDisposition } : {}), taskCount: members.length, createdAt: site?.createdAt || latest!.createdAt,
       updatedAt: Math.max(site?.createdAt || 0, ...members.map(task => task.updatedAt)),
     };
@@ -102,7 +106,7 @@ export function registerSiteDeliveryApi(app: FastifyInstance, store: AutomationS
     const needle = query.q.toLowerCase();
     const allRows = siteDeliveries(store, threshold(), query.site);
     const activeTotal = allRows.filter(row => !row.disposition).length;
-    const scopedRows = allRows.filter(row => matchesDispositionFilter(row.disposition, query.disposition) && (!query.site || row.generatedSiteId === query.site) && (!needle || [row.resourceName, row.siteUrl, row.id].join(' ').toLowerCase().includes(needle)));
+    const scopedRows = allRows.filter(row => matchesDispositionFilter(row.disposition, query.disposition) && (!query.site || row.generatedSiteId === query.site) && (!needle || [row.resourceName, row.siteUrl, row.delivery?.targetUrl || '', row.id].join(' ').toLowerCase().includes(needle)));
     const attentionMissingAddress = scopedRows.filter(row => row.state === 'attention' && !hasAccessibleSiteUrl(row.siteUrl)).length;
     const rows = scopedRows.filter(row => (!query.state || row.state === query.state) && matchesDeliveryAddress(row.siteUrl, query.address));
     const pages = Math.max(1, Math.ceil(rows.length / query.pageSize)), page = Math.min(query.page, pages);

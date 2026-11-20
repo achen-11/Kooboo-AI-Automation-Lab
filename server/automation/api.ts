@@ -18,6 +18,7 @@ import { registerLearningApi } from './learning-api.js';
 import { learningSettingsSchema } from './experience-store.js';
 import { executionTaskIds } from '../../shared/execution-log.js';
 import { registerSiteDeliveryApi } from './site-delivery.js';
+import { deliveredSiteUrl } from '../../shared/site-delivery.js';
 import { registerTimingApi } from './timing.js';
 import { registerDashboardApi } from './dashboard.js';
 import { registerMigrationApi } from './migration-api.js';
@@ -70,7 +71,7 @@ const prompt=z.string().min(1).max(30000);
 const followupInput=z.object({enabled:z.boolean(),concurrency:z.number().int().min(1).max(3),maxAttempts:z.number().int().min(1).max(20),maxMinutes:z.number().int().min(1).max(120),maxTokens:z.number().int().min(1000).max(1000000000),maxRequests:z.number().int().min(1).max(1000).optional(),sop:z.string().trim().min(1).max(50000)});
 const optimizationInput=z.object({targetScore:z.number().min(1).max(100),maxRounds:z.number().int().min(1).max(10),maxCostCny:z.number().positive().max(1000000).nullable()});
 const settingsInput=z.object({showExecutionBrowser:z.boolean().optional(),completeness:completenessSettingsSchema.optional(),learning:learningSettingsSchema.optional(),optimization:optimizationInput.extend({sop:z.string().trim().min(1).max(50000)}).optional(),followup:followupInput.default(defaultFollowupSettings),enabled:z.boolean(),autoEvaluate:z.boolean().default(true),generationConcurrency:z.number().int().min(1).max(10),evaluationConcurrency:z.number().int().min(1).max(5),timeoutMinutes:z.number().int().min(1).max(240),evaluationModel:z.string().trim().min(1).max(100),evaluationEndpoint:url,prompts:z.object({materials:prompt,migration:prompt,upgrade:prompt,'site-template':prompt,'app-template':prompt})});
-const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional(),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
+const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional(),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),autoDelivery:z.boolean().optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
   if(input.rootDomain&&(input.kind!=='generation'||input.generatedSiteId))ctx.addIssue({code:'custom',message:'根域名仅用于新建生成站，已有站点沿用原域名',path:['rootDomain']});
   if((input.siteName||input.subDomain)&&(input.kind!=='generation'||input.generatedSiteId||input.resourceIds.length!==1))ctx.addIssue({code:'custom',message:'自定义站点名和子域名仅用于单资源新建生成站；批量任务请在各资源中分别指定',path:['subDomain']});
   if(input.collectionManifestId&&!input.collectionSnapshotId)ctx.addIssue({code:'custom',message:'选择来源清单必须同时指定冻结采集快照'});
@@ -285,6 +286,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.post('/api/automation/rules',async(request,reply)=>reply.code(201).send(store.publish(ruleInput.parse(request.body))));
   app.get('/api/automation/settings',async()=>vault.automation());
   app.put('/api/automation/settings',async(request)=>vault.updateAutomation({...vault.automation(),...settingsInput.parse(request.body),learning:settingsInput.parse(request.body).learning||vault.automation().learning,completeness:settingsInput.parse(request.body).completeness||vault.automation().completeness}));
+  app.put('/api/automation/environments/:id/delivery-preference',async(request)=>{const{id}=params.parse(request.params);const{auto}=z.object({auto:z.boolean()}).parse(request.body);return vault.setEnvironmentDeliveryAuto(id,auto);});
   app.get('/api/automation/harness',async()=>buildHarnessCatalog(vault.rawAutomation()));
   app.post('/api/automation/harness/reset',async(request)=>{
     const { key }=z.object({ key:z.enum(['followup.sop','optimization.sop','completeness.sop','learning.selectionSop','learning.reflectionSop','all']) }).parse(request.body||{});
@@ -308,6 +310,12 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const result=store.db.transaction(()=>{
       const old=store.db.prepare('SELECT hash,json FROM auto_requests WHERE id=?').get(key);
       if(old){if(old.hash!==hash)throw new Conflict('同一个请求标识不能用于不同任务');return JSON.parse(old.json);}
+      if(input.autoDelivery===true){
+        const envId=input.generatedSiteId?store.site(input.generatedSiteId)?.environmentId||input.environmentId:input.environmentId;
+        const env=vault.get().environments.find(e=>e.id===envId);
+        if(!env?.delivery?.enabled||!env.delivery.token)throw new Conflict('当前环境未启用跨环境交付或缺少迁移令牌，无法开启自动交付');
+        if(input.generatedSiteId&&store.headers(input.generatedSiteId).some(t=>t.delivery))throw new Conflict('该生成站已有关联跨环境交付记录，不能重复开启自动交付');
+      }
       const collections=input.collectionSnapshotId?new CollectionStore(store,directory):undefined;
       const snapshot=collections?.reusableSnapshot(input.collectionSnapshotId!,input.resourceIds[0]);
       const manifests=snapshot?new ManifestStore(store):undefined;
@@ -363,7 +371,13 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const canCompareLive=Boolean(siteUrl||versionUrls?.referenceUrl||versionUrls?.contentUrl||templatePreviewUrl);
     const blockers=workflowBlockers(task,store,owns);
     const workflowActive=(blockers.tasks.length||blockers.learning.length)?{tasks:blockers.tasks.length,learning:blockers.learning.length,reason:workflowActiveReason(blockers.tasks.length,blockers.learning.length)}:undefined;
-    return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled:Boolean((task.kind==='evaluation'||evaluation)&&vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled||task.delivery||evaluation?.delivery),canCompareLive,...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),...(workflowActive?{workflowActive}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
+    const siteHeaders=task.generatedSiteId?store.headers(task.generatedSiteId):[];
+    const siteState=task.generatedSiteId?store.siteState(task.generatedSiteId):undefined;
+    const deliveryHeader=(task.delivery?task:undefined)||(evaluation?.delivery?evaluation:undefined)||siteHeaders.find(h=>h.delivery&&(!siteState||h.siteRevision===siteState.revision))||siteHeaders.find(h=>h.delivery);
+    const envDeliveryEnabled=Boolean(vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled);
+    const deliveryEnabled=Boolean(((task.kind==='evaluation'||evaluation||task.autoDelivery)&&envDeliveryEnabled)||deliveryHeader?.delivery);
+    const currentDeliveryHeader=deliveryHeader&&(!siteState||!deliveryHeader.generatedSiteId||deliveryHeader.siteRevision===siteState.revision)?deliveryHeader:undefined;
+    return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled,...(currentDeliveryHeader?.delivery?{delivery:{taskId:currentDeliveryHeader.id,status:currentDeliveryHeader.delivery.status,...(currentDeliveryHeader.delivery.targetUrl?{targetUrl:currentDeliveryHeader.delivery.targetUrl}:{})}}:{}),canCompareLive,...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),...(workflowActive?{workflowActive}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
   });
   app.get('/api/automation/tasks/:id/usage',async(request,reply)=>{
     const {id}=params.parse(request.params),task=store.task(id);
@@ -379,7 +393,8 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const roots=site?store.db.prepare("SELECT DISTINCT json_extract(json,'$.generation.rootDomain') AS root FROM auto_tasks WHERE site_key=? AND kind='generation' AND json_extract(json,'$.generation.rootDomain') IS NOT NULL").all(site.id).map(row=>String(row.root)):[];
       const defaultRoot=vault.get().environments.find(env=>env.id===task.environmentId)?.defaultRootDomain;
       if(defaultRoot)roots.push(defaultRoot);
-      return {message:task.message,version,rule:task.rule,threadId:task.threadId,model:task.model,...taskSiteNaming(task,version,site,roots),optimization:task.optimization?{policy:task.optimization.policy}:undefined};
+      const autoDelivery=task.autoDelivery??store.root(task)?.autoDelivery;
+      return {message:task.message,version,rule:task.rule,threadId:task.threadId,model:task.model,...taskSiteNaming(task,version,site,roots),...(autoDelivery!==undefined?{autoDelivery}:{}),optimization:task.optimization?{policy:task.optimization.policy}:undefined};
     }
     if(section==='execution'){
       const q=pagination.extend({taskId:uuid.optional()}).parse(request.query);if(q.taskId&&!executionTaskIds(task).includes(q.taskId))throw new Conflict('执行记录不属于本工作流');const selected=q.taskId?store.task(q.taskId)!:task;const total=Number(store.db.prepare('SELECT COUNT(*) AS total FROM auto_events WHERE task_id=?').get(selected.id).total),pages=Math.max(1,Math.ceil(total/q.pageSize)),page=Math.min(q.page,pages);
@@ -403,14 +418,22 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
         :undefined;
       return {task:{id:selected.id,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{})},context:selected.context,followup:selected.followup,interruption,humanNotice,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
     }
+    if(section==='delivery'){
+      const autoDelivery=task.autoDelivery??store.root(task)?.autoDelivery;
+      const evalTask=task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
+      const siteHeaders=task.generatedSiteId?store.headers(task.generatedSiteId):[];
+      const siteState=task.generatedSiteId?store.siteState(task.generatedSiteId):undefined;
+      const siteDeliveryHeader=siteHeaders.find(h=>h.delivery&&(!siteState||h.siteRevision===siteState.revision))||siteHeaders.find(h=>h.delivery);
+      const deliverySource=task.delivery?task:evalTask?.delivery?evalTask:siteDeliveryHeader?store.task(siteDeliveryHeader.id):(task.kind==='evaluation'?task:store.currentReport(task)||evalTask);
+      return {task:deliverySource?{id:deliverySource.id,kind:deliverySource.kind,environmentId:deliverySource.environmentId,status:deliverySource.status,delivery:deliverySource.delivery,report:deliverySource.report?{quality:deliverySource.report.quality}:null}:null,...(autoDelivery!==undefined?{autoDelivery}:{})};
+    }
     const source=task.kind==='evaluation'?task:task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
-    if(section==='delivery')return {task:source?{id:source.id,kind:source.kind,environmentId:source.environmentId,status:source.status,delivery:source.delivery,report:source.report?{quality:source.report.quality}:null}:null};
     const round=z.coerce.number().int().min(0).max(10).optional().parse((request.query as Record<string,unknown>).round);const selected=round===undefined?undefined:task.optimization?.rounds.find(r=>r.number===round);if(round!==undefined&&!selected)throw new Conflict('优化轮次不存在');const current=selected?store.task(selected.evaluationTaskId||''):task.kind==='evaluation'?source:store.currentReport(task);return {taskId:current?.id||null,report:current?.report?{...current.report,...(current.report.completeness?{completeness:{...current.report.completeness,checks:[]}}:{})}:null,rule:task.rule||null,historical:round!==undefined,selectedRound:selected?{brief:selected.brief,progress:selected.progress}:undefined,optimization:task.optimization?{state:task.optimization.state,reason:task.optimization.reason,rounds:task.optimization.rounds.map(r=>{const evaluation=r.evaluationTaskId?store.task(r.evaluationTaskId):undefined;return {number:r.number,generationTaskId:r.generationTaskId,evaluationTaskId:r.evaluationTaskId,status:evaluation?.status||store.task(r.generationTaskId)?.status,scores:evaluation?.report?.scores||null,summary:brief(r.progress?.reason||evaluation?.report?.summary||'等待本轮独立复评')};})}:undefined};
   });
   app.post('/api/automation/tasks/:id/delivery',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task)throw new Conflict('任务不存在');if(store.dispositions.get('delivery',task.generatedSiteId||task.id))throw new Conflict('该生成站已归档，请先移回在列后再发起交付');return queueDelivery(task,store,vault);});
   app.post('/api/automation/tasks/:id/delivery/receipt',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||!['uncertain','failed'].includes(task.delivery.status))throw new Conflict('只能为已停止且待核查的交付补录回执');if(task.delivery.target)throw new Conflict('已有目标回执，请恢复核验；不能替换目标');task.delivery.target=deliveryReceipt(request.body);task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'操作者补录目标回执；仅核验目标环境，不重发迁移');return task;});
   app.post('/api/automation/tasks/:id/delivery/retry',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||task.delivery.target||task.delivery.status!=='failed'||task.delivery.attemptedAt)throw new Conflict('只有确认从未发出迁移请求的交付才可直接重试');task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'重新排队未发送过的迁移准备；保留源站与评测记录');return task;});
-  app.post('/api/automation/tasks/:id/delivery/verify',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery?.target||task.delivery.stopped===false||owns(id)||!['failed','completed'].includes(task.delivery.status))throw new Conflict('请先取得目标回执并等待本轮结束');task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'已安排恢复交付核验，保留原迁移目标');return task;});
+  app.post('/api/automation/tasks/:id/delivery/verify',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery?.target||task.delivery.stopped===false||owns(id)||!['failed','completed'].includes(task.delivery.status))throw new Conflict('请先取得目标回执并等待本轮结束');task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';delete task.delivery.verificationThreadId;store.put(task);store.event(id,'已安排恢复交付核验，保留原迁移目标');return task;});
   app.post('/api/automation/tasks/:id/delivery/confirm-stopped',async(request)=>store.db.transaction(()=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||task.delivery.stopped!==false||!['failed','uncertain'].includes(task.delivery.status))throw new Conflict('只能确认已中断且停止状态不明的交付');checkConfirmation(request.body,task);task.delivery.stopped=true;store.put(task);store.event(id,'操作者已确认原交付执行停止，可恢复原目标核验');return task;}));
   app.post('/api/automation/tasks/:id/delivery/cancel',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||!['queued','running','verifying'].includes(task.delivery.status))throw new Conflict('当前没有可停止的交付');if(owns(id))cancel(id);else{task.delivery.status=task.delivery.attemptedAt&&!task.delivery.target?'uncertain':'failed';task.delivery.error='操作者已停止交付。源站及原报告保留。';store.put(task);}return task;});
   app.get('/api/v1/automation/reports/:id/delivery/artifacts/:file',async(request,reply)=>{const{id,file:name}=params.extend({file:z.string().regex(/^[a-f0-9-]{36}\.[a-z0-9]{1,8}$/)}).parse(request.params);const task=store.task(id),delivery=task?.delivery;const artifact=delivery?.artifacts?.find(f=>f.name===name);if(!artifact||!delivery)return reply.code(404).send({error:'交付证据不存在'});const bytes=readFileSync(resolve(directory,'automation-runs',id,'delivery',delivery.id,'evidence',name));if(createHash('sha256').update(bytes).digest('hex')!==artifact.sha256)throw new Conflict('交付证据校验失败');return reply.type(artifact.type).send(bytes);});
@@ -520,7 +543,10 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const root=store.root(task)||task,current=store.currentReport(root),run=root.optimization;
     const finished=run?['completed','stopped'].includes(run.state):root.stopped&&root.status==='completed'&&(!root.evaluationTaskId||!!current&&current.status==='completed');
     const active=run?store.task(run.activeTaskId):undefined;const ready=finished&&!!current&&root.stopped&&(!active||active.stopped),source=store.version(root.versionId);
-    return {taskId:root.id,generatedSiteId:root.generatedSiteId,siteUrl:root.siteUrl,revision:root.generatedSiteId?store.siteState(root.generatedSiteId)?.revision||root.siteRevision:null,externalSource:source?.externalSource||'',externalId:source?.externalId||'',ready,status:ready?'ready':finished?'unscored':'pending',reason:ready?(run?.reason||''):run?.reason||'当前版本尚未完成生成、修复或独立评测。',targetReached:run?run.state==='completed':null,reportId:ready?current!.id:null,report:ready?current!.report:null,evidenceBase:ready?`/api/v1/automation/reports/${current!.id}/artifacts/`:null};
+    const siteState=root.generatedSiteId?store.siteState(root.generatedSiteId):undefined;
+    const deliveryHeader=root.generatedSiteId?store.headers(root.generatedSiteId).find(h=>h.delivery&&(!siteState||h.siteRevision===siteState.revision)):(root.delivery?store.header(root.id):undefined);
+    const deliveredUrl=deliveredSiteUrl(deliveryHeader?.delivery);
+    return {taskId:root.id,generatedSiteId:root.generatedSiteId,siteUrl:root.siteUrl,deliveredUrl:deliveredUrl||null,revision:root.generatedSiteId?store.siteState(root.generatedSiteId)?.revision||root.siteRevision:null,externalSource:source?.externalSource||'',externalId:source?.externalId||'',ready,status:ready?'ready':finished?'unscored':'pending',reason:ready?(run?.reason||''):run?.reason||'当前版本尚未完成生成、修复或独立评测。',targetReached:run?run.state==='completed':null,reportId:ready?current!.id:null,report:ready?current!.report:null,evidenceBase:ready?`/api/v1/automation/reports/${current!.id}/artifacts/`:null};
   });
   app.get('/api/v1/automation/reports',async(request)=>{
     const q=z.object({externalSource:z.string().optional(),externalId:z.string().optional(),resourceId:uuid.optional(),page:z.coerce.number().int().min(1).default(1),pageSize:z.coerce.number().int().min(1).max(100).default(30)}).parse(request.query);

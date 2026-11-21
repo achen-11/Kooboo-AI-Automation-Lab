@@ -60,7 +60,16 @@ function zeroPageTransferError(contentUrl:string,siteId:string,sandboxName?:stri
   return new FollowupRuntimeError(techReason,nextSteps,userSummary);
 }
 
-async function waitForTransferPages(params:{
+export interface TransferWaitResult{
+  pages:number;
+  done:boolean;
+  completedPages?:number;
+  totalPages?:number;
+  stalled?:boolean;
+  timedOut?:boolean;
+}
+
+export async function waitForTransferPages(params:{
   request:(path:string,body?:unknown,siteId?:string)=>Promise<any>;
   siteId:string;
   transferTaskId:string;
@@ -68,29 +77,58 @@ async function waitForTransferPages(params:{
   allowInitialCheck:boolean;
   pollMs?:number;
   maxEmptyPolls?:number;
-}):Promise<{pages:number;done:boolean}>{
+  stallTimeoutMs?:number;
+  maxWaitMs?:number;
+  progressIntervalMs?:number;
+  onProgress?:(info:{completedPages:number;totalPages:number;elapsedMs:number})=>void;
+}):Promise<TransferWaitResult>{
   const {request,siteId,transferTaskId,signal,allowInitialCheck}=params;
   const pollMs=params.pollMs??2000;
   const emptyDoneDelayMs=Math.min(pollMs,500);
   const maxEmptyPolls=params.maxEmptyPolls??12;
+  // Align stall detection with .NET HttpClient's 100s timeout and Kooboo GetTaskStatus's 2-minute TTL.
+  const stallTimeoutMs=params.stallTimeoutMs??120_000;
+  const maxWaitMs=params.maxWaitMs??5*60_000;
+  const progressIntervalMs=params.progressIntervalMs??15_000;
   if(allowInitialCheck){
     const existing=await request('Transfer/GetTaskStatus',undefined,siteId);
     if(Number(existing?.pages||0)>0&&existing?.done!==false){
       return {pages:Number(existing.pages),done:true};
     }
   }
-  let previous=-1,stable=0,emptyPolls=0,emptyDoneChecks=0;
+  const startedAt=Date.now();
+  let lastProgressAt=startedAt,lastReportAt=0;
+  let previousTotal=-1,previousDone=-1,stable=0,emptyPolls=0,emptyDoneChecks=0;
   while(stable<2){
     signal.throwIfAborted();
     const status=await request(`Transfer/GetStatus?id=${encodeURIComponent(transferTaskId)}`,undefined,siteId);
     const pages=Array.isArray(status)?status:[];
+    const now=Date.now();
     if(pages.length>0){
-      const done=pages.every((p:any)=>p?.done===true);
-      stable=done&&previous===pages.length?stable+1:0;
-      previous=pages.length;
+      const doneCount=pages.filter((p:any)=>p?.done===true).length;
+      const allDone=doneCount===pages.length;
+      if(pages.length!==previousTotal||doneCount!==previousDone){
+        lastProgressAt=now;
+      }
+      stable=allDone&&previousTotal===pages.length?stable+1:0;
+      previousTotal=pages.length;
+      previousDone=doneCount;
       emptyPolls=0;
       emptyDoneChecks=0;
-      if(stable<2)await delay(pollMs,signal);
+      if(stable>=2)break;
+      if(!allDone&&params.onProgress){
+        if((lastReportAt===0?now-startedAt:now-lastReportAt)>=progressIntervalMs){
+          lastReportAt=now;
+          params.onProgress({completedPages:doneCount,totalPages:pages.length,elapsedMs:now-startedAt});
+        }
+      }
+      const stalled=(now-lastProgressAt)>=stallTimeoutMs;
+      const timedOut=(now-startedAt)>=maxWaitMs;
+      if(!allDone&&(stalled||timedOut)){
+        const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
+        return {pages:Number(summary?.pages||0),done:summary?.done!==false,completedPages:doneCount,totalPages:pages.length,stalled,timedOut};
+      }
+      await delay(pollMs,signal);
       continue;
     }
     emptyPolls++;
@@ -105,10 +143,11 @@ async function waitForTransferPages(params:{
       continue;
     }
     if(emptyPolls>=maxEmptyPolls)return {pages:0,done:Boolean(summary?.done)};
+    if((now-startedAt)>=maxWaitMs)return {pages:Number(summary?.pages||0),done:Boolean(summary?.done),timedOut:true};
     await delay(pollMs,signal);
   }
   const status=await request('Transfer/GetTaskStatus',undefined,siteId);
-  return {pages:Number(status?.pages||0),done:status?.done!==false};
+  return {pages:Number(status?.pages||0),done:status?.done!==false,completedPages:Math.max(0,previousDone),totalPages:Math.max(0,previousTotal),stalled:false,timedOut:false};
 }
 
 function isValidHttpUrl(value:string){
@@ -285,6 +324,11 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       store.event(task.id,'已配置跳过原站克隆，改用补充资料继续生成');
     }
   }
+  const transferProgress=(label:string)=>({completedPages,totalPages,elapsedMs}:{completedPages:number;totalPages:number;elapsedMs:number})=>{
+    const seconds=Math.max(1,Math.round(elapsedMs/1000));
+    store.event(task.id,`${label}：已完成 ${completedPages}/${totalPages} 页（已等待 ${seconds} 秒）`);
+    store.put(task);
+  };
   if(task.scenario==='upgrade'&&directTemplate&&!task.generation.skipSourceTransfer&&!task.generation.sourceSandbox?.complete&&!task.generation.prepared){
     let sourceSandbox=task.generation.sourceSandbox;
     const hadSandboxTransfer=Boolean(sourceSandbox?.siteId&&sourceSandbox.transferTaskId);
@@ -297,7 +341,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       task.generation.sourceSandbox=sourceSandbox;store.put(task);
       store.event(task.id,`已创建只读源站 Sandbox ${sandbox}（${sandboxSiteId}），正在同步旧内容站`);
     }
-    let transfer=await waitForTransferPages({request,siteId:sourceSandbox.siteId,transferTaskId:sourceSandbox.transferTaskId!,signal,allowInitialCheck:hadSandboxTransfer});
+    let transfer=await waitForTransferPages({request,siteId:sourceSandbox.siteId,transferTaskId:sourceSandbox.transferTaskId!,signal,allowInitialCheck:hadSandboxTransfer,onProgress:transferProgress('正在同步旧内容站 Sandbox')});
     if(!transfer.pages&&!task.generation.transferFallbackAttempted){
       task.generation.transferFallbackAttempted=true;store.put(task);
       store.event(task.id,'旧内容站 Sandbox 克隆完成但导入 0 页，尝试重建 1 次只读源站抓取');
@@ -307,13 +351,18 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
         if(sandbox&&/^[a-f0-9-]{36}$/i.test(sandboxSiteId)&&!/^00000000-0000-0000-0000-000000000000$/i.test(sandboxSiteId)&&transferTaskId){
           sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
           task.generation.sourceSandbox=sourceSandbox;store.put(task);
-          transfer=await waitForTransferPages({request,siteId:sandboxSiteId,transferTaskId,signal,allowInitialCheck:false});
+          transfer=await waitForTransferPages({request,siteId:sandboxSiteId,transferTaskId,signal,allowInitialCheck:false,onProgress:transferProgress('正在同步旧内容站 Sandbox')});
         }
       }catch(err:any){store.event(task.id,`重建只读源站抓取失败：${err?.message||'请求异常'}`);}
     }
     if(!transfer.pages)throw zeroPageTransferError(input.contentUrl,site.id,sourceSandbox.sandbox);
     sourceSandbox.complete=true;task.generation.sourceSandbox=sourceSandbox;task.generation.transferComplete=true;store.put(task);
-    store.event(task.id,`旧内容站已克隆至源站 Sandbox ${sourceSandbox.sandbox}（目标站保留原生 Kooboo 模板）`);
+    store.event(
+      task.id,
+      transfer.stalled||transfer.timedOut
+        ?`旧内容站 Sandbox 克隆部分完成（已导入 ${transfer.pages} 页，进度 ${transfer.completedPages??transfer.pages}/${transfer.totalPages??transfer.pages} 页，其余页面超时未完成），保留已导入页面并继续后续流程`
+        :`旧内容站已克隆至源站 Sandbox ${sourceSandbox.sandbox}（目标站保留原生 Kooboo 模板）`,
+    );
   }else if(task.scenario==='upgrade'&&!directTemplate&&!task.generation.transferComplete&&!task.generation.prepared){
       const siteId=site.siteId;
       const taskId=task.generation.transferTaskId;
@@ -326,7 +375,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
           try{
             const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
             if(single?.taskId){
-              const transfer=await waitForTransferPages({request,siteId,transferTaskId:String(single.taskId),signal,allowInitialCheck:false});
+              const transfer=await waitForTransferPages({request,siteId,transferTaskId:String(single.taskId),signal,allowInitialCheck:false,onProgress:transferProgress('正在等待内容站克隆')});
               pages=transfer.pages;
             }else{
               existing=await request('Transfer/GetTaskStatus',undefined,siteId);
@@ -339,14 +388,16 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
         task.generation.transferComplete=true;store.put(task);
         store.event(task.id,'已确认目标站存在导入页面，继续准备参考站');
       }else{
-        let transfer=await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:hadTransferTaskBeforeRun});
+        store.event(task.id,`正在等待内容站克隆完成：${input.contentUrl}`);
+        store.put(task);
+        let transfer=await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:hadTransferTaskBeforeRun,onProgress:transferProgress('正在等待内容站克隆')});
         if(!transfer.pages&&!task.generation.transferFallbackAttempted){
           task.generation.transferFallbackAttempted=true;store.put(task);
           store.event(task.id,'内容站克隆完成但导入 0 页，尝试通过 Transfer/Single 降级抓取首页 1 次');
           try{
             const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
             if(single?.taskId){
-              transfer=await waitForTransferPages({request,siteId,transferTaskId:String(single.taskId),signal,allowInitialCheck:false});
+              transfer=await waitForTransferPages({request,siteId,transferTaskId:String(single.taskId),signal,allowInitialCheck:false,onProgress:transferProgress('正在等待内容站克隆')});
             }else{
               const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
               transfer={pages:Number(summary?.pages||0),done:summary?.done!==false};
@@ -355,7 +406,12 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
         }
         if(!transfer.pages)throw zeroPageTransferError(input.contentUrl,site.id);
         task.generation.transferComplete=true;store.put(task);
-        store.event(task.id,'内容站克隆完成；参考站由 Kooboo AI 使用 Sandbox tools 准备');
+        store.event(
+          task.id,
+          transfer.stalled||transfer.timedOut
+            ?`内容站克隆部分完成（已导入 ${transfer.pages} 页，进度 ${transfer.completedPages??transfer.pages}/${transfer.totalPages??transfer.pages} 页，其余页面超时未完成），保留已导入页面并继续后续流程`
+            :'内容站克隆完成；参考站由 Kooboo AI 使用 Sandbox tools 准备',
+        );
       }
   }
   if(templateRef?.mode==='reference-sandbox'&&(!task.generation.referenceTemplateSandbox||task.generation.referenceTemplateSandbox.templateId!==templateRef.templateId)){

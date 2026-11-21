@@ -1,12 +1,26 @@
 import { randomUUID } from 'node:crypto';
 import { ensureTemplateAnalysis } from './template-analysis.js';
-import { effectiveTemplateUsageMode, type AutomationTask, type InputVersion, type MaterialFile } from '../../shared/automation.js';
+import {
+  effectiveTemplateUsageMode,
+  requiredKoobooSandboxCapability,
+  type AutomationTask,
+  type InputVersion,
+  type MaterialFile,
+  type RequiredKoobooSandboxCapability,
+} from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { Pending, GenerationInputError, FollowupRuntimeError } from './errors.js';
 import { prepareGenerationContext, assertGenerationInput, cleanupGenerationContext } from './generation-context.js';
 
-import { koobooClient, siteIdentity, refreshSite, probeSite, fetchKoobooTemplateDetail } from './kooboo.js';
+import {
+  koobooClient,
+  siteIdentity,
+  refreshSite,
+  probeSite,
+  fetchKoobooTemplateDetail,
+  probeKoobooApiMethod,
+} from './kooboo.js';
 import { materialDestination, readMaterial } from './materials.js';
 import { mergeTaskMaterials, syncMaterialManifestToSite, uploadMaterialsToKoobooSite } from './kooboo-materials.js';
 import { generationSession, matchingGenerationOutcome } from './generation-session.js';
@@ -153,6 +167,28 @@ function buildTemplateExecutionGuidance(task:AutomationTask,input:InputVersion,t
   ].join('\n');
 }
 
+function unsupportedKoobooTemplateError(required: RequiredKoobooSandboxCapability, siteId?: string | null) {
+  const techReason = `目标 Kooboo 环境版本暂不支持模板 Sandbox 接口（${required.method}），无法执行「${required.label}」`;
+  const nextSteps = [
+    '将该资源的参考站来源改回「外部参考站 URL」（可直接填入模板预览地址），再新建任务。',
+    '或切换至已升级最新版本的 Kooboo 环境后重新发起任务。',
+    ...(required.key === 'transferByLevel'
+      ? ['若已准备好旧站离线资料，也可通过「补充资料」跳过原站克隆后恢复执行。']
+      : []),
+  ];
+  const userSummary = deriveHumanNotice({
+    userSummary: {
+      headline: '目标 Kooboo 环境暂不支持模板 Sandbox 接口',
+      category: 'environment',
+      explanation: `当前 Kooboo 环境尚未更新「${required.label}」所需接口，因此已在${siteId ? '导入参考或源站 Sandbox 前' : '建站前'}安全拦截，未留下半成品站点。`,
+      userActions: nextSteps,
+    },
+    stage: 'prepare',
+    generatedSiteId: siteId,
+  });
+  return new FollowupRuntimeError(techReason, nextSteps, userSummary);
+}
+
 /** Existing Kooboo APIs + the existing frontend stream/function loop. No server generation API is introduced. */
 export async function executeGeneration(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,openSession:typeof generationSession=generationSession){
   const hadTransferTaskBeforeRun=Boolean(task.generation?.transferTaskId);
@@ -182,6 +218,19 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   if(!task.generation&&task.generatedSiteId&&task.context)task.generation={legacySubmitted:true,prepared:true,conversationId:task.threadId||undefined};
   task.stage='prepare';task.generation??={};store.put(task);
   let site=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
+  const precheckRef=task.generation.referenceTemplate;
+  if(precheckRef){
+    const requiredCap=requiredKoobooSandboxCapability(task.scenario,precheckRef.mode,task.generation.skipSourceTransfer);
+    const needsSandboxStep=requiredCap&&(
+      requiredCap.key==='transferByLevel'
+        ?(!task.generation.sourceSandbox?.complete&&!task.generation.prepared)
+        :(!task.generation.referenceTemplateSandbox||task.generation.referenceTemplateSandbox.templateId!==precheckRef.templateId)
+    );
+    if(requiredCap&&needsSandboxStep){
+      const support=await probeKoobooApiMethod({apiOrigin,token:environment.token,path:requiredCap.method,signal});
+      if(support==='unsupported')throw unsupportedKoobooTemplateError(requiredCap,site?.id);
+    }
+  }
   if(!site){
     // A pre-upgrade uncertain create must still reconcile the exact old name.
     let slug=task.generation.siteName||(task.generation.createAttempted?`auto-${task.id.slice(0,12)}`:generatedSiteName(task.id));
@@ -324,7 +373,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   const pendingFiles=task.generation.next?.action==='answer'
     ?[]
     :task.generation.prepared
-      ?allMaterialFiles.filter(file=>task.generation!.importedMaterials?.[file.id]!==file.sha256)
+      ?(task.generation.supplementalFiles||[]).filter(file=>task.generation!.importedMaterials?.[file.id]!==file.sha256)
       :allMaterialFiles;
   if(pendingFiles.length){
     const uploadResult=await uploadMaterialsToKoobooSite({

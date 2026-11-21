@@ -3,7 +3,11 @@ import { computed, onBeforeUnmount, ref } from 'vue';
 import { ChevronLeft, ChevronRight, ExternalLink, LoaderCircle, Search, X } from '@lucide/vue';
 import BaseSelect from '../../components/BaseSelect.vue';
 import { api, message, platform } from '../../api';
-import type { KoobooTemplatePage, KoobooTemplateSummary } from '../../../../shared/automation';
+import type {
+  KoobooSandboxCapabilities,
+  KoobooTemplatePage,
+  KoobooTemplateSummary,
+} from '../../../../shared/automation';
 
 const emit = defineEmits<{ select: [template: KoobooTemplateSummary] }>();
 
@@ -15,12 +19,52 @@ const page = ref(1);
 const loading = ref(false);
 const error = ref('');
 const data = ref<KoobooTemplatePage | null>(null);
+const capabilities = ref<KoobooSandboxCapabilities | null>(null);
+const capabilitiesLoading = ref(false);
 let requestRevision = 0;
+let capRevision = 0;
 
 const envOptions = computed(() =>
   (platform.settings?.environments || []).map((env) => ({ value: env.id, label: env.name })),
 );
 const totalPages = computed(() => Math.max(1, data.value?.totalPages || 1));
+const capabilityBanner = computed(() => {
+  const cap = capabilities.value;
+  if (!cap || (cap.environmentId && cap.environmentId !== environmentId.value)) return '';
+  if (cap.transferByLevel === 'unsupported' && cap.importFromTemplate === 'unsupported') {
+    return '当前环境暂未升级 Kooboo 模板 Sandbox 接口：不支持「旧站升级 + 直接模板建站」和「克隆到参考 Sandbox」模式（仅非升级场景的直接模板建站可用，且缺少新版原位适配规范）。建议改用外部参考站 URL 或切换已升级环境。';
+  }
+  if (cap.transferByLevel === 'unsupported') {
+    return '当前环境暂未升级旧站 Sandbox 克隆接口：不支持「旧站升级 + 直接模板建站（角色对调）」，其余模板模式可用。';
+  }
+  if (cap.importFromTemplate === 'unsupported') {
+    return '当前环境暂未升级模板参考 Sandbox 接口：不支持「克隆到参考 Sandbox」模式，可改用「直接模板建站」或外部参考站 URL。';
+  }
+  return '';
+});
+
+async function loadCapabilities(targetEnvId = environmentId.value, force = false) {
+  if (!targetEnvId) {
+    capabilities.value = null;
+    capabilitiesLoading.value = false;
+    return;
+  }
+  const current = ++capRevision;
+  capabilitiesLoading.value = true;
+  if (force) capabilities.value = null;
+  try {
+    const query = new URLSearchParams({ environmentId: targetEnvId });
+    if (force) query.set('refresh', '1');
+    const result = await api<KoobooSandboxCapabilities>(`/automation/kooboo/capabilities?${query}`);
+    if (current === capRevision && environmentId.value === targetEnvId) {
+      capabilities.value = result;
+    }
+  } catch {
+    if (current === capRevision) capabilities.value = null;
+  } finally {
+    if (current === capRevision) capabilitiesLoading.value = false;
+  }
+}
 
 async function load(targetPage = page.value) {
   if (!environmentId.value) {
@@ -53,6 +97,12 @@ function search() {
   void load(1);
 }
 
+function onEnvironmentChange() {
+  capabilities.value = null;
+  void loadCapabilities(environmentId.value);
+  search();
+}
+
 function open(initialEnvironmentId?: string) {
   const envs = platform.settings?.environments || [];
   environmentId.value =
@@ -63,14 +113,18 @@ function open(initialEnvironmentId?: string) {
   typeName.value = 'Site';
   page.value = 1;
   data.value = null;
+  capabilities.value = null;
   error.value = '';
   dialog.value?.showModal();
-  if (environmentId.value) void load(1);
-  else error.value = '请先在系统设置中配置 Kooboo 环境';
+  if (environmentId.value) {
+    void loadCapabilities(environmentId.value);
+    void load(1);
+  } else error.value = '请先在系统设置中配置 Kooboo 环境';
 }
 
 function close() {
   requestRevision++;
+  capRevision++;
   dialog.value?.close();
 }
 
@@ -81,6 +135,7 @@ function choose(template: KoobooTemplateSummary) {
 
 onBeforeUnmount(() => {
   requestRevision++;
+  capRevision++;
 });
 
 defineExpose({ open });
@@ -102,7 +157,7 @@ defineExpose({ open });
           size="small"
           aria-label="Kooboo 环境"
           :options="envOptions.length ? envOptions : [{ value: '', label: '未配置环境', disabled: true }]"
-          @update:model-value="search"
+          @update:model-value="onEnvironmentChange"
         />
         <BaseSelect
           v-model="typeName"
@@ -120,6 +175,13 @@ defineExpose({ open });
         </label>
         <button type="submit" class="button secondary small" :disabled="loading || !environmentId">搜索</button>
       </form>
+
+      <p v-if="capabilityBanner" class="alert info template-cap-alert" role="status">
+        <span>{{ capabilityBanner }}</span>
+        <button type="button" class="text-action" :disabled="capabilitiesLoading" @click="loadCapabilities(environmentId, true)">
+          {{ capabilitiesLoading ? '检测中…' : '重新检测' }}
+        </button>
+      </p>
 
       <p v-if="error" class="alert error" role="alert">
         {{ error }}
@@ -281,6 +343,9 @@ defineExpose({ open });
 }
 .template-picker-empty {
   padding: 36px 16px;
+}
+.template-cap-alert {
+  margin: 0;
 }
 .template-picker-footer {
   padding: 10px 0 0;

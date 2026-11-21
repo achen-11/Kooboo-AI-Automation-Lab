@@ -21,6 +21,7 @@ import { createAutonomousExecution } from '../shared/autonomy.js';
 import { followupRequestPolicy } from '../server/automation/autonomy.js';
 import { ModelBudgetExceeded, RequestBudget } from '../server/automation/request-budget.js';
 import { rememberSiteRetry, siteRetryBlocked } from '../server/automation/retry-guard.js';
+import { builtInHarnessSop } from '../server/automation/harness.js';
 
 const input={name:'Sample',scenario:'site-template' as const,description:'Build homepage',contentUrl:'https://content.test',referenceUrl:'',externalSource:'',externalId:'',files:[]};
 const decision=(action:FollowupAction['action'],extra:Partial<FollowupAction>={}):FollowupAction=>({action,reason:'已依据实际证据决定下一步',evidence:['observed'],...extra});
@@ -210,7 +211,7 @@ test('unknown execution stop cannot unlock the site, and followup cleanup uncert
 test('old settings get followup defaults and report tokens cannot modify notices or resume',async()=>{
   const f=await fixture();try{
     const {followup,...old}=f.settings;
-    assert.equal((await f.app.inject({method:'PUT',url:'/api/automation/settings',headers:f.headers,payload:old})).statusCode,200);assert.deepEqual(f.vault.automation().followup,defaultAutomationSettings.followup);
+    assert.equal((await f.app.inject({method:'PUT',url:'/api/automation/settings',headers:f.headers,payload:old})).statusCode,200);assert.deepEqual(f.vault.automation().followup,{...defaultAutomationSettings.followup,sop:builtInHarnessSop('followup.sop')});
     const t=f.create();f.automationStore.notice(t,'test','test');const headers={authorization:`Bearer ${f.vault.credentials.readToken}`};
     for(const url of [`/api/automation/notifications/${f.automationStore.notices()[0].id}/read`,`/api/automation/tasks/${t.id}/resume`])assert.equal((await f.app.inject({method:'POST',url,headers})).statusCode,401);
     t.context='old history';t.threadId='original-conversation';f.attach(t);delete t.generation;f.automationStore.scheduleFollowup(t,f.settings.followup);const recovered=f.automationStore.task(t.id)!;assert.equal(recovered.generation?.legacySubmitted,true);assert.equal(recovered.generation?.conversationId,'original-conversation');
@@ -457,7 +458,7 @@ test('followup tool server closes if SDK client startup fails',async()=>{
 
 test('real generator handoff refreshes camel-case siteId and probes homepage without opening a browser',async()=>{
   const f=await fixture();const t=f.create(),site=f.attach(t);let origin='';const paths:string[]=[];
-  const server=createServer((req,res)=>{paths.push(req.url||'');res.setHeader('Content-Type','application/json');if(req.url?.startsWith('/_api/v2/Site/List')){assert.equal(req.headers.authorization,'Bearer test-only-token');res.end(JSON.stringify([{siteId:site.siteId,homePageLink:origin+'/home'}]));}else{assert.equal(req.headers.authorization,undefined);res.end('homepage');}});
+  const server=createServer((req,res)=>{paths.push(req.url||'');res.setHeader('Content-Type','application/json');if(req.url?.startsWith('/_api/v2/Site/List')){assert.equal(req.headers.authorization,'Bearer test-only-token');res.end(JSON.stringify([{siteId:site.siteId,homePageLink:origin+'/home'}]));}else if(req.url?.startsWith('/_api/v2/Transfer/GetTaskStatus')){assert.equal(req.headers.authorization,'Bearer test-only-token');res.end(JSON.stringify({pages:0,done:true}));}else{assert.equal(req.headers.authorization,undefined);res.end('homepage');}});
   await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
   try{
     const runtime=f.vault.get();f.vault.update({...runtime,environments:runtime.environments.map(e=>({...e,origin,apiOrigin:origin}))});

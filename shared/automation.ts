@@ -25,6 +25,38 @@ export const taskStatusNames: Record<TaskStatus, string> = { queued: '排队中'
 import type { ItemDisposition } from './dispositions.js';
 export interface MaterialFile { id: string; name: string; type: string; size: number; sha256: string; role?: 'target'|'reference'|'content'; viewport?: 'desktop'|'mobile'; /** false: captured while visible images or the load event were still pending. */ settled?: boolean }
 export type TemplateUsageMode = 'direct-template' | 'reference-sandbox';
+export type KoobooMethodSupport = 'supported' | 'unsupported' | 'unknown';
+export interface KoobooSandboxCapabilities {
+  environmentId?: string;
+  transferByLevel: KoobooMethodSupport;
+  importFromTemplate: KoobooMethodSupport;
+}
+export interface RequiredKoobooSandboxCapability {
+  key: 'transferByLevel' | 'importFromTemplate';
+  method: 'AISandbox/TransferByLevel' | 'AISandbox/ImportFromTemplate';
+  label: string;
+}
+export function requiredKoobooSandboxCapability(
+  scenario: Scenario | string,
+  mode?: TemplateUsageMode,
+  skipSourceTransfer?: boolean,
+): RequiredKoobooSandboxCapability | undefined {
+  if (mode === 'reference-sandbox') {
+    return {
+      key: 'importFromTemplate',
+      method: 'AISandbox/ImportFromTemplate',
+      label: '模板导入参考 Sandbox',
+    };
+  }
+  if (mode === 'direct-template' && scenario === 'upgrade' && !skipSourceTransfer) {
+    return {
+      key: 'transferByLevel',
+      method: 'AISandbox/TransferByLevel',
+      label: '旧内容站克隆到只读源站 Sandbox（角色对调升级）',
+    };
+  }
+  return undefined;
+}
 export interface KoobooTemplateSummary {
   id: string;
   name: string;

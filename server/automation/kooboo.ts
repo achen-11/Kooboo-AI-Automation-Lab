@@ -1,8 +1,103 @@
 import http from 'node:http';
 import https from 'node:https';
-import type { AutomationTask, GeneratedSite, KoobooTemplatePage, KoobooTemplateSummary } from '../../shared/automation.js';
+import type {
+  AutomationTask,
+  GeneratedSite,
+  KoobooMethodSupport,
+  KoobooSandboxCapabilities,
+  KoobooTemplatePage,
+  KoobooTemplateSummary,
+} from '../../shared/automation.js';
 import type { Vault } from '../lib/vault.js';
 import type { AutomationStore } from './store.js';
+
+export function isKoobooApiMethodNotFound(status: number, body: string): boolean {
+  if (status === 404) return true;
+  if (status !== 400) return false;
+  const pattern = /api\s*method\s*not\s*found|找不到\s*api\s*方法/i;
+  try {
+    const parsed = JSON.parse(body);
+    if (Array.isArray(parsed)) {
+      return parsed.some((entry) => typeof entry === 'string' && pattern.test(entry));
+    }
+    if (typeof parsed === 'string') return pattern.test(parsed);
+  } catch {
+    // Fall back to raw body check when response is not valid JSON.
+  }
+  return pattern.test(body);
+}
+
+const CAPABILITY_CACHE_TTL_MS = 60_000;
+const capabilityCache = new Map<string, { value: 'supported' | 'unsupported'; expiresAt: number }>();
+
+export function clearKoobooCapabilityCache(): void {
+  capabilityCache.clear();
+}
+
+export async function probeKoobooApiMethod(options: {
+  apiOrigin: string;
+  token?: string;
+  path: string;
+  signal: AbortSignal;
+  forceRefresh?: boolean;
+}): Promise<KoobooMethodSupport> {
+  const cleanPath = options.path.split('?')[0]!.replace(/^\/+/, '');
+  const origin = new URL(options.apiOrigin).origin;
+  const cacheKey = `${origin}::${cleanPath}`;
+  if (!options.forceRefresh) {
+    const cached = capabilityCache.get(cacheKey);
+    if (cached && cached.expiresAt > Date.now()) return cached.value;
+    if (cached) capabilityCache.delete(cacheKey);
+  }
+  try {
+    const url = new URL(`/_api/v2/${cleanPath}`, origin);
+    const result = await httpRead(url, {
+      token: options.token,
+      signal: AbortSignal.any([options.signal, AbortSignal.timeout(15000)]),
+    });
+    if (isKoobooApiMethodNotFound(result.status, result.body)) {
+      capabilityCache.set(cacheKey, { value: 'unsupported', expiresAt: Date.now() + CAPABILITY_CACHE_TTL_MS });
+      return 'unsupported';
+    }
+    if ((result.status >= 200 && result.status < 300) || result.status === 400 || result.status === 401 || result.status === 403) {
+      capabilityCache.set(cacheKey, { value: 'supported', expiresAt: Date.now() + CAPABILITY_CACHE_TTL_MS });
+      return 'supported';
+    }
+    return 'unknown';
+  } catch (error) {
+    if (options.signal.aborted) throw error;
+    return 'unknown';
+  }
+}
+
+export async function probeKoobooSandboxCapabilities(
+  environment: { id?: string; origin: string; apiOrigin?: string; token?: string },
+  signal: AbortSignal,
+  options?: { forceRefresh?: boolean },
+): Promise<KoobooSandboxCapabilities> {
+  const apiOrigin = new URL(environment.apiOrigin || environment.origin).origin;
+  const [transferByLevel, importFromTemplate] = await Promise.all([
+    probeKoobooApiMethod({
+      apiOrigin,
+      token: environment.token,
+      path: 'AISandbox/TransferByLevel',
+      signal,
+      forceRefresh: options?.forceRefresh,
+    }),
+    probeKoobooApiMethod({
+      apiOrigin,
+      token: environment.token,
+      path: 'AISandbox/ImportFromTemplate',
+      signal,
+      forceRefresh: options?.forceRefresh,
+    }),
+  ]);
+  return {
+    ...(environment.id ? { environmentId: environment.id } : {}),
+    transferByLevel,
+    importFromTemplate,
+  };
+}
 
 /** Node's HTTP client also handles Kooboo's streamed JSON responses without undici parser failures. */
 export function httpRead(url:URL,options:{token?:string;body?:unknown;signal:AbortSignal;limit?:number}) {
@@ -31,7 +126,13 @@ export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vau
       if(Array.isArray(messages)&&messages.length===1&&typeof messages[0]==='string'
         && ['Api method define a bool return type and return false','Api 返回不正确'].includes(messages[0].replace(/\s+/g,' ').trim()))return false;
     }
-    if(result.status<200||result.status>=300)throw new Error(`Kooboo ${path.split('?')[0]} 请求失败（${result.status}）`);
+    if(result.status<200||result.status>=300){
+      const cleanPath=path.split('?')[0];
+      if(isKoobooApiMethodNotFound(result.status,result.body)){
+        throw new Error(`Kooboo ${cleanPath} 接口不存在（目标 Kooboo 环境版本过低，HTTP ${result.status}）`);
+      }
+      throw new Error(`Kooboo ${cleanPath} 请求失败（${result.status}）`);
+    }
     const value=JSON.parse(result.body);
     return availability&&result.status===200&&value===null?true:value;
   };

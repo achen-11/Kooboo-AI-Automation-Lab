@@ -146,6 +146,19 @@ export function deriveHumanNotice(input: {
     };
   }
 
+  if (/暂不支持模板 Sandbox|接口不存在（目标 Kooboo 环境版本过低|目标 Kooboo 环境版本过低|Api method Not Found|找不到\s*API\s*方法/i.test(combined)) {
+    return {
+      headline: '目标 Kooboo 环境版本暂不支持所选模板模式',
+      category: 'environment',
+      explanation: `当前所选 Kooboo 环境尚未更新模板 Sandbox 相关后端接口，无法执行角色对调升级或模板参考 Sandbox 模式。${keepSiteSentence}`,
+      userActions: [
+        '将该资源的参考站来源改回「外部参考站 URL」（可填入模板预览地址），再新建任务。',
+        '或切换至已升级最新版本的 Kooboo 环境后重新发起任务。',
+        '若是旧站升级并已有离线资料，可通过「补充资料」跳过原站克隆后恢复执行。',
+      ],
+    };
+  }
+
   if (/ImportFromTemplate|UseTemplate|模板.*失败|模板市场|模板.*不存在|referenceTemplateSandbox/i.test(combined)) {
     return {
       headline: '选定的 Kooboo 模板未能成功导入',
@@ -229,7 +242,7 @@ export function deriveHumanNotice(input: {
     .filter(step => step.length >= 4);
 
   return {
-    headline: `任务在${stageLabel}暂停，需要人工介入`,
+    headline: cleanSummary ? `任务在${stageLabel}暂停：${sanitizeHumanText(cleanSummary, 48)}` : `任务在${stageLabel}暂停，需要人工介入`,
     category: 'runtime',
     explanation,
     userActions: cleanSteps.length

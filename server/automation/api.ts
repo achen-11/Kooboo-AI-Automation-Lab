@@ -45,7 +45,12 @@ import { registerTemplateWorkflowApi } from './template-workflow-api.js';
 import { TemplateWorkflowStore } from './template-workflow-store.js';
 import { diagnoseQueue } from './queue-diagnostics.js';
 import { inMaintenance } from '../updates/maintenance.js';
-import { koobooClient, fetchKoobooTemplateDetail, searchKoobooTemplates } from './kooboo.js';
+import {
+  koobooClient,
+  fetchKoobooTemplateDetail,
+  searchKoobooTemplates,
+  probeKoobooSandboxCapabilities,
+} from './kooboo.js';
 import { buildHarnessCatalog, harnessBindings } from './harness.js';
 import { deriveHumanNotice } from '../../shared/human-diagnostics.js';
 import { registerTaskSupplementApi } from './supplement-api.js';
@@ -520,6 +525,12 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     if(!env.token)throw new Conflict('缺少 Kooboo 环境令牌，请在系统设置补齐');
     return env;
   }
+  app.get('/api/automation/kooboo/capabilities',async(request,reply)=>{
+    const q=z.object({environmentId:uuid.optional(),refresh:z.coerce.boolean().optional()}).parse(request.query);
+    const env=templateEnvironment(q.environmentId);
+    try{return await probeKoobooSandboxCapabilities(env,AbortSignal.timeout(15000),{forceRefresh:Boolean(q.refresh)});}
+    catch(error){return reply.code(502).send({error:error instanceof Error?error.message:'探测 Kooboo 环境能力失败'});}
+  });
   app.get('/api/automation/kooboo/templates',async(request,reply)=>{
     const q=z.object({environmentId:uuid.optional(),keyword:z.string().trim().max(200).optional(),typeName:z.string().trim().max(50).optional(),category:z.string().trim().max(100).optional(),page:z.coerce.number().int().min(1).default(1),pageSize:z.coerce.number().int().min(1).max(60).default(24)}).parse(request.query);
     const env=templateEnvironment(q.environmentId);

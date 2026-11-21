@@ -11,9 +11,15 @@ import {
   effectiveReferenceUrl,
   effectiveTemplateUsageMode,
 } from '../shared/automation.js';
-import { siteIdentity, resolveKoobooAssetUrl } from '../server/automation/kooboo.js';
+import {
+  siteIdentity,
+  resolveKoobooAssetUrl,
+  probeKoobooApiMethod,
+  probeKoobooSandboxCapabilities,
+  clearKoobooCapabilityCache,
+} from '../server/automation/kooboo.js';
 import { executeGeneration } from '../server/automation/generator.js';
-import { GenerationInputError } from '../server/automation/errors.js';
+import { FollowupRuntimeError, GenerationInputError } from '../server/automation/errors.js';
 
 async function listen(server: ReturnType<typeof createServer>) {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -389,6 +395,11 @@ test('executeGeneration handles direct-template, missing previewUrl rejection, u
       return;
     }
     if (url.pathname === '/_api/v2/AISandbox/TransferByLevel') {
+      if (!siteId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify(['User or website not valid']));
+        return;
+      }
       res.end(
         JSON.stringify({
           ownerSiteId: currentTargetSiteId,
@@ -403,6 +414,11 @@ test('executeGeneration handles direct-template, missing previewUrl rejection, u
       return;
     }
     if (url.pathname === '/_api/v2/AISandbox/ImportFromTemplate') {
+      if (!siteId) {
+        res.statusCode = 401;
+        res.end(JSON.stringify(['User or website not valid']));
+        return;
+      }
       const templateName = typeof body?.templateName === 'string' ? body.templateName.trim() : '';
       if (!templateName) {
         res.statusCode = 400;
@@ -441,6 +457,7 @@ test('executeGeneration handles direct-template, missing previewUrl rejection, u
   });
 
   origin = await listen(server);
+  clearKoobooCapabilityCache();
   try {
     const raw = f.vault.get();
     f.vault.update({
@@ -553,7 +570,7 @@ test('executeGeneration handles direct-template, missing previewUrl rejection, u
       mockOpenSession(upgTask, () => upgSiteId, upgPayloads),
     );
     assert.ok(apiCalls.some((c) => c.path.includes('Template/Use')));
-    const transferCall = apiCalls.find((c) => c.path.includes('AISandbox/TransferByLevel'));
+    const transferCall = apiCalls.find((c) => c.path.includes('AISandbox/TransferByLevel') && c.siteId === upgSiteId);
     assert.ok(transferCall);
     assert.equal(transferCall.siteId, upgSiteId);
     assert.ok(apiCalls.some((c) => c.path.includes('Transfer/GetStatus') && c.siteId === sandboxSiteId));
@@ -627,6 +644,297 @@ test('executeGeneration handles direct-template, missing previewUrl rejection, u
       'reference-sandbox',
     );
   } finally {
+    await close(server);
+    await f.close();
+  }
+});
+
+test('probeKoobooApiMethod and GET /api/automation/kooboo/capabilities distinguish old vs new Kooboo servers', async () => {
+  clearKoobooCapabilityCache();
+  let mode: 'old-en' | 'old-zh' | '404' | 'partial-1117' | 'new' | 'error-500' = 'old-en';
+  let probeCount = 0;
+
+  const server = createServer((req, res) => {
+    probeCount++;
+    const url = new URL(req.url!, 'http://127.0.0.1');
+    res.setHeader('Content-Type', 'application/json');
+    if (mode === 'error-500') {
+      res.statusCode = 500;
+      res.end('Internal Error');
+      return;
+    }
+    if (mode === '404') {
+      res.statusCode = 404;
+      res.end('Not Found');
+      return;
+    }
+    if (url.pathname === '/_api/v2/AISandbox/TransferByLevel') {
+      if (mode === 'old-en') {
+        res.statusCode = 400;
+        res.end(JSON.stringify(['Api method Not Found']));
+        return;
+      }
+      if (mode === 'old-zh') {
+        res.statusCode = 400;
+        res.end(JSON.stringify(['找不到API方法']));
+        return;
+      }
+      if (mode === 'partial-1117') {
+        res.statusCode = 400;
+        res.end(JSON.stringify(['Api method Not Found']));
+        return;
+      }
+      res.statusCode = 401;
+      res.end(JSON.stringify(['User or website not valid']));
+      return;
+    }
+    if (url.pathname === '/_api/v2/AISandbox/ImportFromTemplate') {
+      if (mode === 'old-en') {
+        res.statusCode = 400;
+        res.end(JSON.stringify(['Api method Not Found']));
+        return;
+      }
+      if (mode === 'old-zh') {
+        res.statusCode = 400;
+        res.end(JSON.stringify(['找不到API方法']));
+        return;
+      }
+      res.statusCode = mode === 'partial-1117' ? 403 : 400;
+      res.end(JSON.stringify([mode === 'partial-1117' ? 'Access denied' : 'templateId is required.']));
+      return;
+    }
+    res.statusCode = 404;
+    res.end('{}');
+  });
+
+  const origin = await listen(server);
+  const f = await fixture(origin);
+  try {
+    // 500 -> 'unknown', must NOT be cached
+    mode = 'error-500';
+    assert.equal(
+      await probeKoobooApiMethod({ apiOrigin: origin, path: 'AISandbox/TransferByLevel', signal: AbortSignal.timeout(3000) }),
+      'unknown',
+    );
+    mode = 'old-en';
+    assert.equal(
+      await probeKoobooApiMethod({ apiOrigin: origin, path: 'AISandbox/TransferByLevel', signal: AbortSignal.timeout(3000) }),
+      'unsupported',
+    );
+
+    // 404 -> 'unsupported'
+    clearKoobooCapabilityCache();
+    mode = '404';
+    assert.equal(
+      await probeKoobooApiMethod({ apiOrigin: origin, path: 'AISandbox/ImportFromTemplate', signal: AbortSignal.timeout(3000) }),
+      'unsupported',
+    );
+
+    // Old Chinese Kooboo via HTTP API
+    clearKoobooCapabilityCache();
+    mode = 'old-zh';
+    const zhRes = await f.app.inject({
+      url: `/api/automation/kooboo/capabilities?environmentId=${f.envId}`,
+      headers: f.headers,
+    });
+    assert.equal(zhRes.statusCode, 200);
+    assert.deepEqual(zhRes.json(), {
+      environmentId: f.envId,
+      transferByLevel: 'unsupported',
+      importFromTemplate: 'unsupported',
+    });
+
+    // Cached without refresh=1, updated when refresh=1
+    mode = 'partial-1117';
+    const beforeRefresh = probeCount;
+    const cachedRes = await f.app.inject({
+      url: `/api/automation/kooboo/capabilities?environmentId=${f.envId}`,
+      headers: f.headers,
+    });
+    assert.equal(cachedRes.statusCode, 200);
+    assert.equal(cachedRes.json().transferByLevel, 'unsupported');
+    assert.equal(cachedRes.json().importFromTemplate, 'unsupported');
+    assert.equal(probeCount, beforeRefresh, 'Expected capabilities to be served from TTL cache');
+
+    const refreshedRes = await f.app.inject({
+      url: `/api/automation/kooboo/capabilities?environmentId=${f.envId}&refresh=1`,
+      headers: f.headers,
+    });
+    assert.equal(refreshedRes.statusCode, 200);
+    assert.deepEqual(refreshedRes.json(), {
+      environmentId: f.envId,
+      transferByLevel: 'unsupported',
+      importFromTemplate: 'supported',
+    });
+
+    mode = 'new';
+    const newCap = await probeKoobooSandboxCapabilities(
+      { id: f.envId, origin, apiOrigin: origin, token: 'test-token' },
+      AbortSignal.timeout(3000),
+      { forceRefresh: true },
+    );
+    assert.deepEqual(newCap, {
+      environmentId: f.envId,
+      transferByLevel: 'supported',
+      importFromTemplate: 'supported',
+    });
+  } finally {
+    clearKoobooCapabilityCache();
+    await close(server);
+    await f.close();
+  }
+});
+
+test('executeGeneration blocks incompatible template modes BEFORE creating any site on old Kooboo while allowing materials + direct-template', async () => {
+  clearKoobooCapabilityCache();
+  const templateId = '15b72444-e031-4695-a7f1-048dfbf02e82';
+  const matSiteId = randomUUID();
+  const calls: string[] = [];
+  let origin = '';
+
+  const server = createServer((req, res) => {
+    const url = new URL(req.url!, origin);
+    calls.push(`${req.method} ${url.pathname}`);
+    if (req.method === 'GET' && url.pathname === '/') {
+      res.setHeader('Content-Type', 'text/html');
+      res.end('<html><body><h1>Template OK</h1></body></html>');
+      return;
+    }
+    res.setHeader('Content-Type', 'application/json');
+    if (url.pathname === '/_api/v2/Template/Detail') {
+      res.end(JSON.stringify({ id: templateId, name: 'Tourvia', previewUrl: `${origin}/preview-template` }));
+      return;
+    }
+    if (url.pathname === '/_api/v2/AISandbox/TransferByLevel') {
+      res.statusCode = 400;
+      res.end(JSON.stringify(['Api method Not Found']));
+      return;
+    }
+    if (url.pathname === '/_api/v2/AISandbox/ImportFromTemplate') {
+      res.statusCode = 400;
+      res.end(JSON.stringify(['找不到API方法']));
+      return;
+    }
+    if (url.pathname === '/_api/v2/Domain/Available') {
+      res.end(JSON.stringify([{ domainName: 'site.example.test', sudDomainUseDash: false }]));
+      return;
+    }
+    if (url.pathname === '/_api/v2/Template/Use') {
+      res.end(JSON.stringify(matSiteId));
+      return;
+    }
+    if (url.pathname === '/_api/v2/Site/List') {
+      res.end(JSON.stringify([{ siteId: matSiteId, name: 'auto', homePageLink: `${origin}/` }]));
+      return;
+    }
+    res.end('true');
+  });
+
+  origin = await listen(server);
+  const f = await fixture(origin);
+  try {
+    // 1. upgrade + direct-template must be blocked BEFORE Template/Use (zero sites created)
+    const upgRes = f.automationStore.saveResource({
+      name: 'Old HK Upgrade',
+      scenario: 'upgrade',
+      description: 'Should be stopped before site creation',
+      contentUrl: 'https://legacy.example.com',
+      referenceUrl: '',
+      referenceTemplateId: templateId,
+      referenceTemplateName: 'Tourvia',
+      templateUsageMode: 'direct-template',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+    const upgTask = f.automationStore.create(
+      { resourceIds: [upgRes.id], kind: 'generation', scope: 'site', environmentId: f.envId, requirements: '' },
+      defaultAutomationSettings,
+    )[0];
+    delete upgTask.autonomy;
+    upgTask.requirementsEnabled = false;
+    upgTask.learningPolicy = { ...upgTask.learningPolicy!, use: false, collect: false };
+    f.automationStore.put(upgTask);
+
+    await assert.rejects(
+      executeGeneration(upgTask, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)),
+      (err: unknown) =>
+        err instanceof FollowupRuntimeError &&
+        err.userSummary?.category === 'environment' &&
+        /AISandbox\/TransferByLevel/.test(err.message),
+    );
+    assert.equal(f.automationStore.sites(upgRes.id).length, 0);
+    assert.ok(!calls.some((c) => c.includes('Template/Use') || c.includes('Site/Create')));
+
+    // 2. site-template + reference-sandbox must be blocked BEFORE Site/Create (zero sites created)
+    calls.length = 0;
+    const sbRes = f.automationStore.saveResource({
+      name: 'Old HK Ref Sandbox',
+      scenario: 'site-template',
+      description: 'Should be stopped before Site/Create',
+      contentUrl: '',
+      referenceUrl: '',
+      referenceTemplateId: templateId,
+      referenceTemplateName: 'Tourvia',
+      templateUsageMode: 'reference-sandbox',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+    const sbTask = f.automationStore.create(
+      { resourceIds: [sbRes.id], kind: 'generation', scope: 'site', environmentId: f.envId, requirements: '' },
+      defaultAutomationSettings,
+    )[0];
+    delete sbTask.autonomy;
+    sbTask.requirementsEnabled = false;
+    sbTask.learningPolicy = { ...sbTask.learningPolicy!, use: false, collect: false };
+    f.automationStore.put(sbTask);
+
+    await assert.rejects(
+      executeGeneration(sbTask, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000)),
+      (err: unknown) =>
+        err instanceof FollowupRuntimeError &&
+        err.userSummary?.category === 'environment' &&
+        /AISandbox\/ImportFromTemplate/.test(err.message),
+    );
+    assert.equal(f.automationStore.sites(sbRes.id).length, 0);
+    assert.ok(!calls.some((c) => c.includes('Site/Create') || c.includes('Template/Use')));
+
+    // 3. materials + direct-template does NOT require new AISandbox methods and still works on old Kooboo!
+    calls.length = 0;
+    const matRes = f.automationStore.saveResource({
+      name: 'Old HK Materials Direct',
+      scenario: 'materials',
+      description: 'Should still succeed via Template/Use',
+      contentUrl: '',
+      referenceUrl: '',
+      referenceTemplateId: templateId,
+      referenceTemplateName: 'Tourvia',
+      templateUsageMode: 'direct-template',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+    const matTask = f.automationStore.create(
+      { resourceIds: [matRes.id], kind: 'generation', scope: 'site', environmentId: f.envId, requirements: '' },
+      defaultAutomationSettings,
+    )[0];
+    matTask.requirementsEnabled = false;
+    matTask.learningPolicy = { ...matTask.learningPolicy!, use: false, collect: false };
+    f.automationStore.put(matTask);
+    const payloads: Array<{ text?: string }> = [];
+    await executeGeneration(
+      matTask,
+      f.automationStore,
+      f.vault,
+      f.directory,
+      AbortSignal.timeout(5000),
+      mockOpenSession(matTask, () => matSiteId, payloads),
+    );
+    assert.equal(f.automationStore.sites(matRes.id).length, 1);
+    assert.ok(calls.some((c) => c.includes('Template/Use')));
+  } finally {
+    clearKoobooCapabilityCache();
     await close(server);
     await f.close();
   }

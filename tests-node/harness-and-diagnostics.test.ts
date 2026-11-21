@@ -285,6 +285,10 @@ test('generator stops infinite loop when transfer returns pages=0 (legacy Transf
       return res.end(JSON.stringify({ siteId: currentSiteId, taskId: 'legacy-task-1' }));
     }
     if (url.pathname === '/_api/v2/AISandbox/TransferByLevel') {
+      if (!url.searchParams.get('SiteId')) {
+        res.statusCode = 401;
+        return res.end(JSON.stringify(['User or website not valid']));
+      }
       sandboxCounter++;
       return res.end(
         JSON.stringify({
@@ -489,4 +493,14 @@ test('mergeTemplateReports preserves and merges AI-authored humanSummary across 
   assert.deepEqual(merged.humanSummary?.highlights, ['首屏排版完整', '品牌配色协调', '移动端字号清晰']);
   assert.deepEqual(merged.humanSummary?.topFixes, ['【重要】收紧移动端导航展开高度', '【细节】补充联系页表单占位校验']);
   assert.equal(merged.humanSummary?.unverifiedNote, '联系页提交反馈尚未实际测试');
+});
+
+test('Human diagnostics classifies old Kooboo Api method Not Found errors as environment incompatibility', () => {
+  const notice = deriveHumanNotice({
+    error: 'Kooboo AISandbox/TransferByLevel 接口不存在（目标 Kooboo 环境版本过低，HTTP 400）',
+    stage: 'prepare',
+  });
+  assert.equal(notice.category, 'environment');
+  assert.match(notice.headline, /不支持/);
+  assert.ok(notice.userActions.length >= 2);
 });

@@ -49,14 +49,15 @@ async function createTestApp(koobooOrigin = 'https://kooboo.test') {
   return { ...f, directory, headers, envId };
 }
 
-test('Harness catalog exposes all 14 files, 7 stages, and GET /api/automation/harness', async () => {
+test('Harness catalog exposes all 15 files, 8 stages, and GET /api/automation/harness', async () => {
   const f = await createTestApp();
   try {
     const catalog = buildHarnessCatalog(f.vault.rawAutomation());
     assert.equal(catalog.rootDir, 'harness/');
     assert.equal(catalog.overviewPath, 'README.md');
-    assert.equal(catalog.stages.length, 7);
-    assert.equal(catalog.documents.length, 14);
+    assert.equal(catalog.stages.length, 8);
+    assert.equal(catalog.documents.length, 15);
+    assert.ok(catalog.documents.some(doc => doc.path === 'intake/SKILL.md'));
     for (const doc of catalog.documents) {
       assert.ok(doc.content.trim().length > 20, `${doc.path} should have non-empty content`);
       assert.match(doc.sha256, /^[a-f0-9]{64}$/);
@@ -65,7 +66,7 @@ test('Harness catalog exposes all 14 files, 7 stages, and GET /api/automation/ha
     const res = await f.app.inject({ url: '/api/automation/harness', headers: f.headers });
     assert.equal(res.statusCode, 200);
     const body = res.json();
-    assert.equal(body.documents.length, 14);
+    assert.equal(body.documents.length, 15);
     assert.equal(body.bindings.length, 6);
     assert.ok(body.bindings.every((b: { customized: boolean }) => b.customized === false));
   } finally {

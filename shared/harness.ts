@@ -5,6 +5,7 @@ export type HarnessCategory =
   | 'evaluation'
   | 'optimization'
   | 'completeness'
+  | 'intake'
   | 'experience'
   | 'delivery';
 
@@ -69,6 +70,7 @@ export const harnessCategoryLabels: Record<HarnessCategory, string> = {
   evaluation: '独立评测',
   optimization: '持续优化',
   completeness: '完整度清单',
+  intake: '资料收集整理',
   experience: '经验闭环',
   delivery: '交付核验',
 };

@@ -177,6 +177,15 @@ const HARNESS_DOCS: HarnessDocumentSummary[] = [
     editableSettingKey: 'delivery.sop',
     editableSettingLabel: harnessSettingLabels['delivery.sop'],
   },
+  {
+    path: 'intake/SKILL.md',
+    title: '人工中断补充与 AI 资料收集 SOP',
+    category: 'intake',
+    categoryLabel: harnessCategoryLabels.intake,
+    role: 'skill',
+    summary: '在原站抓取失败或需人工补图时，使用本机 Playwright 采集页面/图片并整理为结构化 Markdown 资料包。',
+    runtimeUsage: '当用户在任务页选择「AI 辅助收集与整理」时，由 `supplement-ai.ts` 读取并写入运行工作区 `SKILL.md`。',
+  },
 ];
 
 const HARNESS_STAGES: HarnessStageMeta[] = [
@@ -235,6 +244,15 @@ const HARNESS_STAGES: HarnessStageMeta[] = [
     editableKeys: ['delivery.sop'],
   },
   {
+    id: 'intake',
+    title: '中断补料 · AI 资料收集整理',
+    actor: '本地 Codex + Playwright 浏览器',
+    summary: '人工发起辅助收集后，在本机采集目标网址正文、截图与图片并整理成结构化资料导入目标站。',
+    primaryDoc: 'intake/SKILL.md',
+    referenceDocs: [],
+    editableKeys: [],
+  },
+  {
     id: 'experience',
     title: '经验筛选与复盘闭环',
     actor: '本地经验 AI',
@@ -287,6 +305,10 @@ export function readHarnessDocument(relPath: string): HarnessDocumentDetail {
   const stats = statSync(fullPath);
   const sha256 = createHash('sha256').update(content).digest('hex');
   return { ...summary, content, sha256, updatedAt: Math.round(stats.mtimeMs) };
+}
+
+export function builtInIntakeSop(): string {
+  return readHarnessDocument('intake/SKILL.md').content;
 }
 
 export function builtInHarnessSop(key: HarnessSopKey): string {

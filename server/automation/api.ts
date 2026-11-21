@@ -48,6 +48,7 @@ import { inMaintenance } from '../updates/maintenance.js';
 import { koobooClient, fetchKoobooTemplateDetail, searchKoobooTemplates } from './kooboo.js';
 import { buildHarnessCatalog, harnessBindings } from './harness.js';
 import { deriveHumanNotice } from '../../shared/human-diagnostics.js';
+import { registerTaskSupplementApi } from './supplement-api.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -88,6 +89,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerTaskNamingApi(app,store,vault,owns);
   registerLiveComparisonApi(app,store);
   registerTemplateWorkflowApi(app,store,directory);
+  registerTaskSupplementApi(app,store,vault,directory);
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns,cancel);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
@@ -416,7 +418,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
             lastAction:selected.followup?.lastAction,
           }))
         :undefined;
-      return {task:{id:selected.id,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{})},context:selected.context,followup:selected.followup,interruption,humanNotice,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
+      return {task:{id:selected.id,kind:selected.kind,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{})},context:selected.context,followup:selected.followup,interruption,humanNotice,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
     }
     if(section==='delivery'){
       const autoDelivery=task.autoDelivery??store.root(task)?.autoDelivery;

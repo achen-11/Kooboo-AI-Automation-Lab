@@ -8,6 +8,7 @@ import { prepareGenerationContext, assertGenerationInput, cleanupGenerationConte
 
 import { koobooClient, siteIdentity, refreshSite, probeSite, fetchKoobooTemplateDetail } from './kooboo.js';
 import { materialDestination, readMaterial } from './materials.js';
+import { mergeTaskMaterials, syncMaterialManifestToSite, uploadMaterialsToKoobooSite } from './kooboo-materials.js';
 import { generationSession, matchingGenerationOutcome } from './generation-session.js';
 import { ensureManifest, ManifestStore } from './completeness.js';
 import { selectExperience, adoptedGuidance } from './experience.js';
@@ -160,7 +161,12 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   const templateBaseline=await ensureTemplateAnalysis(task,store,vault,directory,signal);
   if(templateBaseline&&!templateBaseline.complete)throw new Pending('生成前的来源分析仍有缺口，尚未创建或修改生成站：'+templateBaseline.limitations.join('；'));
   await ensureSourceCollection(task,store,vault,directory,signal);
-  const input=effectiveCollectionInput(task,store,directory);if(!input)throw new Error('缺少固定的输入版本');
+  const rawInput=effectiveCollectionInput(task,store,directory);if(!rawInput)throw new Error('缺少固定的输入版本');
+  const overrideContentUrl=task.generation?.overrideContentUrl?.trim()||'';
+  const overrideReferenceUrl=task.generation?.overrideReferenceUrl?.trim()||'';
+  const input=(overrideContentUrl||overrideReferenceUrl)
+    ?{...rawInput,...(overrideContentUrl?{contentUrl:overrideContentUrl}:{}),...(overrideReferenceUrl?{referenceUrl:overrideReferenceUrl}:{})}
+    :rawInput;
   if(task.collectionVersionId){
     const manifest=new ManifestStore(store).get(task.requirementsId);
     if(!manifest)throw new GenerationInputError('冻结来源缺少固定交付清单，禁止创建生成站');
@@ -222,7 +228,15 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   store.beginSiteChange(task);
   const templateRef=task.generation.referenceTemplate;
   const directTemplate=templateRef?.mode==='direct-template';
-  if(task.scenario==='upgrade'&&directTemplate&&!task.generation.sourceSandbox?.complete&&!task.generation.prepared){
+  if(task.generation.skipSourceTransfer){
+    if(!task.generation.transferComplete||(task.generation.sourceSandbox&&!task.generation.sourceSandbox.complete)){
+      task.generation.transferComplete=true;
+      if(task.generation.sourceSandbox)task.generation.sourceSandbox.complete=true;
+      store.put(task);
+      store.event(task.id,'已配置跳过原站克隆，改用补充资料继续生成');
+    }
+  }
+  if(task.scenario==='upgrade'&&directTemplate&&!task.generation.skipSourceTransfer&&!task.generation.sourceSandbox?.complete&&!task.generation.prepared){
     let sourceSandbox=task.generation.sourceSandbox;
     const hadSandboxTransfer=Boolean(sourceSandbox?.siteId&&sourceSandbox.transferTaskId);
     if(!sourceSandbox?.siteId||!sourceSandbox.transferTaskId){
@@ -255,8 +269,24 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       const siteId=site.siteId;
       const taskId=task.generation.transferTaskId;
       if(!taskId){
-        const existing=await request('Transfer/GetTaskStatus',undefined,siteId);
-        if(!existing?.pages)throw new Pending('内容站克隆未返回任务标识，请检查实际克隆状态');
+        let existing=await request('Transfer/GetTaskStatus',undefined,siteId);
+        let pages=Number(existing?.pages||0);
+        if(!pages&&task.generation.overrideContentUrl&&!task.generation.transferFallbackAttempted){
+          task.generation.transferFallbackAttempted=true;store.put(task);
+          store.event(task.id,'内容站克隆未返回任务标识，尝试使用替换原网址通过 Transfer/Single 抓取首页 1 次');
+          try{
+            const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
+            if(single?.taskId){
+              const transfer=await waitForTransferPages({request,siteId,transferTaskId:String(single.taskId),signal,allowInitialCheck:false});
+              pages=transfer.pages;
+            }else{
+              existing=await request('Transfer/GetTaskStatus',undefined,siteId);
+              pages=Number(existing?.pages||0);
+            }
+          }catch(err:any){store.event(task.id,`替换原网址单页抓取失败：${err?.message||'请求异常'}`);}
+          if(!pages)throw zeroPageTransferError(input.contentUrl,site.id);
+        }
+        if(!pages)throw new Pending('内容站克隆未返回任务标识，请检查实际克隆状态');
         task.generation.transferComplete=true;store.put(task);
         store.event(task.id,'已确认目标站存在导入页面，继续准备参考站');
       }else{
@@ -289,45 +319,36 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
     store.event(task.id,`参考模板已导入研究 Sandbox ${sandbox}（${sandboxSiteId}）`);
   }
   // Materials are copied into the chosen target; no mandatory README or naming convention.
-  const materials=input.files.map(file=>{const destination=materialDestination(task.resourceId,task.versionId,file);return {name:file.name,id:file.id,destination:destination.path,type:file.type,size:file.size,sha256:file.sha256,storage:destination.text?'kfile':'file'};});
-  const uploaded:string[]=[];
-  for(const file of task.generation.prepared?[]:input.files){
-    signal.throwIfAborted();const bytes=readMaterial(directory,file);
-    const {filename,folder,text,path}=materialDestination(task.resourceId,task.versionId,file);
-    const mapping=`${file.name} → ${text?'kfile:':''}${path}`;
-    if(task.generation.importedMaterials?.[file.id]===file.sha256){uploaded.push(mapping);continue;}
-    if(text){
-      const response=await request('AI/CallFunction',{name:'run_kscript',callId:randomUUID(),arguments:{code:`k.file.write(${JSON.stringify(path)}, ${JSON.stringify(bytes.toString('utf8'))}); return true;`}},site.siteId);
-      const content=response?.contents?.[0];if(!content||content.isError||content.result?.error||content.result===false)throw new Error(`资料写入未确认：${file.name}`);
-    }else{
-      const form=new FormData();form.append('Folder',folder);form.append('file',new Blob([new Uint8Array(bytes)],{type:file.type}),filename);
-      const url=new URL('/_api/v2/Upload/File',apiOrigin);url.searchParams.set('SiteId',site.siteId);
-      const response=await fetch(url,{method:'POST',headers:{Authorization:`Bearer ${environment.token}`},body:form,signal:AbortSignal.any([signal,AbortSignal.timeout(120000)]),redirect:'error'});
-      if(!response.ok)throw new Error(`上传资料失败（HTTP ${response.status}）：${file.name}`);
-      const receipt=await response.json();
-      // Kooboo's ApiManager consumes boolean results; v2 serializes a successful
-      // bool-returning Upload/File as null. Never infer persistence from that alone.
-      if(receipt!==true&&receipt!==null)throw new Error(`上传资料回执异常：${file.name}`);
-      const query=new URLSearchParams({path:'/'+folder,keyword:filename,pageNr:'1',pageSize:'100'});
-      let confirmed=false;
-      for(let page=1;!confirmed;page++){
-        query.set('pageNr',String(page));const listing=await request('File/List?'+query,undefined,site.siteId);
-        if(listing?.errorMessage||!Array.isArray(listing?.files?.list))throw new Error(`读取上传资料确认失败：${file.name}`);
-        confirmed=listing.files.list.some((item:any)=>item.url===path&&item.size===bytes.length);
-        if(confirmed||page>=listing.files.totalPages)break;
-        if(!Number.isInteger(listing.files.totalPages)||listing.files.totalPages>1000)throw new Error(`上传资料目录分页异常：${file.name}`);
+  const allMaterialFiles=mergeTaskMaterials(input.files,task.generation.supplementalFiles);
+  const materials=allMaterialFiles.map(file=>{const destination=materialDestination(task.resourceId,task.versionId,file);return {name:file.name,id:file.id,destination:destination.path,type:file.type,size:file.size,sha256:file.sha256,storage:destination.text?'kfile':'file'};});
+  const pendingFiles=task.generation.next?.action==='answer'
+    ?[]
+    :task.generation.prepared
+      ?allMaterialFiles.filter(file=>task.generation!.importedMaterials?.[file.id]!==file.sha256)
+      :allMaterialFiles;
+  if(pendingFiles.length){
+    const uploadResult=await uploadMaterialsToKoobooSite({
+      task,
+      siteId:site.siteId,
+      files:pendingFiles,
+      apiOrigin,
+      token:environment.token!,
+      request,
+      directory,
+      signal,
+      mode:'materials',
+      onUploaded:(file)=>{store.put(task);store.event(task.id,`资料已导入：${file.name}`);},
+    });
+    store.put(task);
+    if(uploadResult.newlyImportedCount>0||!task.generation.prepared){
+      const manifestPath=await syncMaterialManifestToSite({task,siteId:site.siteId,allFiles:allMaterialFiles,request});
+      const manifestMarker=`kfile:${manifestPath}`;
+      if(!task.message.includes(manifestMarker)){
+        task.message+=(task.message?'\n':'')+`资料映射清单：${manifestMarker}；共 ${allMaterialFiles.length} 份资料。按需从清单定位文件，每次只返回必要摘要，禁止把全清单展开到聊天。`;
       }
-      if(!confirmed)throw new Error(`上传资料未确认（目标路径或大小不匹配）：${file.name}`);
+      store.put(task);
     }
-    task.generation.importedMaterials??={};task.generation.importedMaterials[file.id]=file.sha256;store.put(task);
-    uploaded.push(mapping);store.event(task.id,`资料已导入：${file.name}`);
   }
-  if(uploaded.length){
-    const manifestPath=`_automation-manifests/${task.id}.json`;
-    const mappings=materials.map(({name,id,destination})=>({name,id,destination}));
-    const result=await request('AI/CallFunction',{name:'run_kscript',callId:randomUUID(),arguments:{code:`k.file.write(${JSON.stringify(manifestPath)}, ${JSON.stringify(JSON.stringify(mappings))}); return true;`}},site.siteId);
-    const content=result?.contents?.[0];if(!content||content.isError||content.result===false||content.result?.error)throw new Error('资料映射清单写入未确认');
-    task.message+='\n资料映射清单：kfile:'+manifestPath+'；共 '+uploaded.length+' 份资料。按需从清单定位文件，每次只返回必要摘要，禁止把全清单展开到聊天。';store.put(task);}
   task.generation.prepared=true;store.put(task);
   if((!task.generation.deliveryId||task.generation.next)&&!task.generation.legacySubmitted&&(task.generation.deliveryState!=='completed'||task.generation.next)){
     if(!task.templateWorkflow)await ensureManifest(task,store,vault,directory,signal);

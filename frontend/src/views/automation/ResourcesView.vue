@@ -3,11 +3,13 @@ import { notify } from '../../lib/notifications';
 import { siteReportLink } from '../../lib/site-reports';
 import type { SiteDeliverySummary } from '../../../../shared/site-delivery';
 import { computed, nextTick, onMounted, ref, useId, watch } from 'vue';
-import { Plus, Search, Upload, Play, Folder, FolderOpen, FolderInput, Trash2, ArrowLeft, Pencil, ExternalLink, File, FileText, X, LoaderCircle, Link, History, ChevronLeft, ChevronRight, ChevronDown, Check, RotateCcw } from '@lucide/vue';
+import { Plus, Search, Upload, Play, Folder, FolderOpen, FolderInput, Trash2, ArrowLeft, Pencil, ExternalLink, File, FileText, Download, Eye, Image, X, LoaderCircle, Link, History, ChevronLeft, ChevronRight, ChevronDown, Check, RotateCcw } from '@lucide/vue';
 import BaseSelect from '../../components/BaseSelect.vue';
 import Disclosure from '../../components/Disclosure.vue';
 import MaterialUploader from '../../components/MaterialUploader.vue';
 import MaterialBrowser from '../../components/MaterialBrowser.vue';
+import MaterialPreviewDialog from '../../components/MaterialPreviewDialog.vue';
+import { materialFormat } from '../../lib/material-browser';
 import BatchMaterialImport from './BatchMaterialImport.vue';
 import CreateTaskDialog from './CreateTaskDialog.vue';
 import SiteDomainDialog from './SiteDomainDialog.vue';
@@ -22,6 +24,7 @@ import { filterResources, resourceFolderDescendants, resourceFolderTree, resourc
 const props=defineProps<{id?:string}>();
 const domainDialog=ref<InstanceType<typeof SiteDomainDialog>>();
 const dispositionDialog=ref<InstanceType<typeof DispositionDialog>>();
+const previewDialog=ref<InstanceType<typeof MaterialPreviewDialog>>();
 const query=ref(''),scenario=ref(''),folder=ref(''),generated=ref(''),disposition=ref<DispositionFilter>('active'),page=ref(1),selected=ref<string[]>([]),error=ref('');
 const folderDialog=ref<HTMLDialogElement>(),folderAction=ref<'create'|'rename'|'delete'>('create'),folderEditing=ref<ResourceFolder>(),folderName=ref(''),folderError=ref(''),folderBusy=ref(false);
 const folderParent=ref(''),collapsedFolders=ref(new Set<string>());
@@ -237,7 +240,7 @@ async function saveAttach(){busy.value=true;try{await api('/automation/sites',{m
     <div><dt>站点子域名</dt><dd>{{version.subDomain || '未指定'}}</dd></div>
     <div><dt>根域名（输入原值）</dt><dd>{{version.rootDomain || '未指定'}}</dd></div>
   </dl>
-  <pre class="resource-description">{{version.description||'无文字说明'}}</pre><p v-if="version.contentUrl">内容站：{{version.contentUrl}}</p><p v-if="version.referenceTemplateId">Kooboo 模板：{{version.referenceTemplateName||version.referenceTemplateId}}（{{version.referenceTemplateId}} · {{templateModeLabel(version.templateUsageMode)}}）</p><p v-if="version.referenceUrl">参考站：{{version.referenceUrl}}</p><div class="attachment-list"><a v-for="file in version.files" :key="file.id" :href="`/api/automation/files/${file.id}`" class="attachment"><File :size="15" /><span>{{file.name}}</span></a></div></details></section>
+  <pre class="resource-description">{{version.description||'无文字说明'}}</pre><p v-if="version.contentUrl">内容站：{{version.contentUrl}}</p><p v-if="version.referenceTemplateId">Kooboo 模板：{{version.referenceTemplateName||version.referenceTemplateId}}（{{version.referenceTemplateId}} · {{templateModeLabel(version.templateUsageMode)}}）</p><p v-if="version.referenceUrl">参考站：{{version.referenceUrl}}</p><div class="attachment-list"><template v-for="file in version.files" :key="file.id"><div v-if="materialFormat(file).kind!=='unsupported'" class="attachment"><button type="button" class="attachment-preview-trigger" @click="previewDialog?.open(file.id,version.files)"><component :is="materialFormat(file).kind==='image'?Image:FileText" :size="15" /><span>{{file.name}}</span></button><button type="button" class="text-action attachment-preview-action" @click="previewDialog?.open(file.id,version.files)"><Eye :size="14" />预览</button><a :href="`/api/automation/files/${file.id}`" download class="icon-button attachment-download-link" :title="`下载 ${file.name}`" :aria-label="`下载 ${file.name}`"><Download :size="14" /></a></div><a v-else :href="`/api/automation/files/${file.id}`" download class="attachment"><File :size="15" /><span>{{file.name}}</span></a></template></div></details></section>
 <section v-if="tab==='tasks'" class="panel"><div v-if="!tasks.length" class="empty-state">暂无任务</div><div v-for="task in tasks" :key="task.id" class="resource-task"><a :href="`#/tasks/${task.id}`">{{task.kind==='generation'?'生成':'评测'}} · {{scopeName(task.scope)}}</a><span class="status-badge" :class="task.status">{{taskStatusNames[task.status]}}</span><span>{{formatDate(task.createdAt)}}</span></div></section></template>
 <div v-else class="empty-state"><p>{{workspace.loaded?'资源不存在':'正在读取资源…'}}</p></div>
 <CreateTaskDialog ref="taskDialog" :resources="taskResources" :site="taskSite" :kind="taskKind" />
@@ -263,6 +266,7 @@ async function saveAttach(){busy.value=true;try{await api('/automation/sites',{m
 <KoobooTemplatePickerDialog ref="templatePicker" @select="onTemplateSelected" />
 <SiteDomainDialog ref="domainDialog" @saved="load" />
 <DispositionDialog ref="dispositionDialog" @saved="onDispositionSaved" />
+<MaterialPreviewDialog ref="previewDialog" />
 <dialog ref="attachDialog" class="modal"><form @submit.prevent="saveAttach"><div class="modal-head"><h2>关联已有生成站</h2><button type="button" class="icon-button" aria-label="关闭" @click="attachDialog?.close()"><X :size="20" /></button></div><label class="field"><span>环境</span><BaseSelect v-model="attach.environmentId" required :options="[{ value: '', label: '选择环境', disabled: true }, ...(platform.settings?.environments || []).map((env) => ({ value: env.id, label: (env.name) }))]" /></label><label class="field"><span>站点名称</span><input v-model="attach.name" class="input" required /></label><label class="field"><span>Kooboo Site ID</span><input v-model="attach.siteId" class="input" required /></label><label class="field"><span>公开地址</span><input v-model="attach.url" class="input" type="url" required /></label><p v-if="error" class="alert error">{{error}}</p><div class="modal-actions"><button class="button primary" :disabled="busy">保存关联</button></div></form></dialog>
 </template>
 
@@ -326,6 +330,11 @@ async function saveAttach(){busy.value=true;try{await api('/automation/sites',{m
 .template-source-env,.template-source-id{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 .template-source-env>:deep(.ui-select){flex:1 1 180px}
 .template-source-id>.input{flex:1 1 220px}
+.attachment-preview-trigger{flex:1;min-width:0;display:flex;align-items:center;gap:10px;text-align:left}
+.attachment-preview-trigger>span{flex:1;min-width:0;overflow-wrap:anywhere}
+.attachment-preview-trigger:hover{color:var(--blue)}
+.attachment-preview-action,.attachment-download-link{flex:none}
+.attachment-download-link{width:28px;height:28px}
 @media(max-width:700px){.resource-detail-navigation{flex-wrap:wrap;gap:8px}.resource-detail-meta{font-size:11px}.resource-detail-tabs button{padding-inline:11px}.resource-naming{grid-template-columns:1fr;gap:12px}}
 @media(max-width:620px){.resource-materials :deep(.material-browser){height:auto;min-height:0}.resource-materials :deep(.material-browser-context){flex:1 1 auto;gap:10px}.resource-input-details{max-height:150px}}
 @media(max-width:500px){.resource-detail-identity{gap:5px}.resource-detail-identity h1{font-size:18px}.resource-detail-header{gap:8px}.resource-detail-header>.toolbar-actions{gap:6px}.resource-edit{width:32px;padding:6px}.resource-edit>span{display:none}.resource-detail-header .button{font-size:12px}.resource-detail-tabs{width:100%}.resource-detail-tabs button{flex:1;padding-inline:9px}}

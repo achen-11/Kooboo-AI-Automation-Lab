@@ -163,3 +163,6 @@ vite.config.ts.timestamp-*
 
 # Local task-board requirements and review materials
 /docs/ai-app-requirements/task-board/
+
+# Local run, benchmark, and audit outputs
+/outputs/

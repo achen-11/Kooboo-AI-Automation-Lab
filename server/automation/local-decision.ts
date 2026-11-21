@@ -57,6 +57,13 @@ async function runLocalDecision<T>(options:LocalDecisionOptions<T>) {
         const {tool,...fields}=input;const args=input.input&&typeof input.input==='object'&&!Array.isArray(input.input)?input.input:fields;
         input={tool:'read',input:{...args,kind:tool}};
       }
+      if(input&&typeof input==='object'&&!('tool' in input)&&typeof input.kind==='string'&&options.readAliases?.includes(input.kind)){
+        input={tool:'read',input};
+      }
+      if(input&&typeof input==='object'&&input.tool==='read'&&!input.input&&typeof input.kind==='string'){
+        const {tool:_tool,...args}=input;
+        input={tool:'read',input:args};
+      }
       if(!input||typeof input!=='object')throw new Error('工具请求需要 JSON 对象');if(submitted)throw new Error('本轮结果已提交');
       if(input.tool==='context')return reply(200,decisionContext());
       if(input.tool==='budget')return reply(200,budgetState());

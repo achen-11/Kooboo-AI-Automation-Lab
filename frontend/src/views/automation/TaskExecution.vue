@@ -1,22 +1,27 @@
 <script setup lang="ts">
-import { computed, ref, shallowRef, watch } from 'vue';
+import { computed, onUnmounted, ref, shallowRef, watch } from 'vue';
+import { Upload } from '@lucide/vue';
 import type { FollowupRun, TaskInterruption } from '../../../../shared/automation';
+import type { TaskSupplementContext } from '../../../../shared/supplement';
 import { deriveHumanNotice, diagnosticCategoryLabels, type HumanNotice } from '../../../../shared/human-diagnostics';
 import type { TaskRecoveryAction, TaskRecoveryTarget } from '../../../../shared/task-presentation';
 import Disclosure from '../../components/Disclosure.vue';
 import TaskLearning from '../../components/TaskLearning.vue';
 import ExecutionLog from '../../components/ExecutionLog.vue';
 import TaskRecoveryActions from './TaskRecoveryActions.vue';
+import TaskSupplementDialog from './TaskSupplementDialog.vue';
 import { api, message } from '../../api';
 import { useTaskSection } from './use-task-section';
 const props = defineProps<{ taskId: string; updatedAt: number; task?: TaskRecoveryTarget; busy?: boolean; workflowActive?: boolean }>();
 const emit = defineEmits<{ action: [action: TaskRecoveryAction, taskId: string]; changed: [] }>();
 const selected = ref('');
 const learning = ref<{ refresh?: () => Promise<void> }>();
+const supplementDialog = ref<InstanceType<typeof TaskSupplementDialog>>();
+const supplementContext = shallowRef<TaskSupplementContext | null>(null);
 const { data, error, load } = useTaskSection<{ task?: TaskRecoveryTarget; context: string; error: string; followup?: FollowupRun; interruption?: TaskInterruption; humanNotice?: HumanNotice }>(
   () => `/automation/tasks/${props.taskId}/sections/execution?pageSize=1${selected.value?'&taskId='+selected.value:''}`, () => props.updatedAt);
 watch(() => props.taskId, () => { selected.value = ''; }, { flush: 'sync' });
-watch([() => props.taskId, selected], () => { data.value = null; }, { flush: 'sync' });
+watch([() => props.taskId, selected], () => { data.value = null; supplementContext.value = null; }, { flush: 'sync' });
 const legacyTask = shallowRef<TaskRecoveryTarget>();
 // Running installations may still return the old section shape until their next safe restart.
 watch(data, async (section, _previous, onCleanup) => {
@@ -31,6 +36,24 @@ watch(data, async (section, _previous, onCleanup) => {
   } catch (reason) { if (!controller.signal.aborted) error.value = message(reason); }
 });
 const recoveryTask = computed(() => data.value?.task || legacyTask.value || (props.task?.id === (selected.value || props.taskId) ? props.task : undefined));
+const canSupplement = computed(() => Boolean(recoveryTask.value && recoveryTask.value.kind === 'generation' && recoveryTask.value.stopped && ['interrupted', 'pending', 'failed', 'cancelled'].includes(recoveryTask.value.status)));
+const activeSupplementBatch = computed(() => supplementContext.value?.batches.find(b => b.status === 'collecting' || b.status === 'ready'));
+let supplementAbort: AbortController | undefined;
+async function loadSupplementSummary() {
+  supplementAbort?.abort();
+  const target = recoveryTask.value;
+  if (!target || target.kind !== 'generation') { supplementContext.value = null; return; }
+  const controller = new AbortController();
+  supplementAbort = controller;
+  const targetId = target.id;
+  try {
+    const result = await api<TaskSupplementContext>(`/automation/tasks/${targetId}/supplements`, { signal: controller.signal });
+    if (!controller.signal.aborted && recoveryTask.value?.id === targetId) supplementContext.value = result;
+  } catch { /* supplemental summary badge is optional */ }
+}
+watch([() => recoveryTask.value?.id, () => recoveryTask.value?.kind, () => props.updatedAt], () => { void loadSupplementSummary(); }, { immediate: true });
+onUnmounted(() => { supplementAbort?.abort(); });
+async function onSupplementApplied() { emit('changed'); await Promise.all([load(), loadSupplementSummary()]); }
 const humanNotice = computed<HumanNotice | null>(() => {
   if (!data.value) return null;
   if (recoveryTask.value?.status === 'cancelled' && !data.value.interruption) return null;
@@ -61,7 +84,7 @@ const followupWindow = computed(() => {
     totalSeconds: Math.round(totalMs / 1000),
   };
 });
-defineExpose({ refresh: async () => { await Promise.all([load(), learning.value?.refresh?.()]); } });
+defineExpose({ refresh: async () => { await Promise.all([load(), learning.value?.refresh?.(), loadSupplementSummary()]); } });
 const actionNames: Record<string, string> = { repair: '委托站点修复',retry: '重试当前阶段', continue: '继续原会话', answer: '补充待输入内容', evaluate: '交接独立评测', wait: '等待执行', interrupt: '中断并说明原因' };
 </script>
 <template>
@@ -70,7 +93,10 @@ const actionNames: Record<string, string> = { repair: '委托站点修复',retry
     <section v-if="data.interruption || data.error || recoveryTask?.status === 'cancelled'" class="panel settings-panel task-section-stack">
       <div class="section-heading">
         <h2>{{ data.interruption ? '中断说明' : recoveryTask?.status === 'cancelled' ? '任务已取消' : '阶段异常' }}</h2>
-        <span v-if="humanNotice" class="status-badge failed">{{ diagnosticCategoryLabels[humanNotice.category] }}</span>
+        <div v-if="humanNotice || activeSupplementBatch" class="attention-badges">
+          <span v-if="activeSupplementBatch" class="status-badge" :class="activeSupplementBatch.status === 'collecting' ? 'collecting' : 'pending'">{{ activeSupplementBatch.status === 'collecting' ? 'AI 正在收集资料' : 'AI 已整理好资料，待确认' }}</span>
+          <span v-if="humanNotice" class="status-badge failed">{{ diagnosticCategoryLabels[humanNotice.category] }}</span>
+        </div>
       </div>
       <template v-if="humanNotice">
         <p class="human-headline">{{ humanNotice.headline }}</p>
@@ -81,7 +107,12 @@ const actionNames: Record<string, string> = { repair: '委托站点修复',retry
         </div>
       </template>
       <p v-else class="task-prose">当前任务已取消并确认停止，可按原固定输入与规则重新启动。</p>
-      <div class="task-actions"><TaskRecoveryActions :task="recoveryTask" :busy="busy" :workflow-active="workflowActive" @action="(action, id) => emit('action', action, id)" /></div>
+      <div class="task-actions">
+        <TaskRecoveryActions :task="recoveryTask" :busy="busy" :workflow-active="workflowActive" @action="(action, id) => emit('action', action, id)" />
+        <button v-if="canSupplement" type="button" class="button secondary" :disabled="busy" @click="supplementDialog?.open()">
+          <Upload :size="16" />{{ activeSupplementBatch?.status === 'ready' ? '查看待确认资料' : activeSupplementBatch?.status === 'collecting' ? '查看 AI 收集进度' : '补充资料 / AI 收集' }}
+        </button>
+      </div>
       <p v-if="recoveryTask?.stopped === false && ['pending', 'interrupted'].includes(recoveryTask.status)" class="text-muted small-text">请先检查原会话或执行进程，确认停止后再恢复。</p>
       <Disclosure v-if="data.interruption || data.error" label="技术排障详情（供研发查看）">
         <div class="tech-detail-stack">
@@ -107,8 +138,17 @@ const actionNames: Record<string, string> = { repair: '委托站点修复',retry
   <TaskLearning ref="learning" :task-id="taskId" mode="execution" :revision="updatedAt" @changed="emit('changed')" />
   <ExecutionLog :task-id="taskId" :revision="updatedAt" @stage-change="selected = $event" />
   <section v-if="data?.context" class="panel settings-panel"><Disclosure label="最近会话上下文"><pre class="task-technical">{{ data.context }}</pre></Disclosure></section>
+  <TaskSupplementDialog
+    v-if="recoveryTask"
+    :key="'exec-supp-' + recoveryTask.id"
+    ref="supplementDialog"
+    :task-id="recoveryTask.id"
+    @applied="onSupplementApplied"
+    @changed="loadSupplementSummary"
+  />
 </template>
 <style scoped>
 .human-headline{font-size:17px;font-weight:650;color:var(--ink);margin:0}
 .tech-detail-stack{display:flex;flex-direction:column;gap:8px}
+.attention-badges{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
 </style>

@@ -1,5 +1,7 @@
 # Kooboo AI Automation Lab
 
+v0.8.3 修复跨环境交付到 DE 时两类关键问题：（1）将 Kooboo `siteId`、`templateId` 与会话 `sessionId` 的 Zod 校验由严格 RFC 4122 `z.string().uuid()` 调整为 `z.guid()`，避免有效的非 RFC 4122 .NET/Kooboo GUID 在 `sitemigrate` 回执、人工补录回执、站点绑定、模板详情及问题交接接口误报 `Invalid UUID`；（2）在跨环境迁移接口返回非 2xx 状态码或异常 200 回执时，读取并脱敏留存有界响应体摘要、链路追踪响应头及耗时到交付错误和任务事件（保持不确定状态禁止自动重发），同时修复 `store` 持久层 `Bearer` 脱敏正则未排除 `\` 导致的 JSON 转义破坏问题。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.8.3 发布说明](docs/release-notes-0.8.3.md)。
+
 v0.8.2 修复外部调用（如 `kooboo-workbench`）通过 `POST /api/automation/tasks` 创建任务且未显式传入 `autoDelivery` 时，平台未冻结环境默认交付偏好（`env.delivery.auto`）导致「仅首页（`scope: "homepage"`）」等任务无法在评测完成后自动触发跨环境交付到 DE 服务器的问题；与 Web 界面及「默认开启（任务完成后自动交付）」设置语义保持一致。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.8.2 发布说明](docs/release-notes-0.8.2.md)。
 
 v0.8.1 修复源站克隆部分页面永久挂起（`Transfer/GetStatus` 存在未完成页面）导致任务在准备阶段静默空转至 60 分钟上限、无模型调用费用且界面无任何提示的问题；为 `waitForTransferPages` 增加 2 分钟停滞检测、5 分钟等待上限与 `Transfer/GetTaskStatus` 交叉核验，并在克隆等待期间持续写入中文进度事件与刷新更新时间。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.8.1 发布说明](docs/release-notes-0.8.1.md)。

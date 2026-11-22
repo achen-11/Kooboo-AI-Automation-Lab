@@ -15,7 +15,7 @@ const automationStore = new AutomationStore(store.db, value => {
   for (const secret of [settings.model.apiKey, settings.updateSource?.token || '', ...settings.environments.flatMap(env => [env.token, env.delivery?.token || ''])]) {
     if (secret) value = value.replaceAll(secret, '[已隐藏]');
   }
-  return value.replace(/Bearer\s+[^\s"',;]+/gi, 'Bearer [已隐藏]');
+  return value.replace(/Bearer\s+[^\s"',;\\]+/gi, 'Bearer [已隐藏]');
 });
 installBackgroundFailureMonitor(directory,value=>automationStore.sanitize(value));
 const worker = new Worker(store, vault, new Artifacts(store.db, resolve(directory, 'artifacts')), directory);

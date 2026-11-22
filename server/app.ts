@@ -54,7 +54,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   const automationStore = new AutomationStore(store.db,value=>{
     const settings=vault.get();
     for(const secret of [settings.model.apiKey,settings.updateSource?.token||'',...settings.environments.flatMap(e=>[e.token,e.delivery?.token||''])])if(secret)value=value.replaceAll(secret,'[已隐藏]');
-    return value.replace(/Bearer\s+[^\s"',;]+/gi,'Bearer [已隐藏]');
+    return value.replace(/Bearer\s+[^\s"',;\\]+/gi,'Bearer [已隐藏]');
   });
   const automationWorker = options.createAutomationWorker
     ? options.createAutomationWorker(automationStore, vault, directory)
@@ -255,7 +255,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   });
   app.post('/api/evaluations/:id/issue-handoffs', async request => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const input = z.object({ id: z.string().uuid(), runId: z.string().uuid(), indices: z.array(z.number().int().nonnegative()).min(1).max(500), environmentId: z.string().uuid(), siteId: z.string().uuid() }).strict().parse(request.body);
+    const input = z.object({ id: z.string().uuid(), runId: z.string().uuid(), indices: z.array(z.number().int().nonnegative()).min(1).max(500), environmentId: z.string().uuid(), siteId: z.guid() }).strict().parse(request.body);
     const item = store.get(id);
     if (!item) throw new Conflict('评测不存在');
     const target = (await repairTargets(item, vault.get())).items.find(target => target.environmentId === input.environmentId && target.siteId === input.siteId);
@@ -269,7 +269,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   });
   app.post('/api/evaluations/:id/issue-handoffs/:handoffId/receipt', async request => {
     const { id, handoffId } = z.object({ id: z.string().uuid(), handoffId: z.string().uuid() }).parse(request.params);
-    const input = z.object({ runId: z.string().uuid(), siteId: z.string().uuid(), status: z.enum(['accepted', 'failed', 'unknown']), sessionId: z.string().uuid().optional() }).strict().parse(request.body);
+    const input = z.object({ runId: z.string().uuid(), siteId: z.guid(), status: z.enum(['accepted', 'failed', 'unknown']), sessionId: z.guid().optional() }).strict().parse(request.body);
     return store.finishIssueHandoff(id, input.runId, handoffId, input.siteId, input.status, input.sessionId);
   });
   app.post('/api/evaluations/:id/runs', async (request, reply) => {

@@ -3,12 +3,21 @@ import { dirname, extname, resolve } from 'node:path';
 import { createHash } from 'node:crypto';
 import type { MaterialFile } from '../../shared/automation.js';
 import { materialPath, uniqueMaterialPaths } from '../../shared/materials.js';
+const KOOBOO_UNSAFE_FILENAME_RE = /[\s#%?:<>|*"&+\\]/;
+
+export function koobooSafeFilename(file: Pick<MaterialFile, 'id'>, original: string): string {
+  return KOOBOO_UNSAFE_FILENAME_RE.test(original)
+    ? file.id + (/^\.[a-z0-9]{1,12}$/i.test(extname(original)) ? extname(original) : '.bin')
+    : original;
+}
+
 export function materialDestination(resourceId:string,versionId:string,file:MaterialFile){
   const logical=materialPath(file.name),parts=logical.split('/'),original=parts.pop()!;
-  // Kooboo Upload/File normalizes spaces / # and platform-invalid filename characters.
+  // Kooboo Upload/File normalizes spaces / # / + and platform-invalid filename characters.
   // Use a stable safe filename for those names, and preserve the logical name in the manifest.
-  const filename=/[\s#%?:<>|*"&]/.test(original)?file.id+(/^\.[a-z0-9]{1,12}$/i.test(extname(original))?extname(original):'.bin'):original;
-  const folder=[`materials/${resourceId}/${versionId}`,...parts].join('/');
+  const filename=koobooSafeFilename(file,original);
+  const safeParts=parts.map(seg=>(KOOBOO_UNSAFE_FILENAME_RE.test(seg)?seg.replace(/[\s#%?:<>|*"&+\\]+/g,'_'):seg));
+  const folder=[`materials/${resourceId}/${versionId}`,...safeParts].join('/');
   const text=!file.type.startsWith('image/')&&/\.(md|txt|json|csv|ya?ml|html?|css|js|ts|xml)$/i.test(logical);
   return {logical,filename,folder,text,path:text?`_materials/${resourceId}/${versionId}/${logical}`:`/${folder}/${filename}`};
 }

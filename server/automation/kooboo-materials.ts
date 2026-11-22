@@ -1,9 +1,8 @@
 import { randomUUID } from 'node:crypto';
-import { extname } from 'node:path';
 import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
 import { materialPath } from '../../shared/materials.js';
 import type { ContextRequest } from './generation-context.js';
-import { materialDestination, readMaterial } from './materials.js';
+import { koobooSafeFilename, materialDestination, readMaterial } from './materials.js';
 
 export interface UploadedSiteMaterial {
   file: MaterialFile;
@@ -37,9 +36,7 @@ export function mergeTaskMaterials(
 function safeUploadBasename(file: MaterialFile): string {
   const logical = materialPath(file.name);
   const original = logical.split('/').pop()!;
-  return /[\s#%?:<>|*"&]/.test(original)
-    ? file.id + (/^\.[a-z0-9]{1,12}$/i.test(extname(original)) ? extname(original) : '.bin')
-    : original;
+  return koobooSafeFilename(file, original);
 }
 
 const IMAGE_MIME_RE = /^image\/(png|jpeg|jpg|webp|svg\+xml|gif)$/i;

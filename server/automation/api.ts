@@ -58,7 +58,7 @@ import { registerTaskSupplementApi } from './supplement-api.js';
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
 const optionalText=(max=200)=>z.string().trim().max(max).optional().transform(v=>v||undefined);
-const optionalTemplateId=z.string().trim().optional().transform(v=>v||undefined).refine(v=>!v||z.string().uuid().safeParse(v).success,'模板 ID 需为有效的 UUID');
+const optionalTemplateId=z.string().trim().optional().transform(v=>v||undefined).refine(v=>!v||z.guid().safeParse(v).success,'模板 ID 需为有效的 UUID');
 const templateUsageModeSchema=z.enum(['direct-template','reference-sandbox']).optional();
 const logicalPath=z.string().min(1).max(300).refine(n=>{try{return materialPath(n)===n;}catch{return false;}},'附件路径不合法');
 const file=z.object({id:uuid,name:logicalPath,type:z.string().max(200),size:z.number().int().nonnegative(),sha256:z.string().regex(/^[a-f0-9]{64}$/)});
@@ -364,7 +364,8 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.get('/api/automation/tasks/:id/summary',async(request,reply)=>{
     const {id}=params.parse(request.params),task=store.header(id);
     if(!task)return reply.code(404).send({error:'任务不存在'});
-    const evaluation=task.evaluationTaskId?store.header(task.evaluationTaskId):undefined;
+    const currentReport=store.currentReportHeader(task);
+    const evaluation=task.kind==='generation'&&!task.optimization&&currentReport?.kind==='evaluation'?currentReport:task.evaluationTaskId?store.header(task.evaluationTaskId):undefined;
     const latestId=task.optimization?.activeTaskId|| (task.status==='completed'&&evaluation?evaluation.id:id);
     const latest=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT 1').get(latestId);
     const active=task.optimization?.activeTaskId&&task.optimization.activeTaskId!==id?store.header(task.optimization.activeTaskId)||task:undefined;
@@ -466,11 +467,11 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const {id}=params.parse(request.params),task=store.task(id),policy=optimizationInput.parse(request.body);
     if(task&&store.dispositions.get('delivery',task.generatedSiteId||task.id))throw new Conflict('该生成站已归档，请先移回在列后再开启优化');
     if(task&&store.domainReserved(task.generatedSiteId))throw new Conflict('站点正在换绑域名，请稍后开启优化');
-    if(!task||task.kind!=='generation'||!supportsAutomaticOptimization(task.scenario)||task.optimization||!task.stopped||task.status!=='completed'||!task.generation?.conversationId)throw new Conflict('只能为已完成且可继续原会话的 AI Site 模板、迁移与升级任务开启优化');
+    if(!task||task.kind!=='generation'||!supportsAutomaticOptimization(task.scenario)||task.optimization||!task.stopped||task.status!=='completed'||!task.generation?.conversationId)throw new Conflict('只能为已完成且可继续原会话的资料建站、AI Site 模板、迁移与升级任务开启优化');
     const evaluation=store.currentReport(task);if(!evaluation?.report||!evaluation.rule||!evaluation.stopped||evaluation.status!=='completed')throw new Conflict('需要当前版本已完成且保留规则快照的独立评测报告');
     if(store.tasks().some(t=>t.id!==task.id&&t.generatedSiteId===task.generatedSiteId&&(!t.stopped||['queued','following-up'].includes(t.status))))throw new Conflict('请先等待该站点其他任务结束');
     store.db.transaction(()=>{
-      evaluation.siteRevision ||= randomUUID();store.publishSiteReport(evaluation);store.put(evaluation);task.siteRevision=evaluation.siteRevision;
+      evaluation.siteRevision ||= randomUUID();store.publishSiteReport(evaluation);store.put(evaluation);task.siteRevision=evaluation.siteRevision;task.evaluationTaskId=evaluation.id;
       task.rule=structuredClone(evaluation.rule);
       if(task.autonomy){task.autonomy.policy.hardMaxRounds=policy.maxRounds;if(policy.maxCostCny!==null)task.autonomy.policy.hardCostCny=policy.maxCostCny;}
       task.model=evaluation.model||{name:vault.automation().evaluationModel,endpoint:executionSettings().evaluationEndpoint};
@@ -515,7 +516,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     return {items:store.create({resourceIds:[old.resourceId],kind:input.kind||old.kind,scope:old.scope,environmentId:old.environmentId,generatedSiteId:old.generatedSiteId,requirements:input.requirements,parentId:id,versionId:old.versionId,ruleSnapshot:old.rule||undefined},vault.automation())};
   });
   app.post('/api/automation/sites',async(request)=>{
-    const input=z.object({resourceId:uuid,environmentId:uuid,siteId:uuid,name:z.string().min(1).max(200),url:z.url().refine(v=>/^https?:/.test(v))}).parse(request.body);
+    const input=z.object({resourceId:uuid,environmentId:uuid,siteId:z.guid(),name:z.string().min(1).max(200),url:z.url().refine(v=>/^https?:/.test(v))}).parse(request.body);
     if(!store.resource(input.resourceId)||!vault.get().environments.some(e=>e.id===input.environmentId))throw new Conflict('资源或环境不存在');
     const site={...input,id:randomUUID(),versionId:store.versions(input.resourceId)[0].id,createdAt:Date.now()};store.saveSite(site);return site;
   });
@@ -542,7 +543,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     catch(error){return reply.code(502).send({error:error instanceof Error?error.message:'查询 Kooboo 模板列表失败'});}
   });
   app.get('/api/automation/kooboo/templates/:templateId',async(request,reply)=>{
-    const {templateId}=z.object({templateId:z.string().trim().uuid('模板 ID 需为有效的 UUID')}).parse(request.params);
+    const {templateId}=z.object({templateId:z.string().trim().pipe(z.guid('模板 ID 需为有效的 UUID'))}).parse(request.params);
     const q=z.object({environmentId:uuid.optional()}).parse(request.query);
     const env=templateEnvironment(q.environmentId);
     const {origin,request:koobooRequest}=koobooClient({environmentId:env.id},vault,AbortSignal.timeout(30000));

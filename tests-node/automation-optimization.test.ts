@@ -254,8 +254,8 @@ test('task API freezes optimization policy, rejects other scenarios and keeps ol
     const newRoot=created.json().items[0];assert.equal(newRoot.optimization.policy.targetScore,90);assert.equal(newRoot.optimization.threshold,82);
     const retry=await f.app.inject({method:'POST',url:'/api/automation/tasks',headers,payload:input});assert.deepEqual(retry.json(),created.json());
     f.vault.updateAutomation({...f.settings,optimization:{...defaultOptimizationPolicy,targetScore:95,maxRounds:8}});assert.equal(f.store.task(newRoot.id)!.optimization!.policy.maxRounds,2);
-    const ordinary=f.store.saveResource({...f.resource,name:'Materials',scenario:'materials',externalId:'other'});
-    const bad=await f.app.inject({method:'POST',url:'/api/automation/tasks',headers:{...headers,'idempotency-key':'reject-materials'},payload:{...input,resourceIds:[ordinary.id]}});assert.equal(bad.statusCode,409);assert.match(bad.json().error,/仅支持 AI Site/);
+    const ordinary=f.store.saveResource({...f.resource,name:'AppTemplate',scenario:'app-template',externalId:'other'});
+    const bad=await f.app.inject({method:'POST',url:'/api/automation/tasks',headers:{...headers,'idempotency-key':'reject-app-template'},payload:{...input,resourceIds:[ordinary.id]}});assert.equal(bad.statusCode,409);assert.match(bad.json().error,/仅支持资料建站、AI Site/);
     const initial=f.finish(f.root);f.advance();f.repair();
     const history=(await f.app.inject({url:`/api/automation/tasks/${f.root.id}/sections/report?round=0`,headers:f.headers})).json();assert.equal(history.historical,true);assert.equal(history.report.scores[0].value,76);
     const current=(await f.app.inject({url:`/api/automation/tasks/${f.root.id}/sections/report`,headers:f.headers})).json();assert.equal(current.report,null);assert.equal(current.optimization.rounds.length,2);
@@ -424,4 +424,191 @@ test('incremental intermediate pass requires a final full-site audit on the same
     const result=(await f.app.inject({url:`/api/v1/automation/tasks/${root.id}/result`,headers:f.headers})).json();
     assert.equal(result.ready,true);assert.equal(result.targetReached,true);assert.equal(result.reportId,audit.id);
   }finally{await f.close();}
+});
+
+test('materials scenario supports automatic optimization, adapts optimizationEvidence by reference presence, and recognizes same-revision manual re-evaluation reports', async () => {
+  const f = await fixture(2, 'materials', 'homepage');
+  try {
+    // Prepare a clean materials resource WITHOUT referenceUrl or contentUrl
+    const noRefRes = f.store.saveResource({
+      name: '无参考站资料构建',
+      scenario: 'materials',
+      description: '纯资料建站',
+      contentUrl: '',
+      referenceUrl: '',
+      files: [],
+      externalSource: '',
+      externalId: '',
+    });
+    const noRefSite = {
+      id: randomUUID(),
+      resourceId: noRefRes.id,
+      versionId: f.store.versions(noRefRes.id)[0].id,
+      environmentId: f.site.environmentId,
+      siteId: randomUUID(),
+      name: 'NoRefSite',
+      url: 'https://noref.test',
+      createdAt: Date.now(),
+    };
+    f.store.saveSite(noRefSite);
+    const noRefGen = f.store.create(
+      {
+        resourceIds: [noRefRes.id],
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: noRefSite.environmentId,
+        generatedSiteId: noRefSite.id,
+        requirements: '',
+      },
+      f.settings,
+    )[0];
+    noRefGen.generation = { prepared: true, conversationId: randomUUID(), deliveryState: 'completed' };
+    f.store.beginSiteChange(noRefGen);
+    noRefGen.status = 'completed';
+    noRefGen.stopped = true;
+    f.store.put(noRefGen);
+
+    // Simulate old auto evaluation interrupted, followed by a same-revision manual re-evaluation completing & publishing to auto_site_state
+    const interruptedAutoEval = f.store.ensureEvaluation(noRefGen, f.settings);
+    interruptedAutoEval.status = 'interrupted';
+    interruptedAutoEval.stopped = true;
+    interruptedAutoEval.error = '旧评测中断';
+    f.store.put(interruptedAutoEval);
+    assert.equal(noRefGen.evaluationTaskId, interruptedAutoEval.id);
+
+    const manualEval = f.store.create(
+      {
+        resourceIds: [noRefRes.id],
+        kind: 'evaluation',
+        scope: 'homepage',
+        environmentId: noRefSite.environmentId,
+        generatedSiteId: noRefSite.id,
+        versionId: noRefGen.versionId,
+        parentId: noRefGen.id,
+        requirements: '',
+      },
+      f.settings,
+    )[0];
+    manualEval.siteRevision = noRefGen.siteRevision;
+    manualEval.status = 'completed';
+    manualEval.stopped = true;
+    const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+    const folder = join(f.directory, 'automation-runs', manualEval.id, 'evidence');
+    mkdirSync(folder, { recursive: true });
+    manualEval.report = {
+      ...f.report(manualEval, 84, 70),
+      artifacts: (['desktop', 'mobile'] as const).map(viewport => {
+        const name = randomUUID() + '.png';
+        writeFileSync(join(folder, name), pngBytes);
+        return {
+          id: randomUUID(),
+          name,
+          type: 'image/png',
+          size: pngBytes.length,
+          sha256: createHash('sha256').update(pngBytes).digest('hex'),
+          viewport,
+          role: 'target' as const,
+        };
+      }),
+    };
+    f.store.publishSiteReport(manualEval);
+    f.store.put(manualEval);
+
+    // Both store.currentReport and GET /summary recognize manualEval automatically
+    assert.equal(f.store.currentReport(f.store.task(noRefGen.id)!)?.id, manualEval.id);
+    const summaryRes = await f.app.inject({ url: `/api/automation/tasks/${noRefGen.id}/summary`, headers: f.headers });
+    assert.equal(summaryRes.statusCode, 200);
+    const summaryBody = summaryRes.json() as { currentReportId: string; evaluation: { id: string } };
+    assert.equal(summaryBody.currentReportId, manualEval.id);
+    assert.equal(summaryBody.evaluation.id, manualEval.id);
+
+    // Enable automatic optimization on the completed materials task via POST /optimize
+    const optRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/automation/tasks/${noRefGen.id}/optimize`,
+      headers: f.headers,
+      payload: { targetScore: 85, maxRounds: 2, maxCostCny: null },
+    });
+    assert.equal(optRes.statusCode, 200, optRes.body);
+    const enabled = f.store.task(noRefGen.id)!;
+    assert.equal(enabled.evaluationTaskId, manualEval.id);
+    assert.equal(enabled.optimization?.reportId, manualEval.id);
+    assert.equal(enabled.optimization?.policy.targetScore, 85);
+
+    // No-reference materials optimizationEvidence succeeds with desktop/mobile target PNGs alone
+    const evNoRef = optimizationEvidence(enabled, f.store, f.directory);
+    assert.equal(evNoRef.selected.length, 2);
+
+    // With-reference materials task still strictly requires reference PNGs for desktop & mobile
+    const refRes = f.store.saveResource({
+      name: '带参考模板资料构建',
+      scenario: 'materials',
+      description: '模板建站',
+      contentUrl: '',
+      referenceUrl: 'https://template.test',
+      files: [],
+      externalSource: '',
+      externalId: '',
+    });
+    const refSite = {
+      id: randomUUID(),
+      resourceId: refRes.id,
+      versionId: f.store.versions(refRes.id)[0].id,
+      environmentId: f.site.environmentId,
+      siteId: randomUUID(),
+      name: 'WithRefSite',
+      url: 'https://withref.test',
+      createdAt: Date.now(),
+    };
+    f.store.saveSite(refSite);
+    const refGen = f.store.create(
+      {
+        resourceIds: [refRes.id],
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: refSite.environmentId,
+        generatedSiteId: refSite.id,
+        requirements: '',
+      },
+      f.settings,
+    )[0];
+    refGen.generation = { prepared: true, conversationId: randomUUID(), deliveryState: 'completed' };
+    f.store.beginSiteChange(refGen);
+    refGen.status = 'completed';
+    refGen.stopped = true;
+    f.store.put(refGen);
+    const refEval = f.store.ensureEvaluation(refGen, f.settings);
+    refEval.status = 'completed';
+    refEval.stopped = true;
+    const refFolder = join(f.directory, 'automation-runs', refEval.id, 'evidence');
+    mkdirSync(refFolder, { recursive: true });
+    refEval.report = {
+      ...f.report(refEval, 84, 70),
+      artifacts: (['desktop', 'mobile'] as const).map(viewport => {
+        const name = randomUUID() + '.png';
+        writeFileSync(join(refFolder, name), pngBytes);
+        return {
+          id: randomUUID(),
+          name,
+          type: 'image/png',
+          size: pngBytes.length,
+          sha256: createHash('sha256').update(pngBytes).digest('hex'),
+          viewport,
+          role: 'target' as const,
+        };
+      }),
+    };
+    f.store.publishSiteReport(refEval);
+    f.store.put(refEval);
+    const refOptRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/automation/tasks/${refGen.id}/optimize`,
+      headers: f.headers,
+      payload: { targetScore: 85, maxRounds: 2, maxCostCny: null },
+    });
+    assert.equal(refOptRes.statusCode, 200, refOptRes.body);
+    assert.throws(() => optimizationEvidence(f.store.task(refGen.id)!, f.store, f.directory), /reference/);
+  } finally {
+    await f.close();
+  }
 });

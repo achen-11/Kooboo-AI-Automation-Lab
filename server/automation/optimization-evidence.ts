@@ -1,7 +1,7 @@
 import { createHash } from 'node:crypto';
 import { readFileSync } from 'node:fs';
 import { resolve } from 'node:path';
-import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
+import { effectiveReferenceUrl, type AutomationTask, type MaterialFile } from '../../shared/automation.js';
 import type { AutomationStore } from './store.js';
 import { FollowupRuntimeError } from './errors.js';
 
@@ -38,6 +38,9 @@ export function optimizationEvidence(task: AutomationTask, store: AutomationStor
   }
   const ordered=[...current.report.issues.toSorted((a,b)=>({critical:0,major:1,minor:2}[a.severity]-{critical:0,major:1,minor:2}[b.severity])).flatMap(i=>i.evidence),...current.report.assessments.toSorted((a,b)=>(a.score??0)-(b.score??0)).flatMap(a=>a.evidence)];
   for(const name of ordered){const file=current.report.artifacts.find(f=>f.name===name&&f.type==='image/png');if(file)add(current,file);}
-  for(const viewport of ['desktop','mobile'])for(const role of ['target','reference'])if(!selected.some(i=>i.reportId===current.id&&i.file.viewport===viewport&&i.file.role===role))throw new FollowupRuntimeError(`优化缺少 ${viewport} / ${role} 的有效图片，需要先补齐独立取证`,['补齐该视口与角色的独立评测证据，再继续修复分析；不会重试缺少图片的相同分析。']);
+  const currentInput=store.version(current.versionId);
+  const hasReference=Boolean(effectiveReferenceUrl(currentInput,current,store.root(current),task)||(current.scenario!=='materials'&&currentInput?.contentUrl?.trim()));
+  const requiredRoles:('target'|'reference')[]=hasReference?['target','reference']:['target'];
+  for(const viewport of ['desktop','mobile'])for(const role of requiredRoles)if(!selected.some(i=>i.reportId===current.id&&i.file.viewport===viewport&&i.file.role===role))throw new FollowupRuntimeError(`优化缺少 ${viewport} / ${role} 的有效图片，需要先补齐独立取证`,['补齐该视口与角色的独立评测证据，再继续修复分析；不会重试缺少图片的相同分析。']);
   return {current,previous,selected};
 }

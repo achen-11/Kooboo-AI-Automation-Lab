@@ -165,9 +165,13 @@ export class AutomationStore {
     });
   }
   currentReportHeader(task: TaskHeader) {
-    const source=task.kind==='evaluation'?task:this.header(task.evaluationTaskId||'');
-    if(!source?.report)return undefined;
+    let source=task.kind==='evaluation'?task:this.header(task.evaluationTaskId||'');
     const state=task.generatedSiteId?this.siteState(task.generatedSiteId):undefined;
+    if(task.kind==='generation'&&!task.optimization&&state?.reportId&&task.siteRevision&&state.revision===task.siteRevision&&(!source?.report||source.id!==state.reportId)){
+      const published=this.header(state.reportId);
+      if(published?.kind==='evaluation'&&published.report&&published.siteRevision===task.siteRevision&&published.versionId===task.versionId&&published.scope===task.scope)source=published;
+    }
+    if(!source?.report)return undefined;
     if(state&&(state.revision!==source.siteRevision||state.reportId!==source.id))return undefined;
     if(task.optimization&&task.optimization.reportId!==source.id)return undefined;
     return source;
@@ -204,9 +208,13 @@ export class AutomationStore {
     this.db.prepare('INSERT INTO auto_site_state VALUES(?,?,?) ON CONFLICT(site_id) DO UPDATE SET report_id=excluded.report_id').run(task.generatedSiteId,task.siteRevision,task.id);
   }
   currentReport(task: AutomationTask) {
-    const source=task.kind==='evaluation'?task:this.task(task.evaluationTaskId||'');
-    if(!source?.report)return undefined;
+    let source=task.kind==='evaluation'?task:this.task(task.evaluationTaskId||'');
     const state=task.generatedSiteId?this.siteState(task.generatedSiteId):undefined;
+    if(task.kind==='generation'&&!task.optimization&&state?.reportId&&task.siteRevision&&state.revision===task.siteRevision&&(!source?.report||source.id!==state.reportId)){
+      const published=this.task(state.reportId);
+      if(published?.kind==='evaluation'&&published.report&&published.siteRevision===task.siteRevision&&published.versionId===task.versionId&&published.scope===task.scope)source=published;
+    }
+    if(!source?.report)return undefined;
     if(state&&(state.revision!==source.siteRevision||state.reportId!==source.id))return undefined;
     if(task.optimization&&task.optimization.reportId!==source.id)return undefined;
     return source;
@@ -249,7 +257,7 @@ export class AutomationStore {
       if (site?.disposition) throw new Conflict('所选生成站已归档，请先移回在列后再发起任务');
       if (!site && !input.parentId && resource.disposition) throw new Conflict('所选资源已归档，请先移回在列后再创建任务');
       if (input.kind==='evaluation' && !site) throw new Conflict('评测必须选择一个已有生成站');
-      if(input.optimization&&(input.kind!=='generation'||!supportsAutomaticOptimization(version.scenario)))throw new Conflict('自动优化仅支持 AI Site 模板、迁移与升级生成');
+      if(input.optimization&&(input.kind!=='generation'||!supportsAutomaticOptimization(version.scenario)))throw new Conflict('自动优化仅支持资料建站、AI Site 模板、迁移与升级生成');
       const kind = version.scenario==='app-template'?'app':'site';
       const eligible=this.rules().filter(r=>r.kind===kind&&(!r.scenarios||r.scenarios.includes(version.scenario))&&r.criteria.some(c=>c.scopes.includes(input.scope)));
       const rule = input.ruleSnapshot || eligible.find(r=>r.id===input.ruleId) || (!input.ruleId?eligible.at(-1):undefined);

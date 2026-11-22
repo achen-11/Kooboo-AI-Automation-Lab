@@ -10,6 +10,7 @@ import { buildHarnessCatalog } from '../server/automation/harness.js';
 import { GenerationContextStore } from '../server/automation/generation-context.js';
 import { executeGeneration } from '../server/automation/generator.js';
 import { executeEvaluation } from '../server/automation/evaluator.js';
+import { koobooSafeFilename, materialDestination } from '../server/automation/materials.js';
 import type { codexClient } from '../server/automation/codex-client.js';
 import type { evaluationBrowser } from '../server/automation/browser.js';
 import { createSupplementBatch, SupplementStore } from '../server/automation/supplement.js';
@@ -834,4 +835,21 @@ test('AI-assisted intake stages ready draft for confirmation, supports selective
     await f.close();
     await closeServer(server);
   }
+});
+
+test('materialDestination and koobooSafeFilename sanitize Kooboo-normalized + characters while preserving logical path', () => {
+  const docxFile: MaterialFile = {
+    id: 'ef71770e-4912-42af-b19a-0a2f2b0415d2',
+    name: '独立站资料+备份/公司介绍+公司理念.docx',
+    type: 'application/vnd.openxmlformats-officedocument.wordprocessingml.document',
+    size: 11712,
+    sha256: 'a'.repeat(64),
+  };
+  const dest = materialDestination('res-1', 'ver-1', docxFile);
+  assert.equal(dest.logical, '独立站资料+备份/公司介绍+公司理念.docx');
+  assert.equal(dest.text, false);
+  assert.equal(dest.filename, 'ef71770e-4912-42af-b19a-0a2f2b0415d2.docx');
+  assert.equal(dest.folder, 'materials/res-1/ver-1/独立站资料_备份');
+  assert.equal(dest.path, '/materials/res-1/ver-1/独立站资料_备份/ef71770e-4912-42af-b19a-0a2f2b0415d2.docx');
+  assert.equal(koobooSafeFilename(docxFile, 'normal-image_01.png'), 'normal-image_01.png');
 });

@@ -1,5 +1,7 @@
 # Kooboo AI Automation Lab
 
+v0.9.0 引入 **Verification Engineering（有界验证工程）全链路重构** 并完整合入 `v0.8.3` 的 Kooboo GUID 与交付脱敏诊断修复：（1）首页、多页全站与跨环境 `delivery` 全面切换至「宿主确定性取证与预检 + `read-only` 多模态有界评判 + 宿主硬封顶裁决」，结合移动菜单关闭探针（`MOBILE_MENU_TRAPPED`）、超长页面断点续采切片（最高 40 屏）与并发批次缓冲，请求数降低 **95%+**、单页评测耗时提速至 1–3 分钟；（2）引入单步只读有界优化规划器（`bounded-optimization-planner`），解锁 `materials` 自动优化、同修订手动重评识别与 Kooboo `+` 文件名规范化，并将仅静态截图不可观测的微交互归入 `outOfScope`；（3）推出 **「`CHECKS.md` 一错一规」产品闭环与自动回归测试集**，支持从任意评测报告一键将漏判/虚高沉淀为版本化红线规则或为误判追加豁免、绑定真实截图为标定反例，并在规则管理台及 CLI 零 Token 运行确定性回归（支持 `--live` 真图复验）。详情与验证边界见 [v0.9.0 发布说明](docs/release-notes-0.9.0.md)。
+
 v0.8.3 修复跨环境交付到 DE 时两类关键问题：（1）将 Kooboo `siteId`、`templateId` 与会话 `sessionId` 的 Zod 校验由严格 RFC 4122 `z.string().uuid()` 调整为 `z.guid()`，避免有效的非 RFC 4122 .NET/Kooboo GUID 在 `sitemigrate` 回执、人工补录回执、站点绑定、模板详情及问题交接接口误报 `Invalid UUID`；（2）在跨环境迁移接口返回非 2xx 状态码或异常 200 回执时，读取并脱敏留存有界响应体摘要、链路追踪响应头及耗时到交付错误和任务事件（保持不确定状态禁止自动重发），同时修复 `store` 持久层 `Bearer` 脱敏正则未排除 `\` 导致的 JSON 转义破坏问题。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.8.3 发布说明](docs/release-notes-0.8.3.md)。
 
 v0.8.2 修复外部调用（如 `kooboo-workbench`）通过 `POST /api/automation/tasks` 创建任务且未显式传入 `autoDelivery` 时，平台未冻结环境默认交付偏好（`env.delivery.auto`）导致「仅首页（`scope: "homepage"`）」等任务无法在评测完成后自动触发跨环境交付到 DE 服务器的问题；与 Web 界面及「默认开启（任务完成后自动交付）」设置语义保持一致。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.8.2 发布说明](docs/release-notes-0.8.2.md)。

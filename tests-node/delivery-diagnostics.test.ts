@@ -1,0 +1,460 @@
+import test from 'node:test';
+import assert from 'node:assert/strict';
+import { mkdtempSync, rmSync } from 'node:fs';
+import { join } from 'node:path';
+import { tmpdir } from 'node:os';
+import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
+import { createApp } from '../server/app.js';
+import { defaultDeliveryPolicy } from '../shared/automation.js';
+import { queueDelivery, executeDelivery, deliveryReceipt } from '../server/automation/delivery.js';
+
+const KOOBOO_GUIDS = [
+  '1adbf7f5-d119-0a84-53bb-2ecddb7d9ff1',
+  'e3f7e688-16dc-c31f-21e7-0a8ed5899dfd',
+  '7b788f38-93d0-fbd5-ad79-a9aac09be3b6',
+] as const;
+
+async function fixture() {
+  const directory = mkdtempSync(join(tmpdir(), 'delivery-diag-test-'));
+  const f = await createApp({ directory, serveWeb: false, startWorker: false });
+  const login = await f.app.inject({ method: 'POST', url: '/api/login' });
+  const headers = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+  const env = randomUUID();
+  const target = randomUUID();
+  f.vault.update({
+    threshold: 80,
+    paused: true,
+    model: { endpoint: 'https://api.deepseek.com', name: 'deepseek-flash-1017', apiKey: 'test-key' },
+    environments: [
+      {
+        id: env,
+        name: 'HK',
+        origin: 'https://hk.test',
+        apiOrigin: 'https://hk.test',
+        token: 'test-hk',
+        delivery: { ...defaultDeliveryPolicy, enabled: true, targetEnvironmentId: target, token: 'test-migration' },
+      },
+      { id: target, name: 'DE', origin: 'https://de.test', apiOrigin: 'https://de.test', token: 'test-de' },
+    ],
+  });
+  const resource = f.automationStore.saveResource({
+    name: 'Materials',
+    scenario: 'migration',
+    description: '',
+    contentUrl: 'https://content.test',
+    referenceUrl: '',
+    externalId: '',
+    externalSource: '',
+    files: [],
+  });
+  const site = {
+    id: randomUUID(),
+    resourceId: resource.id,
+    versionId: f.automationStore.versions(resource.id)[0].id,
+    environmentId: env,
+    siteId: randomUUID(),
+    name: 'Generated',
+    url: 'https://generated.test',
+    createdAt: Date.now(),
+  };
+  f.automationStore.saveSite(site);
+  const done = () => {
+    const task = f.automationStore.create(
+      { resourceIds: [resource.id], kind: 'evaluation', scope: 'site', environmentId: env, generatedSiteId: site.id, requirements: '' },
+      f.vault.automation(),
+    )[0];
+    task.requirementsEnabled = false;
+    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
+    task.status = 'completed';
+    task.report = {
+      summary: 'source report',
+      assessments: [],
+      issues: [],
+      coverage: { verified: [], unverified: [], outOfScope: [] },
+      scores: [],
+      quality: 'passed',
+      artifacts: [],
+    };
+    f.automationStore.put(task);
+    return task;
+  };
+  return {
+    ...f,
+    directory,
+    headers,
+    env,
+    target,
+    resource,
+    site,
+    done,
+    async close() {
+      await f.app.close();
+      rmSync(directory, { recursive: true, force: true });
+    },
+  };
+}
+
+async function listen(server: ReturnType<typeof createServer>) {
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  return `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+}
+
+async function close(server: ReturnType<typeof createServer>) {
+  server.closeAllConnections();
+  await new Promise<void>(resolve => server.close(() => resolve()));
+}
+
+test('delivery receipt, executeDelivery and Kooboo ID endpoints accept valid non-RFC4122 Kooboo GUIDs and reject invalid strings', async () => {
+  for (const guid of KOOBOO_GUIDS) {
+    assert.deepEqual(deliveryReceipt({ siteId: guid, siteUrl: 'https://target.test' }), { siteId: guid, siteUrl: 'https://target.test' });
+  }
+  assert.throws(() => deliveryReceipt({ siteId: 'not-a-guid', siteUrl: 'https://target.test' }));
+
+  const f = await fixture();
+  const koobooGuid = KOOBOO_GUIDS[0];
+  let endpoint = '';
+  const server = createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.url?.startsWith('/_api/v2/Template/Detail')) {
+      res.end(JSON.stringify({ id: koobooGuid, name: 'Kooboo Template', previewUrl: `${endpoint}/preview` }));
+      return;
+    }
+    if (req.method === 'GET') {
+      res.end(JSON.stringify([{ siteId: f.site.siteId, homePageLink: f.site.url }]));
+      return;
+    }
+    res.end(JSON.stringify({ siteId: koobooGuid, siteUrl: 'https://target.test' }));
+  });
+  endpoint = await listen(server);
+
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, origin: endpoint, apiOrigin: endpoint, delivery: { ...e.delivery!, endpoint } } : e)),
+    });
+
+    const t = f.done();
+    queueDelivery(t, f.automationStore, f.vault);
+    let verified = 0;
+    await executeDelivery(t, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000), async task => {
+      verified++;
+      task.delivery!.status = 'completed';
+    });
+    assert.equal(verified, 1);
+    assert.equal(f.automationStore.task(t.id)!.delivery!.target?.siteId, koobooGuid);
+
+    const site2 = {
+      id: randomUUID(),
+      resourceId: f.resource.id,
+      versionId: f.automationStore.versions(f.resource.id)[0].id,
+      environmentId: f.env,
+      siteId: randomUUID(),
+      name: 'Generated2',
+      url: 'https://generated2.test',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(site2);
+    const t2 = f.automationStore.create(
+      { resourceIds: [f.resource.id], kind: 'evaluation', scope: 'site', environmentId: f.env, generatedSiteId: site2.id, requirements: '' },
+      f.vault.automation(),
+    )[0];
+    t2.requirementsEnabled = false;
+    t2.learningPolicy = { ...t2.learningPolicy!, use: false, collect: false };
+    t2.status = 'completed';
+    t2.report = t.report;
+    f.automationStore.put(t2);
+    queueDelivery(t2, f.automationStore, f.vault);
+    t2.delivery!.status = 'uncertain';
+    t2.delivery!.stopped = true;
+    t2.delivery!.attemptedAt = Date.now();
+    t2.delivery!.error = 'uncertain';
+    f.automationStore.put(t2);
+    const receiptRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/automation/tasks/${t2.id}/delivery/receipt`,
+      headers: f.headers,
+      payload: { siteId: KOOBOO_GUIDS[1], siteUrl: 'https://target.test' },
+    });
+    assert.equal(receiptRes.statusCode, 200, receiptRes.body);
+    assert.equal(f.automationStore.task(t2.id)!.delivery!.status, 'queued');
+    assert.equal(f.automationStore.task(t2.id)!.delivery!.target?.siteId, KOOBOO_GUIDS[1]);
+
+    const goodSiteRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/sites',
+      headers: f.headers,
+      payload: {
+        resourceId: f.resource.id,
+        environmentId: f.env,
+        siteId: KOOBOO_GUIDS[2],
+        name: 'kooboo_site_guid',
+        url: 'https://kooboo-site.test',
+      },
+    });
+    assert.equal(goodSiteRes.statusCode, 200, goodSiteRes.body);
+    const badSiteRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/sites',
+      headers: f.headers,
+      payload: {
+        resourceId: f.resource.id,
+        environmentId: f.env,
+        siteId: 'not-a-guid',
+        name: 'bad_site',
+        url: 'https://kooboo-site.test',
+      },
+    });
+    assert.equal(badSiteRes.statusCode, 400);
+
+    const goodResourceRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/resources',
+      headers: f.headers,
+      payload: {
+        name: 'Template Ref',
+        scenario: 'site-template',
+        description: '',
+        contentUrl: '',
+        referenceUrl: '',
+        referenceTemplateId: koobooGuid,
+        externalSource: '',
+        externalId: '',
+        files: [],
+      },
+    });
+    assert.equal(goodResourceRes.statusCode, 201, goodResourceRes.body);
+    const badResourceRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/resources',
+      headers: f.headers,
+      payload: {
+        name: 'Bad Template Ref',
+        scenario: 'site-template',
+        description: '',
+        contentUrl: '',
+        referenceUrl: '',
+        referenceTemplateId: 'not-a-guid',
+        externalSource: '',
+        externalId: '',
+        files: [],
+      },
+    });
+    assert.equal(badResourceRes.statusCode, 400);
+
+    const goodTemplateRes = await f.app.inject({
+      method: 'GET',
+      url: `/api/automation/kooboo/templates/${koobooGuid}?environmentId=${f.env}`,
+      headers: f.headers,
+    });
+    assert.equal(goodTemplateRes.statusCode, 200, goodTemplateRes.body);
+    assert.equal(JSON.parse(goodTemplateRes.body).id, koobooGuid);
+    const badTemplateRes = await f.app.inject({
+      method: 'GET',
+      url: `/api/automation/kooboo/templates/not-a-guid?environmentId=${f.env}`,
+      headers: f.headers,
+    });
+    assert.equal(badTemplateRes.statusCode, 400);
+
+    const fakeEvalId = randomUUID();
+    const fakeRunId = randomUUID();
+    const fakeHandoffId = randomUUID();
+    const goodHandoffRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/evaluations/${fakeEvalId}/issue-handoffs`,
+      headers: f.headers,
+      payload: { id: randomUUID(), runId: fakeRunId, indices: [0], environmentId: f.env, siteId: koobooGuid },
+    });
+    assert.equal(goodHandoffRes.statusCode, 409, goodHandoffRes.body);
+    const badHandoffRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/evaluations/${fakeEvalId}/issue-handoffs`,
+      headers: f.headers,
+      payload: { id: randomUUID(), runId: fakeRunId, indices: [0], environmentId: f.env, siteId: 'not-a-guid' },
+    });
+    assert.equal(badHandoffRes.statusCode, 400);
+
+    const goodHandoffReceiptRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/evaluations/${fakeEvalId}/issue-handoffs/${fakeHandoffId}/receipt`,
+      headers: f.headers,
+      payload: { runId: fakeRunId, siteId: koobooGuid, status: 'accepted', sessionId: KOOBOO_GUIDS[1] },
+    });
+    assert.equal(goodHandoffReceiptRes.statusCode, 409, goodHandoffReceiptRes.body);
+    const badHandoffReceiptRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/evaluations/${fakeEvalId}/issue-handoffs/${fakeHandoffId}/receipt`,
+      headers: f.headers,
+      payload: { runId: fakeRunId, siteId: koobooGuid, status: 'accepted', sessionId: 'not-a-guid' },
+    });
+    assert.equal(badHandoffReceiptRes.statusCode, 400);
+  } finally {
+    await close(server);
+    await f.close();
+  }
+});
+
+test('migration HTTP 500 JSON records bounded redacted body, trace header and elapsed time without corrupting persisted JSON', async () => {
+  const f = await fixture();
+  const server = createServer((req, res) => {
+    if (req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify([{ siteId: f.site.siteId, homePageLink: f.site.url }]));
+      return;
+    }
+    res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8', 'X-Request-Id': 'req-500-abc' });
+    res.end(JSON.stringify({ error: 'export timed out', token: 'test-migration', upstream: 'Bearer leaked-bearer-token' }));
+  });
+  const endpoint = await listen(server);
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin: endpoint, delivery: { ...e.delivery!, endpoint } } : e)),
+    });
+    const t = f.done();
+    queueDelivery(t, f.automationStore, f.vault);
+    await executeDelivery(t, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000), async () => assert.fail('must not verify on 500'));
+    assert.equal(t.delivery!.status, 'uncertain');
+    for (const err of [t.delivery!.error, f.automationStore.task(t.id)!.delivery!.error]) {
+      assert.match(err, /HTTP 500/);
+      assert.match(err, /耗时 \d+/);
+      assert.ok(err.includes('x-request-id=req-500-abc'));
+      assert.ok(err.includes('export timed out'));
+      assert.ok(err.includes('[已隐藏]'));
+      assert.ok(!err.includes('test-migration'));
+      assert.ok(!err.includes('leaked-bearer-token'));
+    }
+    const failEvent = f.automationStore.events(t.id).map(e => e.message).find(m => m.includes('HTTP 500')) || '';
+    assert.ok(failEvent);
+    assert.match(failEvent, /耗时 \d+/);
+    assert.ok(failEvent.includes('content-type=application/json'));
+    assert.ok(failEvent.includes('x-request-id=req-500-abc'));
+    assert.ok(failEvent.includes('export timed out'));
+    assert.ok(failEvent.includes('[已隐藏]'));
+    assert.ok(!failEvent.includes('test-migration'));
+    assert.ok(!failEvent.includes('leaked-bearer-token'));
+  } finally {
+    await close(server);
+    await f.close();
+  }
+});
+
+test('migration HTTP 502 with oversized HTML error page strips markup, redacts secrets and bounds stored diagnostics', async () => {
+  const f = await fixture();
+  const html = `<!DOCTYPE html><html><head><title>502 Bad Gateway</title><style>body{color:red}</style></head><body><p>Origin timeout ?api_key=super-secret-key</p><p>${'A'.repeat(35000)}</p></body></html>`;
+  const server = createServer((req, res) => {
+    if (req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify([{ siteId: f.site.siteId, homePageLink: f.site.url }]));
+      return;
+    }
+    res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8', 'cf-ray': '99aabbcc-AMS' });
+    res.end(html);
+  });
+  const endpoint = await listen(server);
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin: endpoint, delivery: { ...e.delivery!, endpoint } } : e)),
+    });
+    const t = f.done();
+    queueDelivery(t, f.automationStore, f.vault);
+    await executeDelivery(t, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000), async () => assert.fail('must not verify on 502'));
+    assert.equal(t.delivery!.status, 'uncertain');
+    const err = t.delivery!.error;
+    assert.match(err, /HTTP 502/);
+    assert.ok(err.includes('cf-ray=99aabbcc-AMS'));
+    assert.ok(err.includes('502 Bad Gateway'));
+    assert.ok(!err.includes('super-secret-key'));
+    assert.ok(!err.includes('body{color:red}'));
+    assert.ok(err.length < 600, `expected bounded delivery.error, got ${err.length}`);
+    const failEvent = f.automationStore.events(t.id).map(e => e.message).find(m => m.includes('HTTP 502')) || '';
+    assert.ok(failEvent);
+    assert.ok(failEvent.includes('cf-ray=99aabbcc-AMS'));
+    assert.ok(failEvent.includes('502 Bad Gateway'));
+    assert.ok(!failEvent.includes('super-secret-key'));
+    assert.ok(!failEvent.includes('body{color:red}'));
+    assert.ok(failEvent.length < 2600, `expected bounded event, got ${failEvent.length}`);
+  } finally {
+    await close(server);
+    await f.close();
+  }
+});
+
+test('migration HTTP 500 with empty body records empty-body marker and failure event', async () => {
+  const f = await fixture();
+  const server = createServer((req, res) => {
+    if (req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify([{ siteId: f.site.siteId, homePageLink: f.site.url }]));
+      return;
+    }
+    res.writeHead(500);
+    res.end();
+  });
+  const endpoint = await listen(server);
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin: endpoint, delivery: { ...e.delivery!, endpoint } } : e)),
+    });
+    const t = f.done();
+    queueDelivery(t, f.automationStore, f.vault);
+    await executeDelivery(t, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000), async () => assert.fail('must not verify on empty 500'));
+    assert.equal(t.delivery!.status, 'uncertain');
+    assert.match(t.delivery!.error, /HTTP 500/);
+    assert.match(t.delivery!.error, /耗时 \d+/);
+    assert.ok(t.delivery!.error.includes('响应体为空'));
+    const failEvent = f.automationStore.events(t.id).map(e => e.message).find(m => m.includes('HTTP 500')) || '';
+    assert.ok(failEvent);
+    assert.ok(failEvent.includes('响应体为空'));
+  } finally {
+    await close(server);
+    await f.close();
+  }
+});
+
+test('migration HTTP 200 with malformed non-JSON receipt records parse diagnostic event with correlation header', async () => {
+  const f = await fixture();
+  const server = createServer((req, res) => {
+    if (req.method === 'GET') {
+      res.setHeader('Content-Type', 'application/json');
+      res.end(JSON.stringify([{ siteId: f.site.siteId, homePageLink: f.site.url }]));
+      return;
+    }
+    res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'x-correlation-id': 'corr-200-bad' });
+    res.end('<html>unexpected proxy page Bearer leaked-token</html>');
+  });
+  const endpoint = await listen(server);
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin: endpoint, delivery: { ...e.delivery!, endpoint } } : e)),
+    });
+    const t = f.done();
+    queueDelivery(t, f.automationStore, f.vault);
+    await executeDelivery(t, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000), async () => assert.fail('must not verify on malformed 200 receipt'));
+    assert.equal(t.delivery!.status, 'uncertain');
+    const failEvent = f.automationStore.events(t.id).map(e => e.message).find(m => m.includes('迁移回执解析或校验失败')) || '';
+    assert.ok(failEvent);
+    assert.ok(failEvent.includes('x-correlation-id=corr-200-bad'));
+    assert.match(failEvent, /耗时 \d+/);
+    assert.ok(failEvent.includes('unexpected proxy page Bearer [已隐藏]'));
+    assert.ok(!failEvent.includes('leaked-token'));
+  } finally {
+    await close(server);
+    await f.close();
+  }
+});
+
+test('Bearer redaction regex preserves JSON closing quotes and escape backslashes', () => {
+  const serialized = JSON.stringify({ nested: JSON.stringify({ msg: 'Bearer secret-token' }) });
+  const sanitized = serialized.replace(/Bearer\s+[^\s"',;\\]+/gi, 'Bearer [已隐藏]');
+  const parsed = JSON.parse(sanitized) as { nested: string };
+  assert.deepEqual(JSON.parse(parsed.nested), { msg: 'Bearer [已隐藏]' });
+});

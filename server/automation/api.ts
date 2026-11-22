@@ -58,7 +58,7 @@ import { registerTaskSupplementApi } from './supplement-api.js';
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
 const optionalText=(max=200)=>z.string().trim().max(max).optional().transform(v=>v||undefined);
-const optionalTemplateId=z.string().trim().optional().transform(v=>v||undefined).refine(v=>!v||z.string().uuid().safeParse(v).success,'模板 ID 需为有效的 UUID');
+const optionalTemplateId=z.string().trim().optional().transform(v=>v||undefined).refine(v=>!v||z.guid().safeParse(v).success,'模板 ID 需为有效的 UUID');
 const templateUsageModeSchema=z.enum(['direct-template','reference-sandbox']).optional();
 const logicalPath=z.string().min(1).max(300).refine(n=>{try{return materialPath(n)===n;}catch{return false;}},'附件路径不合法');
 const file=z.object({id:uuid,name:logicalPath,type:z.string().max(200),size:z.number().int().nonnegative(),sha256:z.string().regex(/^[a-f0-9]{64}$/)});
@@ -515,7 +515,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     return {items:store.create({resourceIds:[old.resourceId],kind:input.kind||old.kind,scope:old.scope,environmentId:old.environmentId,generatedSiteId:old.generatedSiteId,requirements:input.requirements,parentId:id,versionId:old.versionId,ruleSnapshot:old.rule||undefined},vault.automation())};
   });
   app.post('/api/automation/sites',async(request)=>{
-    const input=z.object({resourceId:uuid,environmentId:uuid,siteId:uuid,name:z.string().min(1).max(200),url:z.url().refine(v=>/^https?:/.test(v))}).parse(request.body);
+    const input=z.object({resourceId:uuid,environmentId:uuid,siteId:z.guid(),name:z.string().min(1).max(200),url:z.url().refine(v=>/^https?:/.test(v))}).parse(request.body);
     if(!store.resource(input.resourceId)||!vault.get().environments.some(e=>e.id===input.environmentId))throw new Conflict('资源或环境不存在');
     const site={...input,id:randomUUID(),versionId:store.versions(input.resourceId)[0].id,createdAt:Date.now()};store.saveSite(site);return site;
   });
@@ -542,7 +542,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     catch(error){return reply.code(502).send({error:error instanceof Error?error.message:'查询 Kooboo 模板列表失败'});}
   });
   app.get('/api/automation/kooboo/templates/:templateId',async(request,reply)=>{
-    const {templateId}=z.object({templateId:z.string().trim().uuid('模板 ID 需为有效的 UUID')}).parse(request.params);
+    const {templateId}=z.object({templateId:z.string().trim().pipe(z.guid('模板 ID 需为有效的 UUID'))}).parse(request.params);
     const q=z.object({environmentId:uuid.optional()}).parse(request.query);
     const env=templateEnvironment(q.environmentId);
     const {origin,request:koobooRequest}=koobooClient({environmentId:env.id},vault,AbortSignal.timeout(30000));

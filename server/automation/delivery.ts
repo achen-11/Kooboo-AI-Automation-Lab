@@ -12,8 +12,9 @@ import { evaluationBrowser } from './browser.js';
 import { codexClient } from './evaluator.js';
 import { usageCapture } from './usage-proxy.js';
 import { builtInHarnessSop } from './harness.js';
+import { exportRedactor } from '../diagnostics/redact.js';
 
-const receiptSchema=z.object({siteId:z.string().uuid(),siteUrl:z.url().refine(v=>{const u=new URL(v);return /^https?:$/.test(u.protocol)&&!u.username&&!u.password;})});
+const receiptSchema=z.object({siteId:z.guid(),siteUrl:z.url().refine(v=>{const u=new URL(v);return /^https?:$/.test(u.protocol)&&!u.username&&!u.password;})});
 export function reportPassedDeliveryGate(task:AutomationTask,threshold:number):boolean{
   const report=task.report;
   if(!report)return false;
@@ -129,6 +130,134 @@ export async function verifyDelivery(task:AutomationTask,store:AutomationStore,v
     writeFileSync(resolve(work,'verification.json'),JSON.stringify(result,null,2),{mode:0o600});
   }finally{await usage?.close();try{await browser.close();}catch{throw new UnconfirmedStop('交付核验浏览器停止状态未确认；请检查原执行后确认停止再恢复');}finally{store.put(task);}}
 }
+const TRACE_HEADER_NAMES = ['x-request-id', 'x-correlation-id', 'cf-ray', 'traceparent', 'x-trace-id', 'x-amzn-requestid'] as const;
+
+function deliveryRedactor(vault: Vault, extraSecrets: string[] = []) {
+  const config = vault.get();
+  return exportRedactor([
+    config.model.apiKey,
+    config.updateSource?.token || '',
+    vault.credentials.readToken,
+    vault.credentials.ingestToken,
+    ...config.environments.flatMap(env => [env.token, env.delivery?.token || '']),
+    ...extraSecrets,
+  ]);
+}
+
+function formatElapsedMs(elapsedMs: number): string {
+  const ms = Math.max(0, Math.round(elapsedMs));
+  return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+async function readBoundedBody(response: Response, maxBytes = 16384, timeoutMs = 5000): Promise<{ text: string; truncated: boolean }> {
+  if (!response.body) {
+    let timer: ReturnType<typeof setTimeout> | undefined;
+    try {
+      const raw = await Promise.race([
+        response.text(),
+        new Promise<never>((_, reject) => {
+          timer = setTimeout(() => reject(new Error('读取响应体超时')), timeoutMs);
+          timer.unref();
+        }),
+      ]);
+      const buf = Buffer.from(raw, 'utf8');
+      if (buf.length > maxBytes) {
+        return { text: new TextDecoder('utf-8', { fatal: false }).decode(buf.subarray(0, maxBytes)), truncated: true };
+      }
+      return { text: raw, truncated: false };
+    } catch {
+      return { text: '', truncated: false };
+    } finally {
+      if (timer) clearTimeout(timer);
+    }
+  }
+  const reader = response.body.getReader();
+  const decoder = new TextDecoder('utf-8', { fatal: false });
+  let total = 0;
+  let truncated = false;
+  let flushed = false;
+  let timedOut = false;
+  let text = '';
+  const timer = setTimeout(() => {
+    timedOut = true;
+    void reader.cancel().catch(() => {});
+  }, timeoutMs);
+  timer.unref();
+  try {
+    while (!timedOut) {
+      const { value, done } = await reader.read();
+      if (done) break;
+      if (!value?.byteLength) continue;
+      const remaining = maxBytes - total;
+      if (value.byteLength > remaining) {
+        if (remaining > 0) {
+          text += decoder.decode(value.subarray(0, remaining), { stream: false });
+          flushed = true;
+        }
+        total = maxBytes;
+        truncated = true;
+        void reader.cancel().catch(() => {});
+        break;
+      }
+      text += decoder.decode(value, { stream: true });
+      total += value.byteLength;
+    }
+    if (!flushed) text += decoder.decode();
+    if (timedOut && text) truncated = true;
+    return { text, truncated };
+  } catch {
+    return { text: '', truncated: false };
+  } finally {
+    clearTimeout(timer);
+  }
+}
+
+function extractTraceHeader(headers: Headers, redact: (value: string) => string): string | undefined {
+  for (const name of TRACE_HEADER_NAMES) {
+    const raw = headers.get(name);
+    if (!raw) continue;
+    const cleaned = redact(raw).replace(/\s+/g, ' ').trim();
+    if (!cleaned) continue;
+    return `${name}=${cleaned.slice(0, 120)}`;
+  }
+  return undefined;
+}
+
+function summarizeErrorBody(raw: string, contentType: string, redactor: ReturnType<typeof exportRedactor>, maxChars: number): string {
+  const cleaned = raw.replace(/[\u0000-\u0008\u000b\u000c\u000e-\u001f\u007f]/g, ' ');
+  const trimmed = cleaned.trim();
+  if (!trimmed) return '';
+  let out = '';
+  if (/^[\[{]/.test(trimmed)) {
+    try {
+      out = JSON.stringify(redactor.value(JSON.parse(trimmed)));
+    } catch {
+      out = redactor.text(cleaned).replace(/\s+/g, ' ');
+    }
+  } else if (contentType.toLowerCase().includes('html') || /^<(?:!doctype\s+html|html)\b/i.test(trimmed)) {
+    const redactedHtml = redactor.text(cleaned);
+    const titleMatch = redactedHtml.match(/<title\b[^>]*>([\s\S]*?)<\/title>/i);
+    const title = titleMatch ? titleMatch[1].replace(/<[^>]+>/g, ' ').replace(/\s+/g, ' ').trim() : '';
+    const bodyText = redactedHtml
+      .replace(/<(script|style|title)\b[^>]*>[\s\S]*?(?:<\/\1>|$)/gi, ' ')
+      .replace(/<[^>]+>/g, ' ')
+      .replace(/<[^>]*$/g, ' ')
+      .replace(/\s+/g, ' ')
+      .trim();
+    if (title && bodyText) {
+      out = bodyText.toLowerCase().startsWith(title.toLowerCase()) ? bodyText : `${title} | ${bodyText}`;
+    } else {
+      out = title || bodyText;
+    }
+  } else {
+    out = redactor.text(cleaned).replace(/\s+/g, ' ');
+  }
+  const summary = out.trim();
+  if (!summary) return '';
+  if (summary.length <= maxChars) return summary;
+  return summary.slice(0, Math.max(0, maxChars - 1)).trimEnd() + '…';
+}
+
 export async function executeDelivery(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,verify=verifyDelivery){
   const delivery=task.delivery!;
   if(!delivery.target){
@@ -140,13 +269,51 @@ export async function executeDelivery(task:AutomationTask,store:AutomationStore,
     const sourceSite=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
     const sourceUrl=actualSource?await publicSiteUrl(sourceSite?.siteId.toLowerCase()===delivery.sourceSiteId.toLowerCase()?sourceSite:undefined,actualSource,sourceClient.request):undefined;
     if(typeof sourceUrl!=='string'||new URL(sourceUrl).origin!==new URL(delivery.sourceUrl).origin)throw new Error('源环境的站点身份 / 地址与评测记录不一致，禁止迁移；请核对生成站');
-    delivery.status='running';delivery.attemptedAt=Date.now();store.put(task);store.event(task.id,'正在迁移生成站至目标环境（不会删除源站）');
+    const startedAt=Date.now();
+    delivery.status='running';delivery.attemptedAt=startedAt;store.put(task);store.event(task.id,'正在迁移生成站至目标环境（不会删除源站）');
+    const redactor=deliveryRedactor(vault,[config.token]);
+    let eventDetail='';let errorSummary='';
     try{
       const response=await fetch(delivery.policy.endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({siteUrl:new URL(delivery.sourceUrl).origin,token:config.token}),signal:AbortSignal.any([signal,AbortSignal.timeout(delivery.policy.timeoutSeconds*1000)]),redirect:'error'});
-      if(!response.ok)throw new Error('迁移接口返回 HTTP '+response.status);
-      const text=await response.text();if(text.length>100000)throw new Error('迁移回执超出读取限制');
-      delivery.target=deliveryReceipt(JSON.parse(text));delivery.status='verifying';store.put(task);store.event(task.id,'目标站回执已保存；开始独立交付核验');
-    }catch(error){delivery.status='uncertain';delivery.error=(error as Error).message+'；服务可能已经执行，禁止自动重发。请核查目标环境并补录回执。';store.put(task);store.notice(task,'交付需要核查',delivery.error);return;}
+      const elapsed=formatElapsedMs(Date.now()-startedAt);
+      const contentType=(response.headers.get('content-type')||'').split(';')[0]?.trim()||'';
+      const traceHeader=extractTraceHeader(response.headers,redactor.text);
+      if(!response.ok){
+        const body=await readBoundedBody(response,16384,5000);
+        const shortRaw=summarizeErrorBody(body.text,contentType,redactor,300);
+        const fullRaw=summarizeErrorBody(body.text,contentType,redactor,2000);
+        const shortBody=shortRaw&&body.truncated&&!shortRaw.endsWith('…')?shortRaw+'…':shortRaw;
+        const fullBody=fullRaw&&body.truncated&&!fullRaw.endsWith('…')?fullRaw+'…':fullRaw;
+        const parts=['耗时 '+elapsed,...(traceHeader?[traceHeader]:[]),shortBody?'响应：'+shortBody:'响应体为空'];
+        errorSummary='迁移接口返回 HTTP '+response.status+'（'+parts.join('；')+'）';
+        const eventParts=[`迁移接口返回 HTTP ${response.status}${response.statusText?' '+response.statusText:''}`,`耗时 ${elapsed}`,...(contentType?[`content-type=${contentType}`]:[]),...(traceHeader?[traceHeader]:[]),fullBody?`响应摘要：${fullBody}`:'响应体为空','已标记为不确定，禁止自动重发。'];
+        eventDetail=eventParts.join('；');
+        throw new Error(errorSummary);
+      }
+      const text=await response.text();
+      if(text.length>100000){
+        eventDetail=[`迁移回执超出读取限制（length=${text.length}）`,`耗时 ${elapsed}`,...(contentType?[`content-type=${contentType}`]:[]),...(traceHeader?[traceHeader]:[]),'已标记为不确定，禁止自动重发。'].join('；');
+        throw new Error('迁移回执超出读取限制');
+      }
+      let target:ReturnType<typeof deliveryReceipt>;
+      try{
+        target=deliveryReceipt(JSON.parse(text));
+      }catch(parseError){
+        const bodySummary=summarizeErrorBody(text.slice(0,16384),contentType,redactor,500);
+        const parseMessage=redactor.text(parseError instanceof Error?parseError.message:String(parseError));
+        eventDetail=[`迁移回执解析或校验失败：${parseMessage}`,`耗时 ${elapsed}`,...(contentType?[`content-type=${contentType}`]:[]),...(traceHeader?[traceHeader]:[]),bodySummary?`响应摘要：${bodySummary}`:'响应体为空','已标记为不确定，禁止自动重发。'].join('；');
+        throw parseError;
+      }
+      delivery.target=target;delivery.status='verifying';store.put(task);store.event(task.id,'目标站回执已保存；开始独立交付核验');
+    }catch(error){
+      const elapsed=formatElapsedMs(Date.now()-startedAt);
+      const rawMessage=redactor.text(error instanceof Error?error.message:String(error));
+      const headline=errorSummary?redactor.text(errorSummary):`${rawMessage}（耗时 ${elapsed}）`;
+      delivery.status='uncertain';
+      delivery.error=redactor.text(`${headline}；服务可能已经执行，禁止自动重发。请核查目标环境并补录回执。`);
+      const finalEvent=redactor.text(eventDetail||`迁移请求异常：${rawMessage}；耗时 ${elapsed}；已标记为不确定，禁止自动重发。`);
+      store.put(task);store.event(task.id,finalEvent);store.notice(task,'交付需要核查',delivery.error);return;
+    }
   }
   await verify(task,store,vault,directory,signal);
 }

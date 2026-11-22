@@ -13,11 +13,16 @@ export const scenarios = {
   materials: '资料建站', migration: '站点迁移', upgrade: '旧站升级', 'site-template': 'AI Site 模板', 'app-template': 'AI App 模板',
 } as const;
 export type Scenario = keyof typeof scenarios;
-export function supportsAutomaticOptimization(scenario: Scenario) { return ['site-template', 'migration', 'upgrade'].includes(scenario); }
+export const activeScenarios = {
+  materials: '资料建站', upgrade: '旧站升级', migration: '站点迁移',
+} as const;
+export type ActiveScenario = keyof typeof activeScenarios;
+export function isActiveScenario(value: string): value is ActiveScenario { return value in activeScenarios; }
+export function supportsAutomaticOptimization(scenario: Scenario) { return ['materials', 'site-template', 'migration', 'upgrade'].includes(scenario); }
 export function optimizationScenarioGuidance(scenario: Scenario) {
   return scenario === 'site-template'
     ? '本次为 AI Site 模板：图片使用 imagePlaceholder，不得复用参考站资源。'
-    : '本次为站点迁移或升级：保留内容站及资料包的真实内容和合法资源，不套用模板的 imagePlaceholder 替换要求。优先修复内容标识、分类归属、分页、URL/SEO、功能和双端缺陷；数量与 HTTP 200 不能代替内容及关系对账。';
+    : '本次为资料建站、站点迁移或升级：保留内容站及资料包的真实内容和合法资源；若非豁免展示位缺少真实配图，使用 imagePlaceholder 真实配图（<img>），禁止用大块几何 SVG 充数。优先修复主视觉/结构、内容标识、分类归属、分页、URL/SEO、功能和双端缺陷；数量与 HTTP 200 不能代替内容及关系对账。';
 }
 export type Scope = 'homepage' | 'site';
 export type TaskStatus = 'queued' | 'running' | 'pending' | 'cancelling' | 'cancelled' | 'completed' | 'failed' | 'following-up' | 'interrupted';
@@ -103,7 +108,7 @@ export const optimizationStateNames = { 'waiting-evaluation': '等待复评', pl
 export const defaultOptimizationPolicy: OptimizationPolicy = { targetScore: 85, maxRounds: 3, maxCostCny: null, sop: `你负责根据独立报告及真实截图决定是否继续优化站点。
 实际查看所提供的目标站和参考站截图，按问题位置、视口、参考设计意图、预期改善和保留约束整理一组可执行修复。优先重大缺陷及 Hero / 结构差距，不笼统重做全站，不承诺某个修改能加固定分数。
 比较本轮与上轮问题及双端证据，记录已解决、仍存在、未验证和新增问题。improved 表示有实际问题解决或设计改善，不单凭分数的一两分波动；明显退化又无可信修复方案时 interrupt。
-遵守原输入、场景和范围。仅 AI Site 模板使用 imagePlaceholder 且不得复用参考站资源；迁移与升级保留真实内容及合法资源，按来源清单检查内容标识、分类关系、分页、URL/SEO及功能完整性。参考截图作为审查证据。不修改评分口径、目标或权重。Kooboo 负责具体实现，独立评测负责真实复评。
+遵守原输入、场景和范围。资料建站、迁移与升级保留内容站及资料包的真实内容与合法资源；非豁免展示位缺少真实配图时使用 imagePlaceholder 真实配图，不得用大块几何 SVG 充数；迁移与升级按来源清单检查内容标识、分类关系、分页、URL/SEO及功能完整性。参考截图作为审查证据。不修改评分口径、目标或权重。Kooboo 负责具体实现，独立评测负责真实复评。
 通过工具 repair 委托修复，或 interrupt 说明停止理由和下一步；不得直接改站。` };
 export interface FollowupSettings { enabled: boolean; concurrency: number; maxAttempts: number; maxMinutes: number; maxTokens: number; maxRequests?: number; sop: string }
 export interface CollectionReportObservation { reportId:string; sourceGaps:string[] }

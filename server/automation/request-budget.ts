@@ -7,7 +7,7 @@ export class ModelBudgetExceeded extends Error {
 }
 export interface RequestBudgetPolicy {
   key: string; runKey: string; maxTokens: number; maxRequests: number;
-  initialTokens?: number; maxOutputTokens?: number;
+  initialTokens?: number; maxOutputTokens?: number; maxConcurrent?: number;
 }
 /** Call only after the owner has stopped. Keep the estimate distinct from actual usage. */
 export function retainRequestReservation(db: Database, id: string) {
@@ -29,7 +29,8 @@ export class RequestBudget {
       CREATE TABLE IF NOT EXISTS auto_model_requests(id TEXT PRIMARY KEY, account_id TEXT NOT NULL, run_key TEXT NOT NULL, state TEXT NOT NULL, charged INTEGER NOT NULL);
       CREATE INDEX IF NOT EXISTS auto_model_account_requests ON auto_model_requests(account_id,run_key);`);
     if(!db.prepare('PRAGMA table_info(auto_model_requests)').all().some(r=>r.name==='fingerprint'))db.exec("ALTER TABLE auto_model_requests ADD COLUMN fingerprint TEXT NOT NULL DEFAULT ''");
-    if (!Number.isSafeInteger(policy.maxTokens) || policy.maxTokens < 1000 || !Number.isSafeInteger(policy.maxRequests) || policy.maxRequests < 1) throw new Error('模型预算配置不合法');
+    const maxConcurrent = policy.maxConcurrent ?? 1;
+    if (!Number.isSafeInteger(policy.maxTokens) || policy.maxTokens < 1000 || !Number.isSafeInteger(policy.maxRequests) || policy.maxRequests < 1 || !Number.isSafeInteger(maxConcurrent) || maxConcurrent < 1) throw new Error('模型预算配置不合法');
     db.prepare('INSERT OR IGNORE INTO auto_model_accounts VALUES(?,?)').run(policy.key, Math.max(0, policy.initialTokens || 0));
   }
   state() {
@@ -44,7 +45,7 @@ export class RequestBudget {
   reserve(id: string, raw: Buffer): Buffer {
     return this.db.transaction(() => {
       const state = this.state();
-      if (this.activeRequests()) throw new ModelBudgetExceeded('同一预算仍有模型请求执行中，请等待当前执行结束后恢复。');
+      if (this.activeRequests() >= (this.policy.maxConcurrent ?? 1)) throw new ModelBudgetExceeded('同一预算仍有模型请求执行中，请等待当前执行结束后恢复。');
       if (state.requests >= this.policy.maxRequests) throw new ModelBudgetExceeded('本次 Agent 已达到模型请求次数上限。');
       const remaining = this.policy.maxTokens - state.spent;
       if (remaining <= 0) throw new ModelBudgetExceeded('累计模型 token 已达到预算上限。');

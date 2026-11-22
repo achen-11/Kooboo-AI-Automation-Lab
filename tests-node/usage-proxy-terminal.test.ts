@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { Database } from '../server/runtime.js';
 import { Vault } from '../server/lib/vault.js';
 import { AutomationStore } from '../server/automation/store.js';
+import { RequestBudget } from '../server/automation/request-budget.js';
 import { usageCapture } from '../server/automation/usage-proxy.js';
 import { defaultAutomationSettings } from '../shared/automation.js';
 
@@ -83,4 +84,124 @@ for(const mode of ['recover','exhaust','partial'] as const)test(`evaluation rela
     assert.equal(entries[0].status,'failed');assert.equal(entries[0].tokens,null,'lost usage stays unknown, never free');
     assert.equal(entries.at(-1)!.status,mode==='recover'?'completed':'failed');if(mode==='recover')assert.equal(entries.at(-1)!.tokens?.input,10);
   }finally{await relay?.close();upstream.closeAllConnections();await new Promise<void>(done=>upstream.close(()=>done()));db.close();rmSync(directory,{recursive:true,force:true});}
+});
+
+test('evaluation relay with maxConcurrent=2 executes two concurrent SSE batches and rejects a third concurrent request', async () => {
+  const directory = mkdtempSync(join(tmpdir(), 'relay-concurrent-'));
+  const db = new Database(join(directory, 'db.sqlite'));
+  const store = new AutomationStore(db), vault = new Vault(directory);
+
+  let inFlight = 0, maxOverlap = 0, arrived = 0;
+  let releasePair!: () => void;
+  const bothArrived = new Promise<void>(resolve => { releasePair = resolve; });
+  const upstream = createServer(async (req, res) => {
+    let rawBody = '';
+    for await (const chunk of req) rawBody += chunk;
+    const tag = JSON.parse(rawBody || '{}').input;
+    inFlight++;
+    arrived++;
+    maxOverlap = Math.max(maxOverlap, inFlight);
+    if (arrived >= 2) releasePair();
+    else await bothArrived;
+    const usage = tag === 'desktop'
+      ? { input_tokens: 100, output_tokens: 20, input_tokens_details: { cached_tokens: 40 } }
+      : { input_tokens: 120, output_tokens: 30, input_tokens_details: { cached_tokens: 0 } };
+    res.writeHead(200, { 'content-type': 'text/event-stream' });
+    res.end('data: ' + JSON.stringify({ type: 'response.completed', response: { status: 'completed', usage } }) + '\n\n');
+    inFlight--;
+  });
+
+  let releaseHold!: () => void, markTwoActive!: () => void;
+  const hold = new Promise<void>(resolve => { releaseHold = resolve; });
+  const twoActive = new Promise<void>(resolve => { markTwoActive = resolve; });
+  let heldCount = 0;
+  const heldUpstream = createServer(async (req, res) => {
+    for await (const _ of req) { /* drain */ }
+    heldCount++;
+    if (heldCount >= 2) markTwoActive();
+    await hold;
+    if (!res.destroyed) {
+      res.writeHead(200, { 'content-type': 'text/event-stream' });
+      res.end('data: ' + JSON.stringify({ type: 'response.completed', response: { status: 'completed', usage: { input_tokens: 10, output_tokens: 2 } } }) + '\n\n');
+    }
+  });
+
+  let relay1: Awaited<ReturnType<typeof usageCapture>> | undefined;
+  let relay2: Awaited<ReturnType<typeof usageCapture>> | undefined;
+  try {
+    await Promise.all([
+      new Promise<void>(done => upstream.listen(0, '127.0.0.1', done)),
+      new Promise<void>(done => heldUpstream.listen(0, '127.0.0.1', done)),
+    ]);
+
+    const id1 = randomUUID();
+    const policy1 = { key: 'evaluation:' + id1, runKey: id1, maxRequests: 6, maxTokens: 3_000_000, maxOutputTokens: 16384, maxConcurrent: 2 };
+    const endpoint1 = `http://127.0.0.1:${(upstream.address() as { port: number }).port}`;
+    vault.update({ ...vault.get(), model: { endpoint: endpoint1, name: 'deepseek-flash-1017', apiKey: 'test' } });
+    vault.updateAutomation({ ...defaultAutomationSettings, evaluationEndpoint: endpoint1 });
+    relay1 = await usageCapture(id1, 'evaluation', store, vault, AbortSignal.timeout(5000), policy1);
+
+    const post1 = (input: string) => fetch(relay1!.env.AUTOMATION_RESPONSES_URL + '/responses', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + relay1!.env.EVALUATOR_MODEL_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'deepseek-flash-1017', input }),
+    });
+    const [rDesktop, rMobile] = await Promise.all([post1('desktop'), post1('mobile')]);
+    assert.equal(rDesktop.status, 200);
+    assert.equal(rMobile.status, 200);
+    await Promise.all([rDesktop.text(), rMobile.text()]);
+    await relay1.close();
+    assert.equal(relay1.error, undefined);
+    relay1 = undefined;
+
+    assert.equal(maxOverlap, 2, 'two batches must overlap in flight upstream');
+    const entries = store.usage.entries(id1);
+    assert.equal(entries.length, 2);
+    assert.ok(entries.every(entry => entry.status === 'completed'));
+    const summary = store.usage.summary(id1);
+    assert.equal(summary.input, 220);
+    assert.equal(summary.output, 50);
+    assert.equal(summary.cached, 40);
+    assert.equal(new RequestBudget(db, policy1).activeRequests(), 0);
+
+    const id2 = randomUUID();
+    const policy2 = { key: 'evaluation:' + id2, runKey: id2, maxRequests: 6, maxTokens: 3_000_000, maxOutputTokens: 16384, maxConcurrent: 2 };
+    const endpoint2 = `http://127.0.0.1:${(heldUpstream.address() as { port: number }).port}`;
+    vault.update({ ...vault.get(), model: { endpoint: endpoint2, name: 'deepseek-flash-1017', apiKey: 'test' } });
+    vault.updateAutomation({ ...defaultAutomationSettings, evaluationEndpoint: endpoint2 });
+    relay2 = await usageCapture(id2, 'evaluation', store, vault, AbortSignal.timeout(5000), policy2);
+
+    const post2 = (input: string) => fetch(relay2!.env.AUTOMATION_RESPONSES_URL + '/responses', {
+      method: 'POST',
+      headers: { authorization: 'Bearer ' + relay2!.env.EVALUATOR_MODEL_KEY, 'content-type': 'application/json' },
+      body: JSON.stringify({ model: 'deepseek-flash-1017', input }),
+    });
+    const p1 = post2('desktop');
+    const p2 = post2('mobile');
+    await twoActive;
+
+    const r3 = await post2('third');
+    assert.equal(r3.status, 429);
+    const body3 = JSON.parse(await r3.text());
+    assert.equal(body3.error.code, 'automation_budget_exceeded');
+    assert.match(body3.error.message, /同一预算仍有模型请求执行中/);
+    assert.match(relay2.error?.message || '', /同一预算仍有模型请求执行中/);
+
+    releaseHold();
+    await Promise.allSettled([p1, p2]);
+    await relay2.close();
+    relay2 = undefined;
+  } finally {
+    releaseHold();
+    await relay1?.close();
+    await relay2?.close();
+    upstream.closeAllConnections();
+    heldUpstream.closeAllConnections();
+    await Promise.allSettled([
+      new Promise<void>(done => upstream.close(() => done())),
+      new Promise<void>(done => heldUpstream.close(() => done())),
+    ]);
+    db.close();
+    rmSync(directory, { recursive: true, force: true });
+  }
 });

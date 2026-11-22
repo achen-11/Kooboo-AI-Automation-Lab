@@ -7,8 +7,9 @@ import { inspectTemplateLayout } from './template-layout.js';
 import { z } from 'zod';
 import type { MaterialFile } from '../../shared/automation.js';
 import { pageScreenshotPolicy, takePageScreenshots, type ScreenshotPosition, type ScreenshotReadiness, type ScreenshotReceipt } from './page-screenshots.js';
+import { runVisualPrecheck } from './visual-precheck.js';
 
-export const browserAction=z.object({action:z.enum(['inspect_layout','snapshot','screenshot','navigate','take_page_screenshots','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),key:z.string().min(1).max(100).optional(),fullPage:z.boolean().default(false),safeReversible:z.boolean().default(false),scope:z.enum(['page','regions']).default('page'),selectors:z.array(z.string().min(1).max(500)).max(20).default([]),maxScreenshots:z.number().int().min(1).max(40).default(16),startY:z.number().int().min(0).max(10000000).default(0),startSelectorIndex:z.number().int().min(0).default(0),settleTimeoutMs:z.number().int().min(1000).max(10000).default(4000)}).superRefine((input,ctx)=>{
+export const browserAction=z.object({action:z.enum(['inspect_layout','visual_precheck','snapshot','screenshot','navigate','take_page_screenshots','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),key:z.string().min(1).max(100).optional(),fullPage:z.boolean().default(false),safeReversible:z.boolean().default(false),scope:z.enum(['page','regions']).default('page'),selectors:z.array(z.string().min(1).max(500)).max(20).default([]),maxScreenshots:z.number().int().min(1).max(40).default(16),startY:z.number().int().min(0).max(10000000).default(0),startSelectorIndex:z.number().int().min(0).default(0),settleTimeoutMs:z.number().int().min(1000).max(10000).default(4000),templateName:z.string().max(200).optional(),skipMobileMenuProbe:z.boolean().optional()}).superRefine((input,ctx)=>{
   if(input.action==='press'&&!input.value&&!input.key)ctx.addIssue({code:'custom',message:'press 需要 value 或 key 指定按键，不能默认触发 Enter',path:['value']});
   if(input.action==='press'&&input.value&&input.key&&input.value!==input.key)ctx.addIssue({code:'custom',message:'value 与 key 指定了不同按键',path:['key']});
   if(input.action==='take_page_screenshots'){
@@ -113,10 +114,10 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
           if(shouldAbortNavigation(route.request(),roleOrigin,page?.mainFrame()))return route.abort().catch(()=>{});
           return route.continue().catch(()=>{});
         });
-        page=await context.newPage();pages.set(key,page);const initialUrl=['navigate','take_page_screenshots','inspect_layout'].includes(input.action)&&input.url?input.url:urls[input.role];navigationStatus=(await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}))?.status();}
-      if(input.action==='navigate'||input.action==='take_page_screenshots'||input.action==='inspect_layout'){
-        const url=input.url||(['take_page_screenshots','inspect_layout'].includes(input.action)?page.url():undefined);if(!url)throw new Error('navigate 需要 url');
-        if((input.action!=='inspect_layout'||page.url()!==url)&&(input.action==='navigate'||input.startY===0||page.url()!==url)&&(!navigated||page.url()!==url)){navigationStatus=(await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000}))?.status();navigated=true;}
+        page=await context.newPage();pages.set(key,page);const initialUrl=['navigate','take_page_screenshots','inspect_layout','visual_precheck'].includes(input.action)&&input.url?input.url:urls[input.role];navigationStatus=(await page.goto(initialUrl,{waitUntil:'domcontentloaded',timeout:45000}))?.status();}
+      if(input.action==='navigate'||input.action==='take_page_screenshots'||input.action==='inspect_layout'||input.action==='visual_precheck'){
+        const url=input.url||(['take_page_screenshots','inspect_layout','visual_precheck'].includes(input.action)?page.url():undefined);if(!url)throw new Error('navigate 需要 url');
+        if((!['inspect_layout','visual_precheck'].includes(input.action)||page.url()!==url)&&(input.action==='navigate'||input.startY===0||page.url()!==url)&&(!navigated||page.url()!==url)){navigationStatus=(await page.goto(url,{waitUntil:'domcontentloaded',timeout:45000}))?.status();navigated=true;}
       }
       else if(['click','fill','select','press'].includes(input.action)){
         if(!input.element||!input.name)throw new Error('请提供可访问角色 element 和名称 name');
@@ -144,6 +145,18 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
       checkpoint(structuredClone(artifacts));
       return {...observation,imagePath:resolve(directory,'evidence',file),...(settlement.settled?{}:{warning:`页面未稳定（仍有 ${settlement.pendingImages} 张可见图片未加载${settlement.loaded?'':'，load 未完成'}）：不能据此判断参考站缺少区段或图片。`})};
       };
+      if(input.action==='visual_precheck'){
+        await page.evaluate(()=>window.scrollTo(0,0)).catch(()=>{});
+        return await runVisualPrecheck(page,input.viewport,{
+          templateName:input.templateName,
+          skipMobileMenuProbe:input.skipMobileMenuProbe,
+          onCaptureEvidence:async(tag)=>{
+            const pixels=await page!.screenshot({type:'png',fullPage:false,timeout:10000});
+            const saved=await saveObservation(pixels,{settled:true,loaded:true,networkIdle:false,images:0,pendingImages:0,blankImageRatio:0},{probe:tag});
+            return saved.file;
+          },
+        });
+      }
       if(input.action==='take_page_screenshots'){
         const loaded=await page.waitForLoadState('load',{timeout:5000}).then(()=>true,()=>false);
         const freezeMotion=input.role!=='target'&&input.settleTimeoutMs>=10000&&typeof page.emulateMedia==='function';

@@ -5,9 +5,9 @@ import BaseSelect from '../../components/BaseSelect.vue';
 import TemplateChecklistManager from './TemplateChecklistManager.vue';
 import { api, message, formatDate } from '../../api';
 import { notify } from '../../lib/notifications';
-import { scenarios, type AutomationRule } from '../../../../shared/automation';
+import { activeScenarios, scenarios, type AutomationRule } from '../../../../shared/automation';
 
-const section = ref<'template-checklists' | 'scoring-rules'>('template-checklists');
+const section = ref<'template-checklists' | 'scoring-rules'>('scoring-rules');
 const checklistManager = ref<InstanceType<typeof TemplateChecklistManager>>();
 
 const rules = ref<AutomationRule[]>([]);
@@ -22,7 +22,7 @@ const form = ref<Pick<AutomationRule, 'name' | 'kind' | 'sop' | 'references' | '
   sop: '',
   references: '',
   criteria: [],
-  scenarios: Object.keys(scenarios) as (keyof typeof scenarios)[],
+  scenarios: Object.keys(activeScenarios) as (keyof typeof scenarios)[],
 });
 const saved = ref('');
 const legacyDirty = computed(() => editing.value && JSON.stringify(form.value) !== saved.value);
@@ -31,12 +31,17 @@ defineExpose({ dirty });
 
 const total = computed(() => Math.round(form.value.criteria.reduce((sum, c) => sum + (Number(c.weight) || 0), 0) * 100) / 100);
 const selectedRule = computed(() => rules.value.find(r => r.id === selected.value) || rules.value.at(-1));
+const editableRuleScenarios = computed(() =>
+  Object.entries(scenarios).filter(
+    ([key]) => key in activeScenarios || (form.value.scenarios || []).includes(key as keyof typeof scenarios),
+  ),
+);
 
 function from(rule: AutomationRule) {
   return {
     name: rule.name,
     kind: rule.kind,
-    scenarios: rule.scenarios ? [...rule.scenarios] : Object.keys(scenarios).filter(s => rule.kind === 'app' ? s === 'app-template' : s !== 'app-template') as (keyof typeof scenarios)[],
+    scenarios: rule.scenarios ? [...rule.scenarios] : (rule.kind === 'app' ? ['app-template'] : Object.keys(activeScenarios)) as (keyof typeof scenarios)[],
     sop: rule.sop,
     references: rule.references,
     criteria: rule.criteria.map(c => ({ ...c, viewports: [...c.viewports], scopes: [...c.scopes] })),
@@ -149,20 +154,20 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload));
     <button
       type="button"
       role="tab"
-      :aria-selected="section === 'template-checklists'"
-      :class="{ selected: section === 'template-checklists' }"
-      @click="section = 'template-checklists'"
-    >
-      AI Site 模板检查集
-    </button>
-    <button
-      type="button"
-      role="tab"
       :aria-selected="section === 'scoring-rules'"
       :class="{ selected: section === 'scoring-rules' }"
       @click="section = 'scoring-rules'"
     >
       评分规则与 SOP
+    </button>
+    <button
+      type="button"
+      role="tab"
+      :aria-selected="section === 'template-checklists'"
+      :class="{ selected: section === 'template-checklists' }"
+      @click="section = 'template-checklists'"
+    >
+      历史模板检查集（归档）
     </button>
   </div>
 
@@ -217,7 +222,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload));
       <section class="panel settings-panel">
         <div class="criterion-options">
           <span>适用场景</span>
-          <label v-for="(label, key) in scenarios" :key="key" class="check-label">
+          <label v-for="[key, label] in editableRuleScenarios" :key="key" class="check-label">
             <input v-model="form.scenarios" type="checkbox" :value="key" />{{ label }}
           </label>
         </div>

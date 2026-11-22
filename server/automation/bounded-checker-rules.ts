@@ -83,6 +83,9 @@ export function defaultOutOfScope(ctx: OutOfScopeContext): string[] {
   ];
   if (ctx.scope === 'homepage') {
     items.push('其他静态内页、多页路由与全站信息架构；当前任务范围为仅首页');
+    items.push(
+      '仅基于静态逐屏截图无法直接观测的细粒度动态交互态（如悬停 hover 样式、折叠手风琴/标签页点击切换与展开动效、以及跳转到内页或外部地址的实际路由目标；移动端导航菜单开关由宿主程序探针独立核验）',
+    );
   }
   if (!ctx.hasReference) {
     items.push('参考站逐像素视觉对比；本次未提供参考站或模板视觉参考');
@@ -137,6 +140,18 @@ function matchesPresetScopeBoilerplate(line: string, presetOutOfScope: string[])
   if (
     joinedPreset.includes('静态展示表单') &&
     /(?:静态展示|静态演示|纯展示).*(?:表单|提交|校验)|(?:表单|预约).*(?:提交|校验).*(?:静态展示|静态演示)/i.test(line)
+  ) {
+    return true;
+  }
+  if (
+    joinedPreset.includes('细粒度动态交互态') &&
+    (/(?:手风琴|折叠项|折叠步骤|常见问题|FAQ|合作流程|标签页|轮播|滚动动效|悬停(?:状态|样式|反馈)?).*(?:展开|收起|切换|动效|闭合态|静态截图|默认选中|默认展开|仅(?:提供|有).*?(?:截图|画面)|未提供.*截图|未呈现|交互反馈)/i.test(
+      line,
+    ) ||
+      /(?:导航|页脚|卡片|按钮|CTA|隐私|条款|链接|外链).*(?:点击|跳转|目标页|实际目标|链接目标).*(?:未提供|无法(?:核验|确认|验证)|静态截图)/i.test(
+        line,
+      ) ||
+      /静态截图.*(?:无法(?:核验|确认|验证)|未提供).*(?:链接|跳转|点击|手风琴|折叠|悬停|交互)/i.test(line))
   ) {
     return true;
   }

@@ -22,7 +22,7 @@ export function supportsAutomaticOptimization(scenario: Scenario) { return ['mat
 export function optimizationScenarioGuidance(scenario: Scenario) {
   return scenario === 'site-template'
     ? '本次为 AI Site 模板：图片使用 imagePlaceholder，不得复用参考站资源。'
-    : '本次为资料建站、站点迁移或升级：保留内容站及资料包的真实内容和合法资源；若非豁免展示位缺少真实配图，使用 imagePlaceholder 真实配图（<img>），禁止用大块几何 SVG 充数。优先修复主视觉/结构、内容标识、分类归属、分页、URL/SEO、功能和双端缺陷；数量与 HTTP 200 不能代替内容及关系对账。';
+    : '本次为资料建站、站点迁移或升级：保留内容站及资料包的真实内容和合法资源；若非豁免展示位缺少真实配图，使用 imagePlaceholder 真实配图（<img>），禁止用大块几何 SVG 充数。优先修复主视觉/结构、内容标识、分类归属、分页、URL/SEO、功能和双端缺陷；数量与 HTTP 200 不能代替内容及关系对账。严禁在公开页面（含页脚、询盘表单、说明文字）写入“依据客户提供的《...》资料整理”“电话与邮箱以商务确认为准”等内部制作口径文案；严禁改动已达标的高分区段（尤其未报错的首屏与稳定网格），仅做定向精准修复防止回归。';
 }
 export type Scope = 'homepage' | 'site';
 export type TaskStatus = 'queued' | 'running' | 'pending' | 'cancelling' | 'cancelled' | 'completed' | 'failed' | 'following-up' | 'interrupted';
@@ -107,6 +107,7 @@ export interface OptimizationRun { planningStarted?: boolean; policy: Optimizati
 export const optimizationStateNames = { 'waiting-evaluation': '等待复评', planning: '分析修复方案', repairing: '修复中', completed: '目标已达成', stopped: '优化已停止' };
 export const defaultOptimizationPolicy: OptimizationPolicy = { targetScore: 85, maxRounds: 3, maxCostCny: null, sop: `你负责根据独立报告及真实截图决定是否继续优化站点。
 实际查看所提供的目标站和参考站截图，按问题位置、视口、参考设计意图、预期改善和保留约束整理一组可执行修复。优先重大缺陷及 Hero / 结构差距，不笼统重做全站，不承诺某个修改能加固定分数。
+当已无 Critical/Major 缺陷且与目标分差较小（例如差 < 3 分）时，仅针对最高收益的 3–5 项 Minor 缺陷做精准小改，并在修复委托中明示“严禁改动已达标的高分区段（如首屏/稳定网格）”；严禁在页面文案、页脚、询盘表单或提示中暴露“依据客户提供的《...》资料整理”“电话与邮箱以商务确认为准”等内部制作口径文字。
 比较本轮与上轮问题及双端证据，记录已解决、仍存在、未验证和新增问题。improved 表示有实际问题解决或设计改善，不单凭分数的一两分波动；明显退化又无可信修复方案时 interrupt。
 遵守原输入、场景和范围。资料建站、迁移与升级保留内容站及资料包的真实内容与合法资源；非豁免展示位缺少真实配图时使用 imagePlaceholder 真实配图，不得用大块几何 SVG 充数；迁移与升级按来源清单检查内容标识、分类关系、分页、URL/SEO及功能完整性。参考截图作为审查证据。不修改评分口径、目标或权重。Kooboo 负责具体实现，独立评测负责真实复评。
 通过工具 repair 委托修复，或 interrupt 说明停止理由和下一步；不得直接改站。` };

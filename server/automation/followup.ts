@@ -23,6 +23,10 @@ import { collectionTargetRepairContext } from './collection/report.js';
 import { collectionSourceGaps, recollectionObjectiveSchema, validateRecollectionAction } from './collection/recollection.js';
 import { followupTaskContext, followupReportComparison } from './followup-context.js';
 import { toolsClientScript, windowsToolsHint } from './tools-client.js';
+import {
+  canUseBoundedOptimizationPlanning,
+  executeBoundedOptimizationPlanning,
+} from './bounded-optimization-planner.js';
 
 const humanNoticeSchema=z.object({headline:z.string().trim().min(1).max(160),category:z.enum(['source-access','target-auth','template-source','ai-model','environment','site-collision','need-human-input','runtime']),explanation:z.string().trim().min(1).max(800),userActions:z.array(z.string().trim().min(1).max(300)).min(1).max(6)}).strict();
 export const followupActionSchema=z.object({action:z.enum(['retry','continue','answer','evaluate','wait','interrupt','repair','collect']),reason:z.string().trim().min(1).max(6000),evidence:z.array(z.string()).min(1).max(30),message:z.string().trim().min(1).max(30000).optional(),imageEvidence:z.array(z.string()).min(1).max(20).optional(),collectionObjective:recollectionObjectiveSchema.optional(),progress:z.object({improved:z.boolean(),reason:z.string().min(1).max(6000),resolved:z.array(z.string()).max(100),remaining:z.array(z.string()).max(100),unverified:z.array(z.string()).max(100),introduced:z.array(z.string()).max(100)}).strict().optional(),answer:z.record(z.string(),z.unknown()).optional(),callId:z.string().max(100).optional(),waitSeconds:z.number().int().min(5).max(300).optional(),nextSteps:z.array(z.string().trim().min(1).max(2000)).min(1).max(10).optional(),userSummary:humanNoticeSchema.optional()}).strict();
@@ -79,6 +83,17 @@ type FollowupClient={startThread(options:ThreadOptions):Pick<Thread,'runStreamed
 type FollowupClientFactory=(vault:Vault,directory:string,extra:Record<string,string>,model?:AutomationTask['model'])=>FollowupClient;
 export async function executeFollowup(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,createClient:FollowupClientFactory=codexClient):Promise<FollowupAction> {
   if(!task.followup)throw new Error('跟进配置缺失');
+  if(canUseBoundedOptimizationPlanning(task)){
+    return await executeBoundedOptimizationPlanning({
+      task,
+      store,
+      vault,
+      directory,
+      signal,
+      createClient,
+      validateAction:(raw,optimizationImages,observations)=>validateFollowupAction(raw,task,{optimizationImages},observations),
+    });
+  }
   const priorUsage=new Set(store.usage.entries(task.id).map(e=>e.source+':'+e.id)),priorTokens=task.followup.tokens;
   task.followup.budgetId||=randomUUID();store.put(task);
   task.followup.reportObservations={};store.put(task);

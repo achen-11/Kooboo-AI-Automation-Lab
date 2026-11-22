@@ -7,7 +7,9 @@ import { tmpdir } from 'node:os';
 import { createApp } from '../server/app.js';
 import { defaultAutomationSettings, defaultOptimizationPolicy, type AutomationTask, type FollowupAction, type AutomationReport, type Scenario, type Scope } from '../shared/automation.js';
 import { advanceOptimization, applyOptimizationAction, optimizationBudgetReason, targetReached } from '../server/automation/optimization.js';
+import { canUseBoundedOptimizationPlanning } from '../server/automation/bounded-optimization-planner.js';
 import { optimizationEvidence } from '../server/automation/optimization-evidence.js';
+import { createAutonomousExecution } from '../shared/autonomy.js';
 import { executeFollowup, validateFollowupAction } from '../server/automation/followup.js';
 import { AutomationWorker, type Execute } from '../server/automation/worker.js';
 import { ManifestStore } from '../server/automation/completeness.js';
@@ -608,6 +610,145 @@ test('materials scenario supports automatic optimization, adapts optimizationEvi
     });
     assert.equal(refOptRes.statusCode, 200, refOptRes.body);
     assert.throws(() => optimizationEvidence(f.store.task(refGen.id)!, f.store, f.directory), /reference/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('bounded optimization planner runs single read-only multimodal turn with 1/1 repair and enforces baseline improved=false', async () => {
+  const f = await fixture(2, 'upgrade', 'homepage');
+  try {
+    const pngBytes = Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+jRZkAAAAASUVORK5CYII=', 'base64');
+    const evaluation = f.finish(f.root, 86, 84);
+    const folder = join(f.directory, 'automation-runs', evaluation.id, 'evidence');
+    mkdirSync(folder, { recursive: true });
+    evaluation.report!.issues = [
+      {
+        severity: 'minor',
+        title: '移动端应用行业网格末行留白',
+        detail: '需要精修第 2 行宽度对齐。',
+        evidence: [],
+      },
+    ];
+    evaluation.report!.artifacts = (['desktop', 'mobile'] as const).flatMap(viewport =>
+      (['target', 'reference'] as const).map(role => {
+        const name = `${randomUUID()}.png`;
+        writeFileSync(join(folder, name), pngBytes);
+        return {
+          id: randomUUID(),
+          name,
+          type: 'image/png',
+          size: pngBytes.length,
+          sha256: createHash('sha256').update(pngBytes).digest('hex'),
+          viewport,
+          role,
+        };
+      }),
+    );
+    f.store.put(evaluation);
+
+    const root = f.advance();
+    assert.equal(canUseBoundedOptimizationPlanning(root), true);
+    assert.equal(
+      canUseBoundedOptimizationPlanning({ ...root, scenario: 'site-template' }),
+      false,
+    );
+    const diagAutonomy = createAutonomousExecution('diag');
+    diagAutonomy.checkpoint.diagnosticRequired = true;
+    assert.equal(
+      canUseBoundedOptimizationPlanning({
+        ...root,
+        autonomy: diagAutonomy,
+      }),
+      false,
+    );
+
+    const desktopTargetPng = evaluation.report!.artifacts.find(a => a.viewport === 'desktop' && a.role === 'target')!.name;
+    let turns = 0;
+    let sawRepairPrompt = '';
+    const decision = await executeFollowup(
+      root,
+      f.store,
+      f.vault,
+      f.directory,
+      new AbortController().signal,
+      () => ({
+        startThread: opts => {
+          assert.equal(opts.sandboxMode, 'read-only');
+          assert.equal(opts.networkAccessEnabled, false);
+          return {
+            runStreamed: async (input: unknown) => {
+              turns++;
+              assert.ok(Array.isArray(input));
+              const text = (input[0] as { text: string }).text;
+              if (turns === 1) {
+                assert.equal(input.filter((b: any) => b.type === 'local_image').length, 4);
+                assert.match(text, /特别防退化纪律/);
+              } else {
+                sawRepairPrompt = text;
+                assert.equal(input.filter((b: any) => b.type === 'local_image').length, 0);
+              }
+              const reply =
+                turns === 1
+                  ? {
+                      action: 'repair',
+                      reason: '修补轻微对齐与可读性问题',
+                      message: '仅调整行业区第 2 行卡宽，严禁修改首屏。',
+                      imageEvidence: ['forged-bad.png'],
+                      progress: {
+                        improved: true,
+                        reason: 'model wrongly claimed improved on Round 0',
+                        resolved: [],
+                        remaining: ['行业网格'],
+                        unverified: [],
+                        introduced: [],
+                      },
+                      nextSteps: null,
+                      userSummary: null,
+                    }
+                  : {
+                      action: 'repair',
+                      reason: '修补轻微对齐与可读性问题',
+                      message: '仅调整行业区第 2 行卡宽，严禁修改首屏。',
+                      imageEvidence: [desktopTargetPng],
+                      progress: {
+                        improved: true,
+                        reason: 'Round 0 baseline must be coerced to false by host',
+                        resolved: [],
+                        remaining: ['行业网格'],
+                        unverified: [],
+                        introduced: [],
+                      },
+                      nextSteps: null,
+                      userSummary: null,
+                    };
+              return {
+                events: (async function* () {
+                  yield { type: 'thread.started' as const, thread_id: 'bounded-plan-thread-1' };
+                  yield { type: 'item.completed' as const, item: { id: `msg-${turns}`, type: 'agent_message' as const, text: JSON.stringify(reply) } };
+                  yield { type: 'turn.completed' as const, usage: { input_tokens: 8000, cached_input_tokens: 2000, cache_write_input_tokens: 0, output_tokens: 600, reasoning_output_tokens: 0 } };
+                })(),
+              };
+            },
+          };
+        },
+        resumeThread: () => {
+          throw new Error('bounded optimization planning should not resume arbitrary tool threads');
+        },
+      }),
+    );
+
+    assert.equal(turns, 2);
+    assert.match(sawRepairPrompt, /forged-bad\.png/);
+    assert.match(sawRepairPrompt, new RegExp(desktopTargetPng));
+    assert.equal(decision.action, 'repair');
+    assert.deepEqual(decision.imageEvidence, [desktopTargetPng]);
+    assert.equal(decision.evidence.length, 2);
+    assert.equal(decision.progress?.improved, false);
+    const saved = f.store.task(root.id)!;
+    assert.equal(saved.followup?.threadId, 'bounded-plan-thread-1');
+    assert.equal(saved.threadId, '');
+    assert.equal(saved.followup?.lastAction?.action, 'repair');
   } finally {
     await f.close();
   }

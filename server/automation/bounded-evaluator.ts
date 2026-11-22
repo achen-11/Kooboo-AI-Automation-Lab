@@ -2,6 +2,7 @@ import { createHash } from 'node:crypto';
 import { closeSync, existsSync, openSync, readFileSync, readSync, writeFileSync } from 'node:fs';
 import { resolve } from 'node:path';
 import { inflateRawSync } from 'node:zlib';
+import type { Thread, ThreadOptions } from '@openai/codex-sdk';
 import { decodeXML } from 'entities';
 import { z } from 'zod';
 import type {
@@ -712,8 +713,8 @@ export function isBoundedNonRetryableModelError(message: string): boolean {
  * unexpected runtime crash/empty text) and one same-thread schema/evidence repair turn.
  */
 export async function runBoundedBatchWithRecovery<T>(params: {
-  codex: ReturnType<typeof codexClient>;
-  threadOptions: Parameters<ReturnType<typeof codexClient>['startThread']>[0];
+  codex: { startThread(options: ThreadOptions): Pick<Thread, 'runStreamed'> };
+  threadOptions: ThreadOptions;
   task: AutomationTask;
   store: AutomationStore;
   capture: Awaited<ReturnType<typeof usageCapture>>;
@@ -724,11 +725,12 @@ export async function runBoundedBatchWithRecovery<T>(params: {
   batchLabel: string;
   retryEventPrefix: string;
   repairEventPrefix: string;
+  onThreadStarted?: (threadId: string) => void;
   buildRepairPrompt: (errorMessage: string) => string;
   parseAndValidate: (rawText: string) => T;
 }): Promise<T> {
   const runSingleTurn = async (
-    thread: ReturnType<ReturnType<typeof codexClient>['startThread']>,
+    thread: Pick<Thread, 'runStreamed'>,
     textInput: string,
     attachImages: boolean,
   ): Promise<string> => {
@@ -748,9 +750,13 @@ export async function runBoundedBatchWithRecovery<T>(params: {
     let streamFailure: Error | undefined;
     for await (const event of stream.events) {
       params.signal.throwIfAborted();
-      if (event.type === 'thread.started' && !params.task.threadId) {
-        params.task.threadId = event.thread_id;
-        params.store.put(params.task);
+      if (event.type === 'thread.started') {
+        if (params.onThreadStarted) {
+          params.onThreadStarted(event.thread_id);
+        } else if (!params.task.threadId) {
+          params.task.threadId = event.thread_id;
+          params.store.put(params.task);
+        }
       } else if (event.type === 'turn.completed') {
         params.capture.fallback(event.usage as unknown as Record<string, unknown>, usageStart);
       } else if (event.type === 'turn.failed') {

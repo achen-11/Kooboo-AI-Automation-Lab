@@ -629,3 +629,66 @@ test('buildBoundedCheckerPrompt enforces target+reference citation only when rol
   );
   assert.deepEqual(filtered, ['移动端页脚截图缺失，无法确认是否裁切', '预约表单提交未验证']);
 });
+
+test('homepage preset outOfScope moves static-screenshot accordion/hover/link-target notes out of unverified while keeping real failures', () => {
+  const preset = defaultOutOfScope({
+    scenario: 'materials',
+    scope: 'homepage',
+    hasReference: true,
+    hasMaterials: true,
+    hasBackendAccess: false,
+  });
+
+  const classified = classifyUnverifiedLeaks(
+    [
+      '常见问题手风琴的展开态、关闭态及展开动效未提供截图，未能核验',
+      '产品卡片和行业卡片的悬停状态、主行动按钮点击后的目标页未提供截图，无法核验交互反馈',
+      '本批分段未呈现轮播、手风琴或滚动动效的运行状态',
+      '静态截图无法确认导航、页脚隐私与条款链接以及常见问题折叠项的点击跳转是否有效',
+      '合作流程第 02–05 步的展开与收起结果及过渡动效，当前仅有第 01 步展开的静态画面',
+      '移动端关键交互（菜单点击）失败，无法验证菜单状态',
+      '移动端页脚截图缺失，无法确认是否裁切',
+    ],
+    preset,
+  );
+
+  assert.deepEqual(classified.keptUnverified, [
+    '移动端关键交互（菜单点击）失败，无法验证菜单状态',
+    '移动端页脚截图缺失，无法确认是否裁切',
+  ]);
+  assert.equal(classified.movedToOutOfScope.length, 5);
+
+  // When a 0-Major homepage only has static accordion/hover caveats, verdict resolves to passed/ready
+  const verdict = applyBoundedVerdictCaps({
+    assessments: [
+      { criterionId: 'hero', viewport: 'desktop', score: 90, reason: 'ok', evidence: ['d1.png'], passed: true },
+      { criterionId: 'structure', viewport: 'desktop', score: 88, reason: 'ok', evidence: ['d1.png'], passed: true },
+      { criterionId: 'sections', viewport: 'desktop', score: 86, reason: 'ok', evidence: ['d1.png'], passed: true },
+      { criterionId: 'hero', viewport: 'mobile', score: 89, reason: 'ok', evidence: ['m1.png'], passed: true },
+      { criterionId: 'structure', viewport: 'mobile', score: 86, reason: 'ok', evidence: ['m1.png'], passed: true },
+      { criterionId: 'sections', viewport: 'mobile', score: 85, reason: 'ok', evidence: ['m1.png'], passed: true },
+    ],
+    criteria: homepageCriteria,
+    threshold: 80,
+    issues: [],
+    coverage: {
+      verified: ['双端视觉与内容检查'],
+      unverified: [
+        '常见问题手风琴的展开态、关闭态及展开动效未提供截图，未能核验',
+        '静态截图无法确认导航、页脚隐私与条款链接以及常见问题折叠项的点击跳转是否有效',
+      ],
+      outOfScope: [],
+    },
+    presetOutOfScope: preset,
+    humanSummary: {
+      verdict: 'ready',
+      headline: '双端达标可交付',
+      highlights: ['内容与视觉一致'],
+      topFixes: [],
+    },
+  });
+
+  assert.equal(verdict.quality, 'passed');
+  assert.equal(verdict.humanSummary?.verdict, 'ready');
+  assert.deepEqual(verdict.coverage.unverified, []);
+});

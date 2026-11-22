@@ -317,11 +317,12 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const result=store.db.transaction(()=>{
       const old=store.db.prepare('SELECT hash,json FROM auto_requests WHERE id=?').get(key);
       if(old){if(old.hash!==hash)throw new Conflict('同一个请求标识不能用于不同任务');return JSON.parse(old.json);}
+      const envId=input.generatedSiteId?store.site(input.generatedSiteId)?.environmentId||input.environmentId:input.environmentId;
+      const env=vault.get().environments.find(e=>e.id===envId);
+      const siteHasDelivery=Boolean(input.generatedSiteId&&store.headers(input.generatedSiteId).some(t=>t.delivery));
       if(input.autoDelivery===true){
-        const envId=input.generatedSiteId?store.site(input.generatedSiteId)?.environmentId||input.environmentId:input.environmentId;
-        const env=vault.get().environments.find(e=>e.id===envId);
         if(!env?.delivery?.enabled||!env.delivery.token)throw new Conflict('当前环境未启用跨环境交付或缺少迁移令牌，无法开启自动交付');
-        if(input.generatedSiteId&&store.headers(input.generatedSiteId).some(t=>t.delivery))throw new Conflict('该生成站已有关联跨环境交付记录，不能重复开启自动交付');
+        if(siteHasDelivery)throw new Conflict('该生成站已有关联跨环境交付记录，不能重复开启自动交付');
       }
       const collections=input.collectionSnapshotId?new CollectionStore(store,directory):undefined;
       const snapshot=collections?.reusableSnapshot(input.collectionSnapshotId!,input.resourceIds[0]);
@@ -335,7 +336,9 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       // Resolve the default inside the idempotent transaction so retries keep the original choice.
       const defaultRootDomain=input.kind==='generation'&&!input.generatedSiteId
         ?vault.get().environments.find(e=>e.id===input.environmentId)?.defaultRootDomain||undefined:undefined;
-      const value={items:store.create({...input,defaultRootDomain,...(snapshot?{versionId:snapshot.inputVersionId}:{})},executionSettings())};
+      const defaultAutoDelivery=input.autoDelivery===undefined&&env?.delivery?.enabled&&!siteHasDelivery
+        ?Boolean(env.delivery.token&&env.delivery.auto):undefined;
+      const value={items:store.create({...input,defaultRootDomain,defaultAutoDelivery,...(snapshot?{versionId:snapshot.inputVersionId}:{})},executionSettings())};
       for(const task of value.items){
         new TemplateWorkflowStore(store).initialize(task);
         if(snapshot&&sourceManifest&&baseline){

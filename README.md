@@ -1,5 +1,7 @@
 # Kooboo AI Automation Lab
 
+v0.8.2 修复外部调用（如 `kooboo-workbench`）通过 `POST /api/automation/tasks` 创建任务且未显式传入 `autoDelivery` 时，平台未冻结环境默认交付偏好（`env.delivery.auto`）导致「仅首页（`scope: "homepage"`）」等任务无法在评测完成后自动触发跨环境交付到 DE 服务器的问题；与 Web 界面及「默认开启（任务完成后自动交付）」设置语义保持一致。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.8.2 发布说明](docs/release-notes-0.8.2.md)。
+
 v0.8.1 修复源站克隆部分页面永久挂起（`Transfer/GetStatus` 存在未完成页面）导致任务在准备阶段静默空转至 60 分钟上限、无模型调用费用且界面无任何提示的问题；为 `waitForTransferPages` 增加 2 分钟停滞检测、5 分钟等待上限与 `Transfer/GetTaskStatus` 交叉核验，并在克隆等待期间持续写入中文进度事件与刷新更新时间。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.8.1 发布说明](docs/release-notes-0.8.1.md)。
 
 v0.8.0 新增「Kooboo 模板市场引用与旧版环境兼容防呆保护」、「任务资料补充（人工 / AI 辅助收集、跳过原站克隆、回答挂起输入）」与附件预览、「Harness 运行蓝图 & 双层人话诊断 & 0 页克隆保护」，以及「单任务自动交付开关、环境默认偏好与交付主链接优先展示」。在未同步升级 HK 等旧版 Kooboo 服务器的过渡期，既有流程与绝大多数新能力均可正常使用，系统会在选模板及建站前自动探测目标环境接口支持度并防呆拦截。详情与验证边界见 [v0.8.0 发布说明](docs/release-notes-0.8.0.md)。

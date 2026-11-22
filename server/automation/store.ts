@@ -239,7 +239,7 @@ export class AutomationStore {
   }
   event(id: string, message: string) { this.db.prepare('INSERT INTO auto_events(task_id,time,message) VALUES(?,?,?)').run(id,Date.now(),this.redact(message).slice(0,16000)); }
   events(id: string) { return this.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq').all(id); }
-  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; siteName?: string; subDomain?: string; rootDomain?: string; defaultRootDomain?: string; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule; optimization?: Partial<OptimizationPolicy>; optimizationRootId?: string; optimizationRound?: number; autoDelivery?: boolean }, settings: AutomationSettings) {
+  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; siteName?: string; subDomain?: string; rootDomain?: string; defaultRootDomain?: string; defaultAutoDelivery?: boolean; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule; optimization?: Partial<OptimizationPolicy>; optimizationRootId?: string; optimizationRound?: number; autoDelivery?: boolean }, settings: AutomationSettings) {
     return this.db.transaction(() => input.resourceIds.map(id => {
       const resource = this.resource(id); if (!resource) throw new Conflict('资源不存在');
       const version = input.versionId ? this.version(input.versionId) : this.versions(id)[0];
@@ -285,6 +285,7 @@ export class AutomationStore {
       const parent=input.parentId?this.task(input.parentId):undefined;
       if (input.autoDelivery !== undefined) task.autoDelivery = input.autoDelivery;
       else if (parent?.autoDelivery !== undefined) task.autoDelivery = parent.autoDelivery;
+      else if (input.defaultAutoDelivery !== undefined) task.autoDelivery = input.defaultAutoDelivery && Boolean(rule);
       const siteWorkflowTasks=!parent&&site&&version.scenario==='site-template'?this.siteTasks(site.id).filter(other=>other.templateWorkflow&&other.versionId===task.versionId):[];
       const siteWorkflowSource=siteWorkflowTasks.find(other=>other.scope===task.scope);
       if(!siteWorkflowSource&&siteWorkflowTasks.some(other=>other.scope==='homepage')&&task.scope==='site'&&input.kind==='generation')throw new Conflict('该生成站由首页范围的新模板流程创建，冻结基线不含内页；请新建全站生成任务，避免丢失基线回退旧流程');

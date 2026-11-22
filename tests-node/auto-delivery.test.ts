@@ -1077,3 +1077,384 @@ test('parseDeliveryVerification rejects prose-joined evidence filenames and /del
     await f.close();
   }
 });
+
+test('POST /api/automation/tasks freezes env.delivery.auto when autoDelivery is omitted across scopes including homepage', async () => {
+  const f = await fixture();
+  let worker: AutomationWorker | undefined;
+  try {
+    f.automationStore.publish({
+      name: 'Site rule',
+      kind: 'site',
+      sop: 'Inspect site',
+      references: '',
+      criteria: [{ id: 'hero', label: 'Hero', weight: 100, instruction: 'Check hero', required: true, viewports: ['desktop', 'mobile'], scopes: ['homepage', 'site'] }],
+    });
+
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(env =>
+        env.id === f.envId
+          ? { ...env, delivery: { ...env.delivery!, enabled: true, auto: true, requirePassed: false, token: 'secret-migrate-token' } }
+          : env,
+      ),
+    });
+    f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true, autoEvaluate: false });
+
+    const upgradeRes = f.automationStore.saveResource({
+      name: 'Gallery Upgrade',
+      scenario: 'upgrade',
+      description: 'Upgrade gallery homepage',
+      contentUrl: 'https://source.test',
+      referenceUrl: 'https://ref.test',
+      externalSource: 'kooboo-workbench',
+      externalId: 'ext-upgrade-homepage-1',
+      files: [],
+    });
+
+    const createRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/tasks',
+      headers: { ...f.headers, 'idempotency-key': randomUUID() },
+      payload: {
+        resourceIds: [upgradeRes.id],
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: f.envId,
+      },
+    });
+    assert.equal(createRes.statusCode, 201, createRes.body);
+    const rootId = createRes.json().items[0].id as string;
+    const root = f.automationStore.task(rootId)!;
+    assert.equal(root.autoDelivery, true);
+
+    const inputSection = (await f.app.inject({ url: `/api/automation/tasks/${rootId}/sections/input`, headers: f.headers })).json();
+    assert.equal(inputSection.autoDelivery, true);
+    const deliverySection = (await f.app.inject({ url: `/api/automation/tasks/${rootId}/sections/delivery`, headers: f.headers })).json();
+    assert.equal(deliverySection.autoDelivery, true);
+
+    worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      f.directory,
+      {
+        generation: async (task, store) => {
+          const site = {
+            id: randomUUID(),
+            resourceId: task.resourceId,
+            versionId: task.versionId,
+            environmentId: task.environmentId,
+            siteId: randomUUID(),
+            name: 'GallerySite',
+            url: 'https://gallery-hk.test/',
+            createdAt: Date.now(),
+          };
+          store.saveSite(site);
+          task.generatedSiteId = site.id;
+          task.siteUrl = site.url;
+          store.beginSiteChange(task);
+        },
+        evaluation: async (task, store) => {
+          const report = makeReport(92, 'failed', store, task);
+          report.issues = [{ severity: 'major', title: 'Address mismatch', detail: 'Needs review', evidence: [] }];
+          task.report = report;
+          store.publishSiteReport(task);
+          if (task.scenario === 'upgrade') {
+            f.vault.updateAutomation({ ...f.vault.automation(), enabled: false });
+          }
+        },
+      },
+      () => true,
+    );
+
+    await worker.tick();
+    let evalId = '';
+    for (let i = 0; i < 80; i++) {
+      const currentGen = f.automationStore.task(rootId)!;
+      if (currentGen.evaluationTaskId) {
+        evalId = currentGen.evaluationTaskId;
+        const ev = f.automationStore.task(evalId)!;
+        if (ev.status === 'completed' && ev.delivery) break;
+      }
+      await new Promise(r => setTimeout(r, 15));
+    }
+    assert.ok(evalId, 'frozen autoDelivery=true must force evaluation handoff even when autoEvaluate=false');
+    const evalTask = f.automationStore.task(evalId)!;
+    assert.equal(evalTask.autoDelivery, true);
+    assert.equal(evalTask.delivery?.status, 'queued');
+    await worker.stop();
+    worker = undefined;
+
+    // Now set env.delivery.auto = false and create a migration+site evaluation task omitting autoDelivery
+    await f.app.inject({
+      method: 'PUT',
+      url: `/api/automation/environments/${f.envId}/delivery-preference`,
+      headers: f.headers,
+      payload: { auto: false },
+    });
+    const migRes = f.automationStore.saveResource({
+      name: 'Migration Default Off',
+      scenario: 'migration',
+      description: 'Migration site',
+      contentUrl: 'https://source.test',
+      referenceUrl: '',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+    const migSite = {
+      id: randomUUID(),
+      resourceId: migRes.id,
+      versionId: f.automationStore.versions(migRes.id)[0].id,
+      environmentId: f.envId,
+      siteId: randomUUID(),
+      name: 'MigSite',
+      url: 'https://mig-hk.test/',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(migSite);
+    const idempotencyKey = randomUUID();
+    const migPayload = {
+      resourceIds: [migRes.id],
+      kind: 'evaluation',
+      scope: 'site',
+      environmentId: f.envId,
+      generatedSiteId: migSite.id,
+    };
+    const migRes1 = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/tasks',
+      headers: { ...f.headers, 'idempotency-key': idempotencyKey },
+      payload: migPayload,
+    });
+    assert.equal(migRes1.statusCode, 201, migRes1.body);
+    const migEvalId = migRes1.json().items[0].id as string;
+    assert.equal(f.automationStore.task(migEvalId)!.autoDelivery, false);
+
+    // Flip preference to true and replay with the same Idempotency-Key -> stays frozen at false
+    await f.app.inject({
+      method: 'PUT',
+      url: `/api/automation/environments/${f.envId}/delivery-preference`,
+      headers: f.headers,
+      payload: { auto: true },
+    });
+    const migReplay = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/tasks',
+      headers: { ...f.headers, 'idempotency-key': idempotencyKey },
+      payload: migPayload,
+    });
+    assert.equal(migReplay.statusCode, 201, migReplay.body);
+    assert.equal(migReplay.json().items[0].id, migEvalId);
+    assert.equal(migReplay.json().items[0].autoDelivery, false);
+    assert.equal(f.automationStore.task(migEvalId)!.autoDelivery, false);
+
+    // Worker executes evaluation: must NOT retroactively queue delivery despite env.delivery.auto now being true
+    f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true, autoEvaluate: true });
+    worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      f.directory,
+      {
+        generation: async () => {},
+        evaluation: async (task, store) => {
+          task.report = makeReport(95, 'passed', store, task);
+          store.publishSiteReport(task);
+        },
+      },
+      () => true,
+    );
+    await worker.tick();
+    for (let i = 0; i < 80 && f.automationStore.task(migEvalId)?.status !== 'completed'; i++) {
+      await new Promise(r => setTimeout(r, 15));
+    }
+    assert.equal(f.automationStore.task(migEvalId)!.status, 'completed');
+    assert.equal(f.automationStore.task(migEvalId)!.delivery, undefined);
+  } finally {
+    await worker?.stop();
+    await f.close();
+  }
+});
+
+test('POST /api/automation/tasks handles omitted autoDelivery gracefully across missing token/rule, delivered site, plain env, and parent precedence', async () => {
+  const f = await fixture();
+  try {
+    f.automationStore.db.prepare('DELETE FROM auto_rules').run();
+    f.automationStore.publish({
+      name: 'Site rule',
+      kind: 'site',
+      sop: 'Inspect site',
+      references: '',
+      criteria: [{ id: 'hero', label: 'Hero', weight: 100, instruction: 'Check hero', required: true, viewports: ['desktop', 'mobile'], scopes: ['homepage', 'site'] }],
+    });
+
+    const createTask = (payload: Record<string, unknown>) =>
+      f.app.inject({
+        method: 'POST',
+        url: '/api/automation/tasks',
+        headers: { ...f.headers, 'idempotency-key': randomUUID() },
+        payload,
+      });
+
+    const upgradeRes = f.automationStore.saveResource({
+      name: 'Upgrade Res',
+      scenario: 'upgrade',
+      description: 'Upgrade',
+      contentUrl: 'https://source.test',
+      referenceUrl: 'https://ref.test',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+    const appRes = f.automationStore.saveResource({
+      name: 'App Res',
+      scenario: 'app-template',
+      description: 'App without app rule',
+      contentUrl: '',
+      referenceUrl: '',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+
+    // 1. Missing migration token with env.delivery.auto = true -> 201 and autoDelivery: false
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(env =>
+        env.id === f.envId ? { ...env, delivery: { ...env.delivery!, enabled: true, auto: true, token: '', clearToken: true } } : env,
+      ),
+    });
+    const noTokenRes = await createTask({
+      resourceIds: [upgradeRes.id],
+      kind: 'generation',
+      scope: 'homepage',
+      environmentId: f.envId,
+    });
+    assert.equal(noTokenRes.statusCode, 201, noTokenRes.body);
+    assert.equal(noTokenRes.json().items[0].autoDelivery, false);
+
+    // Restore token and keep auto: true
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(env =>
+        env.id === f.envId ? { ...env, delivery: { ...env.delivery!, enabled: true, auto: true, token: 'secret-migrate-token' } } : env,
+      ),
+    });
+
+    // 2. Missing applicable rule (single app-template without app rule, and mixed batch) -> 201 without 409
+    const singleAppRes = await createTask({
+      resourceIds: [appRes.id],
+      kind: 'generation',
+      scope: 'homepage',
+      environmentId: f.envId,
+    });
+    assert.equal(singleAppRes.statusCode, 201, singleAppRes.body);
+    assert.equal(singleAppRes.json().items[0].autoDelivery, false);
+
+    const mixedBatchRes = await createTask({
+      resourceIds: [upgradeRes.id, appRes.id],
+      kind: 'generation',
+      scope: 'homepage',
+      environmentId: f.envId,
+    });
+    assert.equal(mixedBatchRes.statusCode, 201, mixedBatchRes.body);
+    const mixedItems = mixedBatchRes.json().items as Array<{ id: string; resourceId: string; autoDelivery?: boolean }>;
+    assert.equal(mixedItems.find(item => item.resourceId === upgradeRes.id)!.autoDelivery, true);
+    assert.equal(mixedItems.find(item => item.resourceId === appRes.id)!.autoDelivery, false);
+
+    // 3. Site already has delivery -> 201 and autoDelivery: undefined
+    const deliveredSite = {
+      id: randomUUID(),
+      resourceId: upgradeRes.id,
+      versionId: f.automationStore.versions(upgradeRes.id)[0].id,
+      environmentId: f.envId,
+      siteId: randomUUID(),
+      name: 'AlreadyDeliveredSite',
+      url: 'https://hk-delivered.test/',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(deliveredSite);
+    const existingEval = f.automationStore.create(
+      {
+        resourceIds: [upgradeRes.id],
+        kind: 'evaluation',
+        scope: 'homepage',
+        environmentId: f.envId,
+        generatedSiteId: deliveredSite.id,
+        requirements: '',
+      },
+      defaultAutomationSettings,
+    )[0];
+    existingEval.delivery = {
+      id: randomUUID(),
+      policy: { ...defaultDeliveryPolicy, enabled: true },
+      status: 'completed',
+      sourceEnvironmentId: f.envId,
+      sourceSiteId: deliveredSite.siteId,
+      sourceUrl: deliveredSite.url,
+      evaluationTaskId: existingEval.id,
+      target: { siteId: randomUUID(), siteUrl: 'https://de-delivered.test/' },
+      updatedAt: Date.now(),
+      error: '',
+      checks: [],
+    };
+    f.automationStore.put(existingEval);
+    const dupSiteRes = await createTask({
+      resourceIds: [upgradeRes.id],
+      kind: 'generation',
+      scope: 'homepage',
+      environmentId: f.envId,
+      generatedSiteId: deliveredSite.id,
+    });
+    assert.equal(dupSiteRes.statusCode, 201, dupSiteRes.body);
+    assert.equal(f.automationStore.task(dupSiteRes.json().items[0].id)!.autoDelivery, undefined);
+
+    // 4. Environment without delivery enabled (plainEnvId) -> 201 and autoDelivery: undefined
+    const plainRes = await createTask({
+      resourceIds: [upgradeRes.id],
+      kind: 'generation',
+      scope: 'homepage',
+      environmentId: f.plainEnvId,
+    });
+    assert.equal(plainRes.statusCode, 201, plainRes.body);
+    assert.equal(f.automationStore.task(plainRes.json().items[0].id)!.autoDelivery, undefined);
+
+    // 5. Parent precedence: parent.autoDelivery=false overrides env.delivery.auto=true when omitted
+    const freshSite = {
+      id: randomUUID(),
+      resourceId: upgradeRes.id,
+      versionId: f.automationStore.versions(upgradeRes.id)[0].id,
+      environmentId: f.envId,
+      siteId: randomUUID(),
+      name: 'FreshParentSite',
+      url: 'https://hk-fresh-parent.test/',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(freshSite);
+    const parentRes = await createTask({
+      resourceIds: [upgradeRes.id],
+      kind: 'generation',
+      scope: 'homepage',
+      environmentId: f.envId,
+      generatedSiteId: freshSite.id,
+      autoDelivery: false,
+    });
+    assert.equal(parentRes.statusCode, 201, parentRes.body);
+    const parentTask = f.automationStore.task(parentRes.json().items[0].id)!;
+    assert.equal(parentTask.autoDelivery, false);
+
+    const childRes = await createTask({
+      resourceIds: [upgradeRes.id],
+      kind: 'evaluation',
+      scope: 'homepage',
+      environmentId: f.envId,
+      generatedSiteId: freshSite.id,
+      parentId: parentTask.id,
+    });
+    assert.equal(childRes.statusCode, 201, childRes.body);
+    assert.equal(f.automationStore.task(childRes.json().items[0].id)!.autoDelivery, false);
+  } finally {
+    await f.close();
+  }
+});

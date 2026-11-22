@@ -97,6 +97,7 @@ export interface EvaluationRecheck { id:string; status:'resolved'|'remaining'|'u
 export interface AutomationReport {
   migrationCheck?: import('./migration.js').MigrationCheckRun; completeness?: import('./completeness.js').CompletenessReport; summary: string; assessments: Assessment[]; issues: { severity: 'critical' | 'major' | 'minor'; title: string; detail: string; evidence: string[] }[]; coverage: { verified: string[]; unverified: string[]; outOfScope: string[] }; scores: { viewport: string; value: number | null }[]; quality: 'passed' | 'failed' | 'unverified'; artifacts: MaterialFile[]
   rechecks?:EvaluationRecheck[];
+  checksSnapshot?: import('./checker-checks.js').ChecksSnapshotMeta;
   review?: { mode:'targeted'|'incremental'; scopeComplete?:boolean; baselineTaskId:string; baselineRevision:string; inheritedAssessments:string[]; inheritedRequirements:string[]; inheritedPagePaths?:{id:string;paths:string[]}[]; deferredAssessments?:string[]; deferredRequirements?:string[]; deferredPagePaths?:{id:string;paths:string[]}[]; reviewedAssessments:string[]; reviewedRequirements:string[]; targets:{id:string;title:string;kind:'issue'|'coverage'}[] };
 }
 export type AutomationStage = 'prepare' | 'generation' | 'handoff' | 'evaluation' | 'delivery' | 'optimization';

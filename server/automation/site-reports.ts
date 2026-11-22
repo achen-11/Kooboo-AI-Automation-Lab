@@ -70,7 +70,7 @@ export function registerSiteReportApi(app: FastifyInstance, store: AutomationSto
     const report = task.status === 'completed' && task.stopped ? task.report : null;
     return {
       taskId: task.id, rule: task.rule, report: report ? { ...report, ...(report.completeness ? { completeness: { ...report.completeness, checks: [] } } : {}) } : null,
-      evaluation: { scope: task.scope, createdAt: task.createdAt, status: task.status },
+      evaluation: { scope: task.scope, scenario: task.scenario, siteUrl: task.siteUrl, createdAt: task.createdAt, status: task.status },
       historical: Boolean(report) && reportContext(store, id, threshold()).currentReportId !== task.id,
       selectedRound: round ? { brief: round.brief, progress: round.progress } : undefined,
     };

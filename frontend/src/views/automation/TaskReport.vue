@@ -1,26 +1,28 @@
 <script setup lang="ts">
 import { computed, ref } from 'vue';
-import { LoaderCircle, FileText, ExternalLink, ChevronDown, ChevronRight, Columns2, Image, Download } from '@lucide/vue';
-import { taskStatusNames, type AutomationReport, type AutomationRule, type OptimizationProgress } from '../../../../shared/automation';
+import { LoaderCircle, FileText, ExternalLink, ChevronDown, ChevronRight, Columns2, Image, Download, ShieldCheck } from '@lucide/vue';
+import { taskStatusNames, type AutomationReport, type AutomationRule, type OptimizationProgress, type Scenario } from '../../../../shared/automation';
 import { deriveEvaluationHumanSummary, evaluationVerdictLabels } from '../../../../shared/human-diagnostics';
 import Disclosure from '../../components/Disclosure.vue';
 import TablePagination from '../../components/TablePagination.vue';
 import CompletenessReport from '../../components/CompletenessReport.vue';
 import EvidenceViewer from '../../components/EvidenceViewer.vue';
 import LiveSiteComparisonDialog from '../../components/LiveSiteComparisonDialog.vue';
+import PromoteCheckRuleDialog from './PromoteCheckRuleDialog.vue';
 import { evidenceLabel, type EvidenceContext } from '../../lib/evidence-preview';
 import { useTaskSection } from './use-task-section';
 import { formatDate } from '../../api';
 import { scopeName } from './common';
 const props = defineProps<{ taskId: string; revision: string; siteId?: string }>();
 const selectedRound=ref<number|null>(null);
-const { data, loading, error, load } = useTaskSection<{ taskId: string | null; report: AutomationReport | null; rule: AutomationRule | null; evaluation?: {scope: 'homepage' | 'site'; createdAt: number}; historical?:boolean; selectedRound?:{brief?:string;progress?:OptimizationProgress}; optimization?:{rounds:{number:number;evaluationTaskId?:string;generationTaskId:string;status:keyof typeof taskStatusNames;scores:AutomationReport['scores']|null;summary:string}[]} }>(() => props.siteId ? `/automation/site-deliveries/${props.siteId}/reports/${encodeURIComponent(props.taskId)}` : `/automation/tasks/${props.taskId}/sections/report${selectedRound.value===null?'':'?round='+selectedRound.value}`, () => props.revision);
+const { data, loading, error, load } = useTaskSection<{ taskId: string | null; report: AutomationReport | null; rule: AutomationRule | null; evaluation?: {scope: 'homepage' | 'site'; scenario?: Scenario; siteUrl?: string; createdAt: number}; historical?:boolean; selectedRound?:{brief?:string;progress?:OptimizationProgress}; optimization?:{rounds:{number:number;evaluationTaskId?:string;generationTaskId:string;status:keyof typeof taskStatusNames;scores:AutomationReport['scores']|null;summary:string}[]} }>(() => props.siteId ? `/automation/site-deliveries/${props.siteId}/reports/${encodeURIComponent(props.taskId)}` : `/automation/tasks/${props.taskId}/sections/report${selectedRound.value===null?'':'?round='+selectedRound.value}`, () => props.revision);
 const names: Record<string, string> = { desktop: 'PC', mobile: '移动端', business: '业务' };
 const qualities = { passed: '达到标准', failed: '需要改进', unverified: '有待验证' };
 const severity = { critical: '严重', major: '主要', minor: '次要' };
 const issueOpen = ref<number | null>(null), allEvidence = ref(false), page = ref(1);
 const viewer = ref<InstanceType<typeof EvidenceViewer>>();
 const liveComparison = ref<InstanceType<typeof LiveSiteComparisonDialog>>();
+const promoteDialog = ref<InstanceType<typeof PromoteCheckRuleDialog>>();
 const images = computed(() => data.value?.report?.artifacts.filter(file => file.type === 'image/png') || []);
 const issueContexts = computed<EvidenceContext[]>(() => data.value?.report?.issues || []);
 const assessmentContexts = computed<EvidenceContext[]>(() => data.value?.report?.assessments.map(item => ({
@@ -40,6 +42,18 @@ function isImage(name: string) { return images.value.some(file => file.name === 
 function label(name: string, index: number) { const file = images.value.find(file => file.name === name); return file ? evidenceLabel(file, index) : '证据文件 ' + (index + 1); }
 function openGallery(name: string) {
   void viewer.value?.open([{ title: '全部截图', detail: '', evidence: images.value.map(file => file.name) }], 0, name, false);
+}
+function openPromoteRule(prefillIssue?: AutomationReport['issues'][number]) {
+  if (!data.value?.taskId || !data.value?.report) return;
+  void promoteDialog.value?.open({
+    reportTaskId: data.value.taskId,
+    rootTaskId: props.taskId,
+    scenario: data.value.evaluation?.scenario,
+    scope: data.value.evaluation?.scope,
+    siteUrl: data.value.evaluation?.siteUrl,
+    artifacts: data.value.report.artifacts,
+    ...(prefillIssue ? { prefillIssue } : {}),
+  });
 }
 const humanSummary = computed(() => (data.value?.report ? deriveEvaluationHumanSummary(data.value.report) : null));
 const verdictClass: Record<string, string> = {
@@ -111,10 +125,17 @@ const verdictClass: Record<string, string> = {
       </table></div></Disclosure>
     </section>
     <section class="panel settings-panel">
-      <div class="section-heading"><h2>问题清单</h2><span class="text-muted small-text">{{ data.report.issues.length }} 项</span></div>
+      <div class="section-heading">
+        <div class="report-issues-title">
+          <h2>问题清单</h2>
+          <span class="text-muted small-text">{{ data.report.issues.length }} 项</span>
+          <span v-if="data.report.checksSnapshot" class="status-badge">CHECKS {{ data.report.checksSnapshot.ruleCount }} 规 · #{{ data.report.checksSnapshot.hash.slice(0, 8) }}</span>
+        </div>
+        <button v-if="data.taskId" type="button" class="text-action" @click="openPromoteRule()"><ShieldCheck :size="14" />漏判/误判沉淀为规则</button>
+      </div>
       <p v-if="!data.report.issues.length" class="text-muted">没有已取证的问题，请同时查看覆盖范围。</p>
       <article v-for="(issue, index) in data.report.issues" :key="index" class="report-issue">
-        <div class="issue-heading"><span class="status-badge" :class="issue.severity === 'minor' ? 'pending' : 'failed'">{{ severity[issue.severity] }}</span><h3>{{ issue.title }}</h3></div><p class="task-prose">{{ issue.detail }}</p>
+        <div class="issue-heading"><span class="status-badge" :class="issue.severity === 'minor' ? 'pending' : 'failed'">{{ severity[issue.severity] }}</span><h3>{{ issue.title }}</h3><button v-if="data.taskId" type="button" class="text-action issue-promote-btn" @click="openPromoteRule(issue)"><ShieldCheck :size="13" />沉淀为 CHECKS 规则</button></div><p class="task-prose">{{ issue.detail }}</p>
         <button v-if="issue.evidence.length" class="text-action issue-evidence-toggle" :aria-expanded="issueOpen === index" @click="issueOpen = issueOpen === index ? null : index"><ChevronDown v-if="issueOpen === index" :size="16" /><ChevronRight v-else :size="16" />{{ issueOpen === index ? '收起证据' : '查看相关证据' }}</button>
         <div v-if="issueOpen === index" class="evidence-grid"><template v-for="(file, fileIndex) in issue.evidence" :key="file">
           <button v-if="isImage(file)" class="evidence-preview-card" :aria-label="'预览' + label(file, fileIndex)" @click="viewer?.open(issueContexts, index, file)"><img :src="artifact(file)" loading="lazy" :alt="issue.title + '，' + label(file, fileIndex)" /><span>{{ label(file, fileIndex) }}<Image :size="13" /></span></button>
@@ -126,6 +147,7 @@ const verdictClass: Record<string, string> = {
     <section class="panel settings-panel"><div class="section-heading"><button class="text-action" :aria-expanded="allEvidence" @click="allEvidence = !allEvidence"><ChevronDown v-if="allEvidence" :size="16" /><ChevronRight v-else :size="16" />全部截图（{{ images.length }}）</button><a class="text-action" :href="`/api/v1/automation/reports/${data.taskId}`" target="_blank" rel="noopener noreferrer">报告 JSON<ExternalLink :size="14" /></a></div><template v-if="allEvidence"><div class="evidence-grid"><button v-for="(file, index) in visibleImages" :key="file.id" class="evidence-preview-card" :aria-label="'预览' + label(file.name, (page - 1) * 12 + index)" @click="openGallery(file.name)"><img :src="artifact(file.name)" loading="lazy" :alt="label(file.name, (page - 1) * 12 + index)" /><span>{{ label(file.name, (page - 1) * 12 + index) }}<Image :size="13" /></span></button></div><TablePagination :page="page" :pages="pages" :total="images.length" @change="page = $event" /></template></section>
     <EvidenceViewer v-if="data.taskId" ref="viewer" :task-id="data.taskId" :artifacts="data.report.artifacts" />
     <LiveSiteComparisonDialog :key="'report-live-' + taskId" ref="liveComparison" :task-id="taskId" :default-report-id="data.taskId" />
+    <PromoteCheckRuleDialog ref="promoteDialog" />
   </template>
 </template>
 <style scoped>
@@ -137,4 +159,7 @@ const verdictClass: Record<string, string> = {
 .human-eval-block{background:var(--field);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .human-eval-block h3{margin:0 0 8px;font-size:13.5px;color:var(--ink)}
 .human-eval-note{margin:0}
+.report-issues-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
+.report-issues-title h2{margin:0}
+.issue-promote-btn{margin-left:auto;font-size:12px}
 </style>

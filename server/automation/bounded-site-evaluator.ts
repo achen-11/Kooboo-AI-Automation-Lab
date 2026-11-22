@@ -17,16 +17,19 @@ import {
   applyBoundedVerdictCaps,
   buildBoundedCheckerPrompt,
   defaultOutOfScope,
+  DEFAULT_ANTI_PATTERN_RULES,
   filterContradictoryHighlights,
   filterCrossBatchOutOfScopeLeaks,
+  type AntiPatternRule,
   type BoundedIssue,
 } from './bounded-checker-rules.js';
 import {
   aggregateMultiBatchAssessments,
-  boundedTurnIssueSchema,
   boundedTurnOutputSchema,
   captureFullPageScreenshots,
   collectBatchImages,
+  createBoundedTurnIssueSchema,
+  createBoundedTurnOutputSchema,
   extractBoundedMaterialNotes,
   formatRepairEvidenceGuide,
   hasCompleteRetainedCapture,
@@ -38,6 +41,7 @@ import {
   type BatchImage,
   type BoundedTurnOutput,
 } from './bounded-evaluator.js';
+import { hashChecksSnapshot, renderChecksMarkdown, toAntiPatternRules } from './checker-checks.js';
 import type { evaluationBrowser } from './browser.js';
 import type { codexClient } from './codex-client.js';
 import { checksSchema, validateCompleteness } from './completeness.js';
@@ -71,46 +75,52 @@ const IMPLEMENTATION_INDEX_KINDS = [
   'categories',
 ] as const;
 
-const siteBusinessOnlyOutputSchema = z
-  .object({
-    summary: z.string().min(1).max(4000),
-    assessments: z
-      .array(
-        z
-          .object({
-            criterionId: z.string().min(1),
-            viewport: z.literal('business'),
-            score: z.number().min(0).max(100).nullable(),
-            reason: z.string().min(1).max(1500),
-            evidence: z.array(z.string().min(1)).max(20),
-            passed: z.boolean().nullable(),
-          })
-          .strict(),
-      )
-      .max(20),
-    issues: z.array(boundedTurnIssueSchema).max(60),
-    coverage: z
-      .object({
-        verified: z.array(z.string()),
-        unverified: z.array(z.string()),
-        outOfScope: z.array(z.string()),
-      })
-      .strict(),
-    humanSummary: z
-      .object({
-        verdict: z.enum(['ready', 'needs-fixes', 'blocked', 'incomplete-check']),
-        headline: z.string().min(1).max(300),
-        highlights: z.array(z.string().min(1).max(300)).max(6),
-        topFixes: z.array(z.string().min(1).max(400)).max(6),
-        unverifiedNote: z.string().max(500).nullable(),
-      })
-      .strict(),
-  })
-  .strict();
+function createSiteBusinessOutputSchemas(allowedRuleIds: readonly string[]) {
+  const businessOnly = z
+    .object({
+      summary: z.string().min(1).max(4000),
+      assessments: z
+        .array(
+          z
+            .object({
+              criterionId: z.string().min(1),
+              viewport: z.literal('business'),
+              score: z.number().min(0).max(100).nullable(),
+              reason: z.string().min(1).max(1500),
+              evidence: z.array(z.string().min(1)).max(20),
+              passed: z.boolean().nullable(),
+            })
+            .strict(),
+        )
+        .max(20),
+      issues: z.array(createBoundedTurnIssueSchema(allowedRuleIds)).max(60),
+      coverage: z
+        .object({
+          verified: z.array(z.string()),
+          unverified: z.array(z.string()),
+          outOfScope: z.array(z.string()),
+        })
+        .strict(),
+      humanSummary: z
+        .object({
+          verdict: z.enum(['ready', 'needs-fixes', 'blocked', 'incomplete-check']),
+          headline: z.string().min(1).max(300),
+          highlights: z.array(z.string().min(1).max(300)).max(6),
+          topFixes: z.array(z.string().min(1).max(400)).max(6),
+          unverifiedNote: z.string().max(500).nullable(),
+        })
+        .strict(),
+    })
+    .strict();
+  return {
+    businessOnly,
+    manifestBusiness: businessOnly.extend({ completeness: checksSchema }),
+  };
+}
 
-const siteManifestBusinessOutputSchema = siteBusinessOnlyOutputSchema.extend({
-  completeness: checksSchema,
-});
+const { businessOnly: siteBusinessOnlyOutputSchema } = createSiteBusinessOutputSchemas(
+  DEFAULT_ANTI_PATTERN_RULES.map(r => r.id),
+);
 
 export interface CapturedSitePageImages {
   path: string;
@@ -712,6 +722,29 @@ export async function executeBoundedSiteEvaluation(params: {
     `有界全站评测已启动（${visualBatches.length} 个视觉批${visualBatches.length > 1 ? '并行' : ''}${needsBusinessBatch ? ' + 1 个业务/实现批' : ''} / ${pagePaths.length} 页 / ${totalBatchImages} 张实图；程序预检命中 ${allSignals.length} 项信号）`,
   );
 
+  const checksSnapshot = store.checks
+    ? store.checks.snapshot({ scenario: task.scenario, scope: task.scope })
+    : (() => {
+        const md = renderChecksMarkdown([]);
+        return { hash: hashChecksSnapshot(md, []), markdown: md, rules: [], calibrations: [] };
+      })();
+  const antiPatternRules: AntiPatternRule[] = store.checks
+    ? toAntiPatternRules(checksSnapshot.rules)
+    : [...DEFAULT_ANTI_PATTERN_RULES];
+  const allowedRuleIds = antiPatternRules.map(r => r.id);
+  const checksSnapshotMeta = {
+    hash: checksSnapshot.hash,
+    ruleIds: allowedRuleIds,
+    ruleCount: allowedRuleIds.length,
+  };
+  if (checksSnapshot.markdown) {
+    writeFileSync(resolve(work, 'CHECKS.md'), checksSnapshot.markdown, { mode: 0o600 });
+    store.event(
+      task.id,
+      `已加载并冻结 CHECKS.md 红线快照（${checksSnapshotMeta.ruleCount} 条启用规则，#${checksSnapshotMeta.hash.slice(0, 10)}）`,
+    );
+  }
+
   const materialNotes = extractBoundedMaterialNotes(work, input.files || []);
   const modelName = task.model?.name || 'deepseek-flash-1017';
   const threadOptions = {
@@ -733,9 +766,11 @@ export async function executeBoundedSiteEvaluation(params: {
     ...(needsBusinessBatch ? [{ kind: 'business' as const }] : []),
   ];
 
-  const visualOutputSchema = z.toJSONSchema(boundedTurnOutputSchema);
-  const businessOnlySchema = z.toJSONSchema(siteBusinessOnlyOutputSchema);
-  const manifestBusinessSchema = z.toJSONSchema(siteManifestBusinessOutputSchema);
+  const visualTurnSchema = createBoundedTurnOutputSchema(allowedRuleIds);
+  const businessSchemas = createSiteBusinessOutputSchemas(allowedRuleIds);
+  const visualOutputSchema = z.toJSONSchema(visualTurnSchema);
+  const businessOnlySchema = z.toJSONSchema(businessSchemas.businessOnly);
+  const manifestBusinessSchema = z.toJSONSchema(businessSchemas.manifestBusiness);
 
   const buildPageScreenshotIndexText = (): string => {
     const lines: string[] = [];
@@ -857,10 +892,11 @@ export async function executeBoundedSiteEvaluation(params: {
           }`,
           materialNotes,
           extraGuidance: templateResidualGuidance,
+          antiPatternRules,
         });
 
         const parseAndValidate = (rawText: string) => {
-          const parsed = boundedTurnOutputSchema.parse(JSON.parse(rawText));
+          const parsed = visualTurnSchema.parse(JSON.parse(rawText)) as BoundedTurnOutput;
           validateVisualSiteBatchOutput(
             parsed,
             batch.viewport,
@@ -877,6 +913,7 @@ export async function executeBoundedSiteEvaluation(params: {
           kind: 'visual',
           siteRevision: task.siteRevision || '',
           ruleHash: task.rule?.hash || '',
+          checksHash: checksSnapshotMeta.hash,
           viewport: batch.viewport,
           paths: batch.paths,
           images: batch.images.map(i => `${i.name}:${i.sha256}`),
@@ -941,6 +978,7 @@ export async function executeBoundedSiteEvaluation(params: {
           pageScopeNote: `全站业务/SEO/后台实现与完整度专项批次（覆盖路径：${pagePaths.join(', ')}；仅评价 business 指标与交付清单，视觉外观已由并行视觉批独立评分，请勿把视觉批负责的内容写入 outOfScope/unverified）`,
           materialNotes,
           extraGuidance: templateResidualGuidance,
+          antiPatternRules,
         }),
         ...(businessCriteria.length === 0
           ? ['', '重要：本批不含 business 评分指标，assessments 请严格返回空数组 []，仅需逐项输出下方 manifest 的 completeness、issues、coverage 与 humanSummary。']
@@ -955,10 +993,10 @@ export async function executeBoundedSiteEvaluation(params: {
 
       const expectedBusinessIds = businessCriteria.map(c => `${c.id}:business`);
       const schemaToUse = manifest ? manifestBusinessSchema : businessOnlySchema;
-      const schemaZod = manifest ? siteManifestBusinessOutputSchema : siteBusinessOnlyOutputSchema;
+      const schemaZod = manifest ? businessSchemas.manifestBusiness : businessSchemas.businessOnly;
 
       const parseAndValidateBusiness = (rawText: string) => {
-        const parsed = schemaZod.parse(JSON.parse(rawText));
+        const parsed = schemaZod.parse(JSON.parse(rawText)) as z.infer<typeof siteBusinessOnlyOutputSchema> & { completeness?: RequirementCheck[] };
         const actualIds = parsed.assessments.map(a => `${a.criterionId}:${a.viewport}`);
         if (
           actualIds.length !== expectedBusinessIds.length ||
@@ -993,7 +1031,7 @@ export async function executeBoundedSiteEvaluation(params: {
           }
         }
         if (manifest) {
-          const withCompleteness = parsed as z.infer<typeof siteManifestBusinessOutputSchema>;
+          const withCompleteness = parsed as z.infer<typeof siteBusinessOnlyOutputSchema> & { completeness: RequirementCheck[] };
           const adjustedChecks: RequirementCheck[] = withCompleteness.completeness.map(check => {
             const facts = recordFactsMap.get(check.id);
             if (!facts || facts.state === 'unverified') return check;
@@ -1036,6 +1074,7 @@ export async function executeBoundedSiteEvaluation(params: {
         kind: 'business',
         siteRevision: task.siteRevision || '',
         ruleHash: task.rule?.hash || '',
+        checksHash: checksSnapshotMeta.hash,
         manifestId: manifest?.id || '',
         manifestRevision: manifest?.revision || 0,
         implEvidence: implementationEntries.map(e => `${e.kind}:${e.evidence || e.error || ''}`),
@@ -1157,6 +1196,7 @@ export async function executeBoundedSiteEvaluation(params: {
     presetOutOfScope,
     humanSummary: mergedHumanInput,
     precheckSignals: allSignals,
+    antiPatternRules,
   });
 
   if (completenessReport) {
@@ -1219,6 +1259,7 @@ export async function executeBoundedSiteEvaluation(params: {
     scores: verdict.scores,
     quality: verdict.quality,
     artifacts: browser.artifacts,
+    ...(store.checks ? { checksSnapshot: checksSnapshotMeta } : {}),
     ...(completenessReport ? { completeness: completenessReport } : {}),
     humanSummary,
   };

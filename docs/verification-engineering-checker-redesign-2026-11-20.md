@@ -2,7 +2,7 @@
 
 - **创建日期**：2026-11-20
 - **最后更新**：2026-11-22
-- **状态**：已完成 **Phase 1 / 1.1 / 1.2 单页真机实测收敛**（`auto_f9579f55_e3b`：`29d7a053` 旧版 → `c9059ef6` Phase 1 → `33a45716` Phase 1.1 → `72689a9a` Phase 1.2）并完成 **Phase 2 / 2.1 多页全站（`materials/site` · `upgrade/site` · `migration/site`）实现、弹性修复及 `auto_7afb0300_537` 真实 3 页站点端到端实机验收**（`dc70a363`：`9 req / 6m29s / ¥0.3541 / 90·78 failed`）；待按需推进 **Phase 3（`CHECKS.md` 一错一规闭环与 `delivery` 真机对比）**
+- **状态**：已完成 **Phase 1 / 1.1 / 1.2 单页实测收敛**、**Phase 2 / 2.1 多页全站（`auto_7afb0300_537`）验收**、**Stage 2 优化规划有界化与 `upgrade` 联合实测（`auto_8900fb2c_b80`）**，以及 **Phase 3「`CHECKS.md` 一错一规闭环与自动回归测试集」完整落地与真机界面端到端验证**（支持从报告问题一键沉淀规则或追加豁免、每次有界评测冻结 `CHECKS.md` 快照并动态校验 `ruleId`、UI 与 CLI `checks-regression.ts` 双端回归通过）。待按需补充跨环境 `delivery` 真机对比及 `gpt-6.1-sol` 官方计价配置。
 - **方法论灵感**：`@distortgeekin` — *Verification Engineering: How to Build AI Agents You Never Have to Check*（2026-11-12）
 - **平台角色映射**：
   - **Maker**：Kooboo AI Chat（建站与修复）
@@ -282,6 +282,20 @@
 ---
 
 ## 七、探索与决策记录（Changelog）
+
+- **2026-11-22（Phase 3 落地：`CHECKS.md` 一错一规产品闭环与自动回归测试集）**：
+  - **版本化红线库、Markdown 渲染与确定性回归引擎**：
+    - 新增 [`shared/checker-checks.ts`](../shared/checker-checks.ts) 与 [`harness/evaluation/CHECKS.md`](../harness/evaluation/CHECKS.md)（注册进 [`server/automation/harness.ts`](../server/automation/harness.ts)，Harness 文档由 15 篇增至 16 篇）；在 [`shared/automation.ts`](../shared/automation.ts) 为 `AutomationReport` 增加可选 `checksSnapshot` 元数据。
+    - 新增 [`server/automation/checker-checks.ts`](../server/automation/checker-checks.ts)（挂载为 `store.checks` 于 [`store.ts`](../server/automation/store.ts)）：使用本地 SQLite `auto_checker_checks`、`auto_checker_check_revisions` 与 `auto_checker_calibrations` 持久化版本化规则、版本回退历史与标定反例（不反向改写源码里的 `harness/evaluation/CHECKS.md`），幂等初始化 4 条内置种子规则与 5 条基线标定用例，提供 `renderChecksMarkdown`、`hashChecksSnapshot` 与 `runChecksRegressionSuite`（诚实标注「0 Token 确定性 Prompt+封顶+磁盘 PNG 检验」，区分真实视觉重跑），并在 [`api.ts`](../server/automation/api.ts) 与 [`site-reports.ts`](../server/automation/site-reports.ts) 暴露全套 REST 接口（含报告接口补充 `evaluation.scenario / siteUrl`）。
+  - **动态注入评测主链路（单页 + 多页全站 + 动态 `ruleId` Schema）**：
+    - 扩展 [`bounded-checker-rules.ts`](../server/automation/bounded-checker-rules.ts) 支持按 `scenario × scope` 传入动态 `antiPatternRules`（包含 `Critical` 与 `Major` 自定义封顶）。
+    - 在 [`bounded-evaluator.ts`](../server/automation/bounded-evaluator.ts) 与 [`bounded-site-evaluator.ts`](../server/automation/bounded-site-evaluator.ts) 落地每次评测冻结并写入工作目录 `CHECKS.md`、动态生成 `createBoundedTurnIssueSchema(allowedRuleIds)` 让新增 `ruleId` 通过 Zod/JSON Schema 校验、将 `checksSnapshot.hash` 纳入批次缓存键（变更即自动失效）并在报告写入 `report.checksSnapshot`。
+  - **人工复核一键沉淀 UI & 回归管理台**：
+    - 新增 [`PromoteCheckRuleDialog.vue`](../frontend/src/views/automation/PromoteCheckRuleDialog.vue) 并接入 [`TaskReport.vue`](../frontend/src/views/automation/TaskReport.vue)（「漏判/误判沉淀为规则」总入口 + 每条问题旁「沉淀为 CHECKS 规则」快捷入口），支持「新增红线规则（漏判 / 虚高）」与「追加规则豁免（误判纠偏）」双模式、自动建议编号及绑定本次报告真实 PNG 缩略图。
+    - 新增 [`CheckerChecksManager.vue`](../frontend/src/views/automation/CheckerChecksManager.vue) 并接入 [`RulesView.vue`](../frontend/src/views/automation/RulesView.vue)（「红线规则（CHECKS.md）」分页），支持规则启停/编辑/版本历史恢复、一键复制 `CHECKS.md` 快照与一键运行回归验证；新增 CLI 脚本 [`scripts/checks-regression.ts`](../scripts/checks-regression.ts) 支持 `--deterministic` 与 `--live --case <id>`（读取真实磁盘 PNG 调模型复验）。
+  - **全流程实机浏览器验证 & 边界修补**：
+    - 在 `http://127.0.0.1:4180` 通过真实浏览器完整走通：初始 4 规 / 5 标定回归 `5/5` 通过 → 在 `081bede6` 报告页为 `R-VISUAL-02` 追加豁免条款升至 `rev 2`（生成 `should-pass` 用例 `cal-583026cf`）→ 新增 `R-CONTENT-02`（Major `72/78`）并绑定真实截图生成 `cal-51b10ff2` → 验证启停/历史版本弹窗/`#/harness` 清单展示/最终 **`7 / 7` 确定性回归通过**；同时通过该实测发现了从 `Minor` 问题预填 `should-catch` 标定时错误生成 `failed / maxScore=78` 预期的边界缺陷，已在 [`checker-checks.ts`](../server/automation/checker-checks.ts)（`isBlockingRule` 门控）修复并补充 [`tests-node/checker-checks.test.ts`](../tests-node/checker-checks.test.ts) 单测。
+    - 最终本地与真机验证：`npm run check`（0）、`npm run build`（0）、7 份核心回归测试（含新增 [`checker-checks.test.ts`](../tests-node/checker-checks.test.ts) 与更新后的 [`harness-and-diagnostics.test.ts`](../tests-node/harness-and-diagnostics.test.ts) 共 **`77 passed, 0 failed, 0 skipped`**）、以及 CLI `node --import tsx scripts/checks-regression.ts --deterministic` 对本地 `.data/database.sqlite`（6 启用规则、7 标定用例含 2 条真图 `evidence=verified`）实测 **`7/7 通过`**。
 
 - **2026-11-22（Stage 2 优化规划有界化 & `upgrade`「模板+原站+资料」全流程真机一次达标）**：
   - **Stage 2 工程重构（解决 OVO 复盘暴露的 3 项瓶颈）**：

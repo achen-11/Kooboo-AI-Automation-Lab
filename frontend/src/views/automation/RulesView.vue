@@ -3,12 +3,14 @@ import { ChevronRight, Plus, Trash2, Save, Pencil, History, Check, LoaderCircle 
 import { computed, onMounted, onUnmounted, ref } from 'vue';
 import BaseSelect from '../../components/BaseSelect.vue';
 import TemplateChecklistManager from './TemplateChecklistManager.vue';
+import CheckerChecksManager from './CheckerChecksManager.vue';
 import { api, message, formatDate } from '../../api';
 import { notify } from '../../lib/notifications';
 import { activeScenarios, scenarios, type AutomationRule } from '../../../../shared/automation';
 
-const section = ref<'template-checklists' | 'scoring-rules'>('scoring-rules');
+const section = ref<'template-checklists' | 'scoring-rules' | 'checker-checks'>('scoring-rules');
 const checklistManager = ref<InstanceType<typeof TemplateChecklistManager>>();
+const checksManager = ref<InstanceType<typeof CheckerChecksManager>>();
 
 const rules = ref<AutomationRule[]>([]);
 const selected = ref('');
@@ -26,7 +28,7 @@ const form = ref<Pick<AutomationRule, 'name' | 'kind' | 'sop' | 'references' | '
 });
 const saved = ref('');
 const legacyDirty = computed(() => editing.value && JSON.stringify(form.value) !== saved.value);
-const dirty = computed(() => Boolean(legacyDirty.value || checklistManager.value?.dirty));
+const dirty = computed(() => Boolean(legacyDirty.value || checklistManager.value?.dirty || checksManager.value?.dirty));
 defineExpose({ dirty });
 
 const total = computed(() => Math.round(form.value.criteria.reduce((sum, c) => sum + (Number(c.weight) || 0), 0) * 100) / 100);
@@ -163,6 +165,15 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload));
     <button
       type="button"
       role="tab"
+      :aria-selected="section === 'checker-checks'"
+      :class="{ selected: section === 'checker-checks' }"
+      @click="section = 'checker-checks'"
+    >
+      红线规则（CHECKS.md）
+    </button>
+    <button
+      type="button"
+      role="tab"
       :aria-selected="section === 'template-checklists'"
       :class="{ selected: section === 'template-checklists' }"
       @click="section = 'template-checklists'"
@@ -171,6 +182,7 @@ onUnmounted(() => window.removeEventListener('beforeunload', beforeUnload));
     </button>
   </div>
 
+  <CheckerChecksManager v-show="section === 'checker-checks'" ref="checksManager" />
   <TemplateChecklistManager v-show="section === 'template-checklists'" ref="checklistManager" />
 
   <div v-show="section === 'scoring-rules'">

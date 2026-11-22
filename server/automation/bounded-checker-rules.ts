@@ -3,7 +3,8 @@ import type { EvaluationHumanSummary, EvaluationVerdict } from '../../shared/hum
 
 export const BOUNDED_CHECKER_RULES_VERSION = 'bounded-v1';
 
-export type AntiPatternRuleId = 'R-VISUAL-01' | 'R-VISUAL-02' | 'R-LAYOUT-03' | 'R-COVER-04';
+export type BuiltinAntiPatternRuleId = 'R-VISUAL-01' | 'R-VISUAL-02' | 'R-LAYOUT-03' | 'R-COVER-04';
+export type AntiPatternRuleId = BuiltinAntiPatternRuleId | (string & {});
 
 export interface AntiPatternRule {
   id: AntiPatternRuleId;
@@ -202,6 +203,7 @@ export interface BoundedCheckerPromptInput {
   pageScopeNote?: string;
   materialNotes?: string;
   extraGuidance?: string;
+  antiPatternRules?: readonly AntiPatternRule[];
 }
 
 export function buildBoundedCheckerPrompt(input: BoundedCheckerPromptInput): string {
@@ -218,12 +220,17 @@ export function buildBoundedCheckerPrompt(input: BoundedCheckerPromptInput): str
     .filter(Boolean)
     .join('\n');
 
-  const ruleLines = DEFAULT_ANTI_PATTERN_RULES.map(
-    r =>
-      `- ${r.id} [${r.severity.toUpperCase()}] ${r.title}：${r.trigger}${
-        r.exemptions.length ? `（豁免：${r.exemptions.join('、')}）` : ''
-      } → ${r.action}`,
-  ).join('\n');
+  const activeRules = input.antiPatternRules ?? DEFAULT_ANTI_PATTERN_RULES;
+  const ruleLines = activeRules.length
+    ? activeRules
+        .map(
+          r =>
+            `- ${r.id} [${r.severity.toUpperCase()}] ${r.title}：${r.trigger}${
+              r.exemptions.length ? `（豁免：${r.exemptions.join('、')}）` : ''
+            } → ${r.action}`,
+        )
+        .join('\n')
+    : '- （当前任务范围未启用额外红线规则，仍执行通用 Major/Critical 与默认评分边界）';
 
   const outOfScopeLines = input.presetOutOfScope.map(item => `- ${item}`).join('\n');
   const hasAttachedReference =
@@ -345,6 +352,7 @@ export interface BoundedVerdictInput {
   presetOutOfScope?: string[];
   humanSummary?: EvaluationHumanSummary;
   precheckSignals?: BoundedPrecheckSignalRef[];
+  antiPatternRules?: readonly AntiPatternRule[];
 }
 
 export interface BoundedVerdictResult {
@@ -468,6 +476,7 @@ function isPresetOutOfScopeDuplicate(
 
 export function applyBoundedVerdictCaps(input: BoundedVerdictInput): BoundedVerdictResult {
   const criteria = input.criteria;
+  const activeRules = input.antiPatternRules ?? DEFAULT_ANTI_PATTERN_RULES;
   const assessments: Assessment[] = input.assessments.map(a => ({ ...a, evidence: [...a.evidence] }));
   const rawScores = computeViewportScores(assessments, criteria);
   const availableViewports = rawScores.map(s => s.viewport);
@@ -479,16 +488,24 @@ export function applyBoundedVerdictCaps(input: BoundedVerdictInput): BoundedVerd
     const viewports = affectedVisualViewports(issue, availableViewports);
 
     if (issue.severity === 'critical') {
+      const matchedRule = issue.ruleId
+        ? activeRules.find(r => r.id === issue.ruleId)
+        : undefined;
+      const critCriterionCap =
+        matchedRule?.criterionCap != null ? Math.min(55, matchedRule.criterionCap) : 55;
+      const critViewportCap =
+        matchedRule?.viewportCap != null ? Math.min(55, matchedRule.viewportCap) : 55;
+      const rulePrefix = matchedRule ? `${matchedRule.id} ` : '';
       for (const vp of viewports) {
         const prev = viewportCapMap.get(vp);
-        if (prev === undefined || 55 < prev) viewportCapMap.set(vp, 55);
+        if (prev === undefined || critViewportCap < prev) viewportCapMap.set(vp, critViewportCap);
       }
       if (issue.criterionId) {
         for (const a of assessments) {
           if (a.criterionId === issue.criterionId && (!viewports.length || viewports.includes(a.viewport as 'desktop' | 'mobile'))) {
-            if (a.score !== null && a.score > 55) {
-              capNotes.push(`${a.criterionId}(${a.viewport}) 因 Critical 缺陷「${issue.title}」由 ${a.score} 封顶至 55`);
-              a.score = 55;
+            if (a.score !== null && a.score > critCriterionCap) {
+              capNotes.push(`${a.criterionId}(${a.viewport}) 因 ${rulePrefix}Critical 缺陷「${issue.title}」由 ${a.score} 封顶至 ${critCriterionCap}`);
+              a.score = critCriterionCap;
             }
             a.passed = false;
           }
@@ -500,10 +517,10 @@ export function applyBoundedVerdictCaps(input: BoundedVerdictInput): BoundedVerd
     // Major issues: use rule-specific caps when defined, otherwise generic major caps (72 / 78)
     const isSvgRule = isVisualSvgPlaceholderIssue(issue);
     const matchedRule = issue.ruleId
-      ? DEFAULT_ANTI_PATTERN_RULES.find(r => r.id === issue.ruleId)
+      ? activeRules.find(r => r.id === issue.ruleId)
       : undefined;
-    const criterionCap = isSvgRule ? 70 : (matchedRule?.criterionCap ?? 72);
-    const vpCap = isSvgRule ? 75 : (matchedRule?.viewportCap ?? 78);
+    const criterionCap = matchedRule?.criterionCap ?? (isSvgRule ? 70 : 72);
+    const vpCap = matchedRule?.viewportCap ?? (isSvgRule ? 75 : 78);
     const targetCriterionId =
       issue.criterionId ||
       (isSvgRule ? (/hero|首屏/i.test(`${issue.title} ${issue.detail}`) ? 'hero' : 'sections') : null);
@@ -516,7 +533,7 @@ export function applyBoundedVerdictCaps(input: BoundedVerdictInput): BoundedVerd
         ) {
           if (a.score !== null && a.score > criterionCap) {
             capNotes.push(
-              `${a.criterionId}(${a.viewport}) 因 ${isSvgRule ? 'R-VISUAL-01 ' : ''}Major 缺陷「${issue.title}」由 ${a.score} 封顶至 ${criterionCap}`,
+              `${a.criterionId}(${a.viewport}) 因 ${matchedRule ? `${matchedRule.id} ` : isSvgRule ? 'R-VISUAL-01 ' : ''}Major 缺陷「${issue.title}」由 ${a.score} 封顶至 ${criterionCap}`,
             );
             a.score = criterionCap;
           }

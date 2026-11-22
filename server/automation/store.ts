@@ -16,6 +16,7 @@ import { TimingLedger } from './timing.js';
 import { EvaluationExecutions } from './evaluation-execution.js';
 import { ResourceFolders } from './resource-folders.js';
 import { Dispositions } from './dispositions.js';
+import { CheckerChecksStore } from './checker-checks.js';
 import { retainAccountReservations } from './request-budget.js';
 import { generationSiteNames, siteNamingError } from '../../shared/kooboo-domains.js';
 
@@ -33,12 +34,14 @@ export class AutomationStore {
   readonly usage:UsageLedger;
   readonly timing:TimingLedger;
   readonly evaluations:EvaluationExecutions;
+  readonly checks:CheckerChecksStore;
   constructor(readonly db: Database,private redact:(value:string)=>string=value=>value) {
     this.resourceFolders=new ResourceFolders(db);
     this.dispositions=new Dispositions(db,redact);
     this.usage=new UsageLedger(db,id => this.header(id)?.optimizationRound || 0);
     this.timing=new TimingLedger(db,id => this.header(id)?.optimizationRound || 0);
     this.evaluations=new EvaluationExecutions(db);
+    this.checks=new CheckerChecksStore(db);
     db.exec(`CREATE TABLE IF NOT EXISTS auto_resources(id TEXT PRIMARY KEY, external_source TEXT, external_id TEXT, json TEXT NOT NULL);
       CREATE UNIQUE INDEX IF NOT EXISTS auto_external ON auto_resources(external_source,external_id) WHERE external_source<>'' AND external_id<>'';
       CREATE TABLE IF NOT EXISTS auto_versions(id TEXT PRIMARY KEY, resource_id TEXT NOT NULL, json TEXT NOT NULL);

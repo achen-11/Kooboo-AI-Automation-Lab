@@ -114,6 +114,15 @@ const HARNESS_DOCS: HarnessDocumentSummary[] = [
     runtimeUsage: '每次运行评测时自动复制到 `automation-runs/<id>/references/human-summary.md`。',
   },
   {
+    path: 'evaluation/CHECKS.md',
+    title: '反模式红线与一错一规检查表（CHECKS.md）',
+    category: 'evaluation',
+    categoryLabel: harnessCategoryLabels.evaluation,
+    role: 'reference',
+    summary: '记录 `R-VISUAL-01` 等核心反模式种子红线、豁免条款与宿主硬封顶口径，并说明数据库运行时扩展机制。',
+    runtimeUsage: '基线规则种子保留在此；运行时由 SQLite `CheckerChecksStore` 合并人工复核新增规则，每次有界评测向 `automation-runs/<id>/CHECKS.md` 写入当次冻结快照。',
+  },
+  {
     path: 'optimization/SKILL.md',
     title: '持续优化决策 SOP',
     category: 'optimization',
@@ -222,7 +231,7 @@ const HARNESS_STAGES: HarnessStageMeta[] = [
     actor: '本地 Codex 评测员 + 真实 Chromium',
     summary: '采双端截图与后台只读状态，严格按完整度打分并产出「一眼看懂」白话总结。',
     primaryDoc: 'evaluation/SKILL.md',
-    referenceDocs: ['evaluation/references/human-summary.md'],
+    referenceDocs: ['evaluation/references/human-summary.md', 'evaluation/CHECKS.md'],
     editableKeys: [],
   },
   {

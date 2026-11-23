@@ -34,7 +34,7 @@ before(async () => {
         builder.onResolve({ filter: /\.vue$/ }, args => ({ path: args.path, namespace: 'site-delivery-test' }));
         builder.onLoad({ filter: /.*/, namespace: 'site-delivery-test' }, args => {
           if (args.path === 'lucide') {
-            const icons = ['ArrowUpRight', 'Check', 'ExternalLink', 'Search', 'RefreshCw', 'Play', 'Clock3', 'LoaderCircle', 'RotateCcw', 'Trash2', 'X'];
+            const icons = ['ArrowUpRight', 'Check', 'Columns2', 'Copy', 'ExternalLink', 'Search', 'RefreshCw', 'Play', 'Clock3', 'LoaderCircle', 'RotateCcw', 'Trash2', 'X'];
             return {
               contents: `import { h } from 'vue'; const Icon = () => h('svg'); export { ${icons.map(i => `Icon as ${i}`).join(', ')} };`,
               loader: 'js',
@@ -487,6 +487,102 @@ test('SiteDeliveryList prioritizes DE delivery URL alongside source HK URL even 
     assert.equal(statusLinks[0].props.href, '#/tasks/eval-verifying?tab=delivery');
     assert.ok(text(statusLinks[0]).includes('交付核验中'));
   } finally {
+    f.close();
+  }
+});
+
+test('SiteDeliveryList quick views sync filters, surface row reason, support single-row safe resume, and copy site address', async () => {
+  const rowTemplate = (id, name, extra = {}) => ({
+    id,
+    generatedSiteId: `site-${id}`,
+    resourceId: `res-${id}`,
+    resourceName: name,
+    siteUrl: `https://${id}.kooboo.io/`,
+    environmentId: 'env-1',
+    scenario: 'site-template',
+    scope: 'site',
+    detailTaskId: `task-${id}`,
+    state: 'ready',
+    reason: `${name} 已完成`,
+    targetScore: 85,
+    report: null,
+    usage: { priced: true, knownCny: 1.25, missing: 0, requests: 2, input: 100, output: 50, cached: 0 },
+    stages: [],
+    taskCount: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    ...extra,
+  });
+  let copied = '';
+  const prevClipboard = Object.getOwnPropertyDescriptor(globalThis.navigator || {}, 'clipboard');
+  if (typeof globalThis.navigator === 'undefined') {
+    Object.defineProperty(globalThis, 'navigator', { value: {}, configurable: true });
+  }
+  Object.defineProperty(globalThis.navigator, 'clipboard', {
+    value: { writeText: async textVal => { copied = textVal; } },
+    configurable: true,
+  });
+
+  const f = await fixture((path, options) => {
+    if (options.method === 'POST') return { ok: true };
+    const res = pageResponse(path);
+    res.items = [
+      rowTemplate('alpha', 'Alpha Blocked', {
+        state: 'attention',
+        reason: '缺少官网产品图片素材，等待补充。',
+        recovery: { action: 'resume', taskId: 'task-alpha' },
+      }),
+      rowTemplate('beta', 'Beta Unconfirmed', {
+        state: 'attention',
+        reason: '原浏览器会话尚未确认停止。',
+        recovery: { action: 'confirm-stopped', taskId: 'task-beta' },
+      }),
+      rowTemplate('gamma', 'Gamma Ready', {
+        state: 'ready',
+        reason: '已完成跨环境交付并通过核验。',
+        delivery: { taskId: 'eval-gamma', status: 'completed', targetUrl: 'https://gamma.kooboo.de/' },
+      }),
+    ];
+    res.total = 3;
+    return res;
+  });
+
+  try {
+    // Reason text is rendered directly in the row without needing hover
+    assert.ok(f.text().includes('缺少官网产品图片素材，等待补充。'));
+
+    // Single-row resume button is shown for resumable row (alpha), NOT for confirm-stopped (beta)
+    const resumeButtons = f.nodes(n => n.tag === 'button' && text(n) === '恢复');
+    assert.equal(resumeButtons.length, 1);
+    const compareButtons = f.nodes(n => n.tag === 'button' && text(n) === '对比');
+    assert.equal(compareButtons.length, 2);
+
+    await resumeButtons[0].props.onClick();
+    await settle();
+    const posts = f.calls.filter(c => c.options?.method === 'POST');
+    assert.equal(posts.length, 1);
+    assert.equal(posts[0].path, '/automation/tasks/task-alpha/resume');
+    assert.ok(!posts[0].options.body, 'single-row resume never sends force: true');
+    assert.deepEqual(f.notified.at(-1), { type: 'success', text: '已提交恢复 Alpha Blocked' });
+
+    // Copy address button uses delivery URL first (or primary site URL) and notifies
+    const copyBtns = f.nodes(n => n.tag === 'button' && n.props['aria-label'] === '复制站点地址');
+    assert.equal(copyBtns.length, 3);
+    await copyBtns[2].props.onClick();
+    await settle();
+    assert.equal(copied, 'https://gamma.kooboo.de/');
+    assert.deepEqual(f.notified.at(-1), { type: 'success', text: '已复制站点地址' });
+
+    // Quick view switch updates state and reloads
+    const quickReady = f.button('可交付');
+    assert.ok(quickReady);
+    quickReady.props.onClick();
+    await settle();
+    const lastParams = new URL('http://local' + f.calls.at(-1).path).searchParams;
+    assert.equal(lastParams.get('state'), 'ready');
+    assert.equal(lastParams.get('disposition'), 'active');
+  } finally {
+    if (prevClipboard) Object.defineProperty(globalThis.navigator, 'clipboard', prevClipboard);
     f.close();
   }
 });

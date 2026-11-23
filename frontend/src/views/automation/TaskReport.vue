@@ -13,9 +13,23 @@ import { evidenceLabel, type EvidenceContext } from '../../lib/evidence-preview'
 import { useTaskSection } from './use-task-section';
 import { formatDate } from '../../api';
 import { scopeName } from './common';
+
 const props = defineProps<{ taskId: string; revision: string; siteId?: string }>();
-const selectedRound=ref<number|null>(null);
-const { data, loading, error, load } = useTaskSection<{ taskId: string | null; report: AutomationReport | null; rule: AutomationRule | null; evaluation?: {scope: 'homepage' | 'site'; scenario?: Scenario; siteUrl?: string; createdAt: number}; historical?:boolean; selectedRound?:{brief?:string;progress?:OptimizationProgress}; optimization?:{rounds:{number:number;evaluationTaskId?:string;generationTaskId:string;status:keyof typeof taskStatusNames;scores:AutomationReport['scores']|null;summary:string}[]} }>(() => props.siteId ? `/automation/site-deliveries/${props.siteId}/reports/${encodeURIComponent(props.taskId)}` : `/automation/tasks/${props.taskId}/sections/report${selectedRound.value===null?'':'?round='+selectedRound.value}`, () => props.revision);
+const selectedRound = ref<number | null>(null);
+const { data, loading, error, load } = useTaskSection<{
+  taskId: string | null;
+  report: AutomationReport | null;
+  rule: AutomationRule | null;
+  evaluation?: { scope: 'homepage' | 'site'; scenario?: Scenario; siteUrl?: string; createdAt: number };
+  historical?: boolean;
+  selectedRound?: { brief?: string; progress?: OptimizationProgress };
+  optimization?: { rounds: { number: number; evaluationTaskId?: string; generationTaskId: string; status: keyof typeof taskStatusNames; scores: AutomationReport['scores'] | null; summary: string }[] };
+}>(
+  () => props.siteId
+    ? `/automation/site-deliveries/${props.siteId}/reports/${encodeURIComponent(props.taskId)}`
+    : `/automation/tasks/${props.taskId}/sections/report${selectedRound.value === null ? '' : '?round=' + selectedRound.value}`,
+  () => props.revision,
+);
 const names: Record<string, string> = { desktop: 'PC', mobile: '移动端', business: '业务' };
 const qualities = { passed: '达到标准', failed: '需要改进', unverified: '有待验证' };
 const severity = { critical: '严重', major: '主要', minor: '次要' };
@@ -27,11 +41,13 @@ const images = computed(() => data.value?.report?.artifacts.filter(file => file.
 const issueContexts = computed<EvidenceContext[]>(() => data.value?.report?.issues || []);
 const assessmentContexts = computed<EvidenceContext[]>(() => data.value?.report?.assessments.map(item => ({
   title: (data.value?.rule?.criteria.find(criterion => criterion.id === item.criterionId)?.label || item.criterionId) + ' · ' + names[item.viewport],
-  detail: item.reason, evidence: item.evidence,
+  detail: item.reason,
+  evidence: item.evidence,
 })) || []);
 const recheckContexts = computed<EvidenceContext[]>(() => data.value?.report?.rechecks?.map(item => ({
   title: data.value?.report?.review?.targets.find(target => target.id === item.id)?.title || item.id,
-  detail: item.reason, evidence: item.evidence,
+  detail: item.reason,
+  evidence: item.evidence,
 })) || []);
 const recheckStatus = { resolved: '已解决', remaining: '仍存在', unverified: '未验证' };
 const inheritedPathCount = computed(() => data.value?.report?.review?.inheritedPagePaths?.reduce((total, item) => total + item.paths.length, 0) || 0);
@@ -63,44 +79,46 @@ const verdictClass: Record<string, string> = {
   'incomplete-check': 'pending',
 };
 </script>
+
 <template>
   <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="load">重试</button></p>
   <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="17" />正在加载评测结果…</p>
-  <div v-if="data?.evaluation" class="section-heading"><h2>{{ scopeName(data.evaluation.scope) }}评测</h2><span class="text-muted small-text">{{ formatDate(data.evaluation.createdAt) }}</span></div>
-  <section v-if="data?.optimization" class="panel settings-panel"><div class="section-heading"><h2>优化轮次</h2><button class="text-action" :disabled="selectedRound===null" @click="selectedRound=null">当前版本</button></div><div class="table-scroll"><table class="task-table"><thead><tr><th>轮次</th><th>状态</th><th>PC / 移动端</th><th>主要变化</th><th /></tr></thead><tbody><tr v-for="round in data.optimization.rounds" :key="round.number"><td>{{round.number?'修复 '+round.number:'初评'}}</td><td>{{taskStatusNames[round.status]}}</td><td>{{round.scores?round.scores.map(s=>(names[s.viewport]||s.viewport)+' '+(s.value??'未验证')).join(' / '):'待复评'}}</td><td class="wrapping-cell">{{round.summary}}</td><td><button class="text-action" :disabled="loading" @click="selectedRound=round.number">查看本轮</button></td></tr></tbody></table></div></section>
   <p v-if="data?.historical" class="alert info">正在查看历史报告，不代表当前站点状态。</p>
-  <section v-if="data?.selectedRound?.brief||data?.selectedRound?.progress" class="panel settings-panel"><Disclosure v-if="data.selectedRound.brief" label="本轮修复委托"><pre class="task-technical">{{data.selectedRound.brief}}</pre></Disclosure><template v-if="data.selectedRound.progress"><p class="task-prose">{{data.selectedRound.progress.reason}}</p><Disclosure v-for="group in ([['resolved','已解决'],['remaining','仍存在'],['unverified','未验证'],['introduced','新增问题']] as const)" :key="group[0]" :label="group[1]"><ul class="task-text-list"><li v-for="text in data.selectedRound.progress[group[0]]" :key="text">{{text}}</li></ul></Disclosure></template></section>
   <section v-if="data && !data.report" class="panel empty-state"><FileText :size="30" /><h2>尚未生成有效报告</h2><p>任务仍在执行或尚未发起评测时，不显示零分。</p></section>
   <template v-if="data?.report">
-    <section v-if="data.report.review" class="panel settings-panel">
-      <div class="section-heading"><h2>本轮复评</h2><a class="text-action" :href="`/api/v1/automation/reports/${data.report.review.baselineTaskId}`" target="_blank" rel="noopener noreferrer">基线报告 JSON<ExternalLink :size="14" /></a></div>
-      <p>复验 {{ data.report.review.targets.length }} 项原问题；本轮独立审查 {{ data.report.review.reviewedAssessments.length }} 项评分、{{ data.report.review.reviewedRequirements.length }} 项交付要求。</p>
-      <p class="text-muted">程序核对当前证据一致后，继承 {{ data.report.review.inheritedAssessments.length }} 项评分、{{ data.report.review.inheritedRequirements.length }} 项交付判断<span v-if="inheritedPathCount">及 {{ inheritedPathCount }} 条静态路径的判断</span>。</p>
-      <Disclosure v-if="data.report.rechecks?.length" label="原问题复验明细"><div class="table-scroll"><table class="task-table">
-        <thead><tr><th>原问题</th><th>结论</th><th>依据</th></tr></thead>
-        <tbody><tr v-for="(item, index) in data.report.rechecks" :key="item.id"><td class="wrapping-cell">{{ recheckContexts[index]?.title }}</td><td>{{ recheckStatus[item.status] }}</td><td class="wrapping-cell">{{ item.reason }}<div class="evidence-links"><template v-for="(file, fileIndex) in item.evidence" :key="file"><button v-if="isImage(file)" class="text-action" @click="viewer?.open(recheckContexts, index, file)"><Image :size="13" />{{ label(file, fileIndex) }}</button><a v-else :href="artifact(file)" download>{{ label(file, fileIndex) }}<Download :size="13" /></a></template></div></td></tr></tbody>
-      </table></div></Disclosure>
-    </section>
-    <CompletenessReport v-if="data.report.completeness && data.taskId" :key="data.taskId" :task-id="data.taskId" />
-    <section v-if="data.report.collectionTarget" class="panel settings-panel">
-      <div class="section-heading"><h2>资料 → 站点核验</h2><span>{{ {complete:'通过',incomplete:'有缺失',unverified:'未验证',pending:'取证中'}[data.report.collectionTarget.state] }}</span></div>
-      <p>已核对 {{ data.report.collectionTarget.checkedPages }} / {{ data.report.collectionTarget.expectedPages }} 个来源路径。</p>
-      <Disclosure label="程序检查明细"><ul class="task-text-list"><li v-for="check in data.report.collectionTarget.checks" :key="check.id">{{ check.sourcePath || check.requirementId || check.id }}：{{ {verified:'通过',missing:'有缺失',unverified:'未验证'}[check.status] }} · {{ check.reason }}</li></ul></Disclosure>
-    </section>
-    <section v-if="humanSummary" class="panel settings-panel human-eval-card">
+    <section class="panel settings-panel report-overview-card">
       <div class="section-heading">
         <div class="human-eval-title">
-          <h2>一眼看懂本次评测</h2>
-          <span class="status-badge" :class="verdictClass[humanSummary.verdict]">{{ evaluationVerdictLabels[humanSummary.verdict] }}</span>
+          <h2 :class="data.report.quality === 'passed' ? 'success-text' : data.report.quality === 'failed' ? 'warning-text' : ''">
+            {{ qualities[data.report.quality] }}
+          </h2>
+          <span v-if="humanSummary" class="status-badge" :class="verdictClass[humanSummary.verdict]">
+            {{ evaluationVerdictLabels[humanSummary.verdict] }}
+          </span>
+          <span v-if="data.evaluation" class="text-muted small-text">
+            {{ scopeName(data.evaluation.scope) }} · {{ formatDate(data.evaluation.createdAt) }}
+          </span>
         </div>
-        <button type="button" class="text-action" @click="liveComparison?.open(data.taskId)"><Columns2 :size="14" />实时站点对比</button>
+        <button type="button" class="text-action" @click="liveComparison?.open(data.taskId)">
+          <Columns2 :size="14" />实时站点对比
+        </button>
       </div>
-      <p class="human-eval-headline">{{ humanSummary.headline }}</p>
-      <div class="human-eval-cols">
+
+      <div class="report-compact-scores">
+        <div v-for="item in data.report.scores" :key="item.viewport" class="report-compact-score">
+          <span>{{ names[item.viewport] || item.viewport }}</span>
+          <strong>{{ item.value ?? '—' }}</strong>
+        </div>
+        <p v-if="humanSummary" class="human-eval-headline">{{ humanSummary.headline }}</p>
+      </div>
+
+      <p v-if="data.report.summary" class="report-summary-compact">{{ data.report.summary }}</p>
+
+      <div v-if="humanSummary" class="human-eval-cols">
         <div class="human-eval-block">
           <h3>做得好的地方</h3>
           <ul v-if="humanSummary.highlights.length" class="task-text-list"><li v-for="item in humanSummary.highlights" :key="item">{{ item }}</li></ul>
-          <p v-else class="text-muted small-text">暂无突出亮点记录，请参考下方指标评分。</p>
+          <p v-else class="text-muted small-text">暂无突出亮点记录，请参考具体评分。</p>
         </div>
         <div class="human-eval-block">
           <h3>建议优先调整</h3>
@@ -108,58 +126,224 @@ const verdictClass: Record<string, string> = {
           <p v-else class="text-muted small-text">未发现必须修复的阻塞问题。</p>
         </div>
       </div>
-      <p v-if="humanSummary.unverifiedNote" class="alert info human-eval-note">{{ humanSummary.unverifiedNote }}</p>
+
+      <p v-if="humanSummary?.unverifiedNote" class="alert info human-eval-note">{{ humanSummary.unverifiedNote }}</p>
+      <p v-if="data.report.collectionTarget && data.report.collectionTarget.state !== 'complete'" class="alert info human-eval-note">
+        资料 → 站点核验：{{ { complete: '通过', incomplete: '有缺失', unverified: '未验证', pending: '取证中' }[data.report.collectionTarget.state] }}（已核对 {{ data.report.collectionTarget.checkedPages }} / {{ data.report.collectionTarget.expectedPages }} 个来源路径，详情见下方核验明细）
+      </p>
     </section>
-    <div class="report-score-grid"><section class="panel report-verdict"><span>质量结论</span><h2 :class="data.report.quality === 'passed' ? 'success-text' : 'warning-text'">{{ qualities[data.report.quality] }}</h2></section><section v-for="item in data.report.scores" :key="item.viewport" class="panel report-score"><span>{{ names[item.viewport] || item.viewport }}</span><strong>{{ item.value ?? '—' }}</strong><small>{{ item.value === null ? '未验证' : '按本轮规则计算' }}</small></section></div>
-    <section class="panel settings-panel">
-      <div class="section-heading"><h2>评测结论</h2><button type="button" class="text-action" @click="liveComparison?.open(data.taskId)"><Columns2 :size="14" />实时站点对比</button></div><p class="report-summary">{{ data.report.summary }}</p>
-      <Disclosure label="分项评分与依据"><div class="table-scroll"><table class="task-table">
-        <thead><tr><th>指标 / 视口</th><th>评分</th><th>依据</th></tr></thead>
-        <tbody><tr v-for="(item, assessmentIndex) in data.report.assessments" :key="item.criterionId + item.viewport">
-          <td>{{ data.rule?.criteria.find(c => c.id === item.criterionId)?.label || item.criterionId }}<span class="table-subtitle">{{ names[item.viewport] }}</span></td><td>{{ item.score ?? '未验证' }}</td>
-          <td class="wrapping-cell">{{ item.reason }}<div class="evidence-links"><template v-for="(file, index) in item.evidence" :key="file">
-            <button v-if="isImage(file)" class="text-action" @click="viewer?.open(assessmentContexts, assessmentIndex, file)"><Image :size="13" />{{ label(file, index) }}</button>
-            <a v-else :href="artifact(file)" download>{{ label(file, index) }}<Download :size="12" /></a>
-          </template></div></td>
-        </tr></tbody>
-      </table></div></Disclosure>
-    </section>
+
     <section class="panel settings-panel">
       <div class="section-heading">
         <div class="report-issues-title">
           <h2>问题清单</h2>
           <span class="text-muted small-text">{{ data.report.issues.length }} 项</span>
-          <span v-if="data.report.checksSnapshot" class="status-badge">CHECKS {{ data.report.checksSnapshot.ruleCount }} 规 · #{{ data.report.checksSnapshot.hash.slice(0, 8) }}</span>
         </div>
-        <button v-if="data.taskId" type="button" class="text-action" @click="openPromoteRule()"><ShieldCheck :size="14" />漏判/误判沉淀为规则</button>
       </div>
-      <p v-if="!data.report.issues.length" class="text-muted">没有已取证的问题，请同时查看覆盖范围。</p>
+      <p v-if="!data.report.issues.length" class="text-muted">没有已取证的问题。</p>
       <article v-for="(issue, index) in data.report.issues" :key="index" class="report-issue">
-        <div class="issue-heading"><span class="status-badge" :class="issue.severity === 'minor' ? 'pending' : 'failed'">{{ severity[issue.severity] }}</span><h3>{{ issue.title }}</h3><button v-if="data.taskId" type="button" class="text-action issue-promote-btn" @click="openPromoteRule(issue)"><ShieldCheck :size="13" />沉淀为 CHECKS 规则</button></div><p class="task-prose">{{ issue.detail }}</p>
-        <button v-if="issue.evidence.length" class="text-action issue-evidence-toggle" :aria-expanded="issueOpen === index" @click="issueOpen = issueOpen === index ? null : index"><ChevronDown v-if="issueOpen === index" :size="16" /><ChevronRight v-else :size="16" />{{ issueOpen === index ? '收起证据' : '查看相关证据' }}</button>
-        <div v-if="issueOpen === index" class="evidence-grid"><template v-for="(file, fileIndex) in issue.evidence" :key="file">
-          <button v-if="isImage(file)" class="evidence-preview-card" :aria-label="'预览' + label(file, fileIndex)" @click="viewer?.open(issueContexts, index, file)"><img :src="artifact(file)" loading="lazy" :alt="issue.title + '，' + label(file, fileIndex)" /><span>{{ label(file, fileIndex) }}<Image :size="13" /></span></button>
-          <a v-else :href="artifact(file)" download><span>{{ label(file, fileIndex) }}<Download :size="13" /></span></a>
-        </template></div>
+        <div class="issue-heading">
+          <span class="status-badge" :class="issue.severity === 'minor' ? 'pending' : 'failed'">{{ severity[issue.severity] }}</span>
+          <h3>{{ issue.title }}</h3>
+        </div>
+        <p class="task-prose">{{ issue.detail }}</p>
+        <button v-if="issue.evidence.length" class="text-action issue-evidence-toggle" :aria-expanded="issueOpen === index" @click="issueOpen = issueOpen === index ? null : index">
+          <ChevronDown v-if="issueOpen === index" :size="16" />
+          <ChevronRight v-else :size="16" />
+          {{ issueOpen === index ? '收起证据' : '查看相关证据' }}
+        </button>
+        <div v-if="issueOpen === index" class="evidence-grid">
+          <template v-for="(file, fileIndex) in issue.evidence" :key="file">
+            <button v-if="isImage(file)" class="evidence-preview-card" :aria-label="'预览' + label(file, fileIndex)" @click="viewer?.open(issueContexts, index, file)">
+              <img :src="artifact(file)" loading="lazy" :alt="issue.title + '，' + label(file, fileIndex)" />
+              <span>{{ label(file, fileIndex) }}<Image :size="13" /></span>
+            </button>
+            <a v-else :href="artifact(file)" download><span>{{ label(file, fileIndex) }}<Download :size="13" /></span></a>
+          </template>
+        </div>
       </article>
     </section>
-    <section class="panel settings-panel task-section-stack"><h2>覆盖范围</h2><div><h3>未验证（{{ data.report.coverage.unverified.length }}）</h3><ul v-if="data.report.coverage.unverified.length" class="task-text-list"><li v-for="text in data.report.coverage.unverified" :key="text">{{ text }}</li></ul><p v-else class="text-muted">报告未列出未验证项。</p></div><Disclosure :label="'已验证（' + data.report.coverage.verified.length + '）'"><ul class="task-text-list"><li v-for="text in data.report.coverage.verified" :key="text">{{ text }}</li></ul></Disclosure><Disclosure :label="'范围之外（' + data.report.coverage.outOfScope.length + '）'"><ul class="task-text-list"><li v-for="text in data.report.coverage.outOfScope" :key="text">{{ text }}</li></ul></Disclosure></section>
-    <section class="panel settings-panel"><div class="section-heading"><button class="text-action" :aria-expanded="allEvidence" @click="allEvidence = !allEvidence"><ChevronDown v-if="allEvidence" :size="16" /><ChevronRight v-else :size="16" />全部截图（{{ images.length }}）</button><a class="text-action" :href="`/api/v1/automation/reports/${data.taskId}`" target="_blank" rel="noopener noreferrer">报告 JSON<ExternalLink :size="14" /></a></div><template v-if="allEvidence"><div class="evidence-grid"><button v-for="(file, index) in visibleImages" :key="file.id" class="evidence-preview-card" :aria-label="'预览' + label(file.name, (page - 1) * 12 + index)" @click="openGallery(file.name)"><img :src="artifact(file.name)" loading="lazy" :alt="label(file.name, (page - 1) * 12 + index)" /><span>{{ label(file.name, (page - 1) * 12 + index) }}<Image :size="13" /></span></button></div><TablePagination :page="page" :pages="pages" :total="images.length" @change="page = $event" /></template></section>
+
+    <section class="panel settings-panel task-section-stack dev-report-details">
+      <div class="section-heading">
+        <h2>研发与规则明细</h2>
+        <span class="text-muted small-text">分项评分、覆盖范围、全量截图与 CHECKS 规则治理（按需展开）</span>
+      </div>
+
+      <Disclosure label="分项评分与依据">
+        <div class="table-scroll">
+          <table class="task-table">
+            <thead><tr><th>指标 / 视口</th><th>评分</th><th>依据</th></tr></thead>
+            <tbody>
+              <tr v-for="(item, assessmentIndex) in data.report.assessments" :key="item.criterionId + item.viewport">
+                <td>{{ data.rule?.criteria.find(c => c.id === item.criterionId)?.label || item.criterionId }}<span class="table-subtitle">{{ names[item.viewport] }}</span></td>
+                <td>{{ item.score ?? '未验证' }}</td>
+                <td class="wrapping-cell">
+                  {{ item.reason }}
+                  <div class="evidence-links">
+                    <template v-for="(file, index) in item.evidence" :key="file">
+                      <button v-if="isImage(file)" class="text-action" @click="viewer?.open(assessmentContexts, assessmentIndex, file)"><Image :size="13" />{{ label(file, index) }}</button>
+                      <a v-else :href="artifact(file)" download>{{ label(file, index) }}<Download :size="12" /></a>
+                    </template>
+                  </div>
+                </td>
+              </tr>
+            </tbody>
+          </table>
+        </div>
+      </Disclosure>
+
+      <Disclosure :label="`覆盖范围（已验证 ${data.report.coverage.verified.length} · 未验证 ${data.report.coverage.unverified.length}）`">
+        <div class="coverage-detail-stack">
+          <div>
+            <h3>未验证（{{ data.report.coverage.unverified.length }}）</h3>
+            <ul v-if="data.report.coverage.unverified.length" class="task-text-list"><li v-for="text in data.report.coverage.unverified" :key="text">{{ text }}</li></ul>
+            <p v-else class="text-muted">报告未列出未验证项。</p>
+          </div>
+          <div>
+            <h3>已验证（{{ data.report.coverage.verified.length }}）</h3>
+            <ul v-if="data.report.coverage.verified.length" class="task-text-list"><li v-for="text in data.report.coverage.verified" :key="text">{{ text }}</li></ul>
+            <p v-else class="text-muted">无。</p>
+          </div>
+          <div v-if="data.report.coverage.outOfScope.length">
+            <h3>范围之外（{{ data.report.coverage.outOfScope.length }}）</h3>
+            <ul class="task-text-list"><li v-for="text in data.report.coverage.outOfScope" :key="text">{{ text }}</li></ul>
+          </div>
+        </div>
+      </Disclosure>
+
+      <Disclosure v-if="data.report.review" label="本轮复评与继承明细">
+        <div class="dev-subblock">
+          <div class="inline-actions">
+            <a class="text-action" :href="`/api/v1/automation/reports/${data.report.review.baselineTaskId}`" target="_blank" rel="noopener noreferrer">基线报告 JSON<ExternalLink :size="14" /></a>
+          </div>
+          <p>复验 {{ data.report.review.targets.length }} 项原问题；本轮独立审查 {{ data.report.review.reviewedAssessments.length }} 项评分、{{ data.report.review.reviewedRequirements.length }} 项交付要求。</p>
+          <p class="text-muted">程序核对当前证据一致后，继承 {{ data.report.review.inheritedAssessments.length }} 项评分、{{ data.report.review.inheritedRequirements.length }} 项交付判断<span v-if="inheritedPathCount">及 {{ inheritedPathCount }} 条静态路径的判断</span>。</p>
+          <div v-if="data.report.rechecks?.length" class="table-scroll">
+            <table class="task-table">
+              <thead><tr><th>原问题</th><th>结论</th><th>依据</th></tr></thead>
+              <tbody>
+                <tr v-for="(item, index) in data.report.rechecks" :key="item.id">
+                  <td class="wrapping-cell">{{ recheckContexts[index]?.title }}</td>
+                  <td>{{ recheckStatus[item.status] }}</td>
+                  <td class="wrapping-cell">
+                    {{ item.reason }}
+                    <div class="evidence-links">
+                      <template v-for="(file, fileIndex) in item.evidence" :key="file">
+                        <button v-if="isImage(file)" class="text-action" @click="viewer?.open(recheckContexts, index, file)"><Image :size="13" />{{ label(file, fileIndex) }}</button>
+                        <a v-else :href="artifact(file)" download>{{ label(file, fileIndex) }}<Download :size="13" /></a>
+                      </template>
+                    </div>
+                  </td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </Disclosure>
+
+      <Disclosure v-if="(data.report.completeness && data.taskId) || data.report.collectionTarget" label="全站完整度与来源核验">
+        <div class="dev-subblock">
+          <CompletenessReport v-if="data.report.completeness && data.taskId" :key="data.taskId" :task-id="data.taskId" />
+          <div v-if="data.report.collectionTarget" class="collection-target-box">
+            <p><strong>资料 → 站点核验：</strong>{{ { complete: '通过', incomplete: '有缺失', unverified: '未验证', pending: '取证中' }[data.report.collectionTarget.state] }}（已核对 {{ data.report.collectionTarget.checkedPages }} / {{ data.report.collectionTarget.expectedPages }} 个来源路径）</p>
+            <ul class="task-text-list"><li v-for="check in data.report.collectionTarget.checks" :key="check.id">{{ check.sourcePath || check.requirementId || check.id }}：{{ { verified: '通过', missing: '有缺失', unverified: '未验证' }[check.status] }} · {{ check.reason }}</li></ul>
+          </div>
+        </div>
+      </Disclosure>
+
+      <Disclosure v-if="data.optimization || data.selectedRound?.brief || data.selectedRound?.progress" label="优化轮次与修复委托">
+        <div class="dev-subblock">
+          <div v-if="data.optimization" class="table-scroll">
+            <div class="inline-actions"><button class="text-action" :disabled="selectedRound === null" @click="selectedRound = null">当前版本</button></div>
+            <table class="task-table">
+              <thead><tr><th>轮次</th><th>状态</th><th>PC / 移动端</th><th>主要变化</th><th /></tr></thead>
+              <tbody>
+                <tr v-for="round in data.optimization.rounds" :key="round.number">
+                  <td>{{ round.number ? '修复 ' + round.number : '初评' }}</td>
+                  <td>{{ taskStatusNames[round.status] }}</td>
+                  <td>{{ round.scores ? round.scores.map(s => (names[s.viewport] || s.viewport) + ' ' + (s.value ?? '未验证')).join(' / ') : '待复评' }}</td>
+                  <td class="wrapping-cell">{{ round.summary }}</td>
+                  <td><button class="text-action" :disabled="loading" @click="selectedRound = round.number">查看本轮</button></td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <pre v-if="data.selectedRound?.brief" class="task-technical">{{ data.selectedRound.brief }}</pre>
+          <template v-if="data.selectedRound?.progress">
+            <p class="task-prose">{{ data.selectedRound.progress.reason }}</p>
+            <div v-for="group in ([['resolved', '已解决'], ['remaining', '仍存在'], ['unverified', '未验证'], ['introduced', '新增问题']] as const)" :key="group[0]">
+              <strong>{{ group[1] }}</strong>
+              <ul class="task-text-list"><li v-for="text in data.selectedRound.progress[group[0]]" :key="text">{{ text }}</li></ul>
+            </div>
+          </template>
+        </div>
+      </Disclosure>
+
+      <div class="dev-gallery-block">
+        <div class="section-heading">
+          <button class="text-action" :aria-expanded="allEvidence" @click="allEvidence = !allEvidence">
+            <ChevronDown v-if="allEvidence" :size="16" />
+            <ChevronRight v-else :size="16" />
+            全部截图（{{ images.length }}）
+          </button>
+          <a class="text-action" :href="`/api/v1/automation/reports/${data.taskId}`" target="_blank" rel="noopener noreferrer">报告 JSON<ExternalLink :size="14" /></a>
+        </div>
+        <template v-if="allEvidence">
+          <div class="evidence-grid">
+            <button v-for="(file, index) in visibleImages" :key="file.id" class="evidence-preview-card" :aria-label="'预览' + label(file.name, (page - 1) * 12 + index)" @click="openGallery(file.name)">
+              <img :src="artifact(file.name)" loading="lazy" :alt="label(file.name, (page - 1) * 12 + index)" />
+              <span>{{ label(file.name, (page - 1) * 12 + index) }}<Image :size="13" /></span>
+            </button>
+          </div>
+          <TablePagination :page="page" :pages="pages" :total="images.length" @change="page = $event" />
+        </template>
+      </div>
+
+      <Disclosure label="CHECKS 规则沉淀（研发治理）">
+        <div class="dev-subblock">
+          <div class="inline-actions">
+            <span v-if="data.report.checksSnapshot" class="status-badge">CHECKS {{ data.report.checksSnapshot.ruleCount }} 规 · #{{ data.report.checksSnapshot.hash.slice(0, 8) }}</span>
+            <button v-if="data.taskId" type="button" class="button secondary small" @click="openPromoteRule()">
+              <ShieldCheck :size="14" />漏判/误判沉淀为规则
+            </button>
+          </div>
+          <ul v-if="data.report.issues.length && data.taskId" class="checks-issue-promote-list">
+            <li v-for="(issue, index) in data.report.issues" :key="index">
+              <span>{{ issue.title }}</span>
+              <button type="button" class="text-action" @click="openPromoteRule(issue)"><ShieldCheck :size="13" />沉淀为 CHECKS 规则</button>
+            </li>
+          </ul>
+        </div>
+      </Disclosure>
+    </section>
+
     <EvidenceViewer v-if="data.taskId" ref="viewer" :task-id="data.taskId" :artifacts="data.report.artifacts" />
     <LiveSiteComparisonDialog :key="'report-live-' + taskId" ref="liveComparison" :task-id="taskId" :default-report-id="data.taskId" />
     <PromoteCheckRuleDialog ref="promoteDialog" />
   </template>
 </template>
+
 <style scoped>
-.human-eval-card{display:flex;flex-direction:column;gap:12px}
+.report-overview-card{display:flex;flex-direction:column;gap:14px}
 .human-eval-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .human-eval-title h2{margin:0}
-.human-eval-headline{margin:0;font-size:16px;font-weight:650;color:var(--ink);line-height:1.5}
-.human-eval-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px}
+.report-compact-scores{display:flex;align-items:center;flex-wrap:wrap;gap:14px 24px}
+.report-compact-score{display:flex;align-items:baseline;gap:8px;padding:8px 14px;border-radius:10px;background:var(--field);font-variant-numeric:tabular-nums}
+.report-compact-score>span{font-size:12px;color:var(--muted)}
+.report-compact-score>strong{font-size:26px;font-weight:700}
+.human-eval-headline{margin:0;flex:1;min-width:220px;font-size:15px;font-weight:600;color:var(--ink);line-height:1.5}
+.report-summary-compact{margin:0;font-size:13.5px;line-height:1.7;color:#3d495e;white-space:pre-wrap}
+.human-eval-cols{display:grid;grid-template-columns:repeat(auto-fit,minmax(260px,1fr));gap:14px;align-items:start}
 .human-eval-block{background:var(--field);border:1px solid var(--line);border-radius:10px;padding:12px 14px}
 .human-eval-block h3{margin:0 0 8px;font-size:13.5px;color:var(--ink)}
 .human-eval-note{margin:0}
 .report-issues-title{display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .report-issues-title h2{margin:0}
-.issue-promote-btn{margin-left:auto;font-size:12px}
+.dev-subblock{display:flex;flex-direction:column;gap:12px}
+.coverage-detail-stack{display:flex;flex-direction:column;gap:16px}
+.coverage-detail-stack h3{font-size:13.5px;margin:0 0 6px}
+.dev-gallery-block>.section-heading{margin-bottom:0}
+.checks-issue-promote-list{margin:0;padding-left:18px;display:flex;flex-direction:column;gap:6px;font-size:13px}
+.checks-issue-promote-list li{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap}
 </style>

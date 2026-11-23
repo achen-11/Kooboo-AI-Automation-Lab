@@ -1,9 +1,9 @@
 <script setup lang="ts">
-import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ArrowUpRight, Check, ExternalLink, Search, RefreshCw, Play, Clock3, LoaderCircle, RotateCcw, Trash2, X } from '@lucide/vue';
+import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
+import { ArrowUpRight, Check, Columns2, Copy, ExternalLink, Search, RefreshCw, Play, Clock3, LoaderCircle, RotateCcw, Trash2, X } from '@lucide/vue';
 import BaseSelect from '../../components/BaseSelect.vue';
 import TablePagination from '../../components/TablePagination.vue';
-import EnvironmentName from '../../components/EnvironmentName.vue';
+import LiveSiteComparisonDialog from '../../components/LiveSiteComparisonDialog.vue';
 import DispositionDialog from './DispositionDialog.vue';
 import QueueDiagnostics from './QueueDiagnostics.vue';
 import { api, formatDate, message } from '../../api';
@@ -19,6 +19,9 @@ import { useTaskSection } from './use-task-section';
 const query = ref(''), search = ref(''), state = ref(''), address = ref<SiteDeliveryAddressFilter | ''>(''), disposition = ref<DispositionFilter>('active'), page = ref(1);
 const selected = ref<string[]>([]);
 const dispositionDialog = ref<InstanceType<typeof DispositionDialog>>();
+const liveComparisonDialog = ref<InstanceType<typeof LiveSiteComparisonDialog>>();
+const compareTarget = ref<{ taskId: string; defaultReportId: string | null } | null>(null);
+const resumingRowId = ref<string | null>(null);
 const site = new URLSearchParams(window.location.hash.split('?')[1] || '').get('site');
 const viewportNames: Record<string, string> = { desktop: 'PC', mobile: '移动端', business: '业务' };
 const attentionAddressOptions = [
@@ -26,6 +29,30 @@ const attentionAddressOptions = [
   { value: 'missing', label: siteDeliveryAddressFilters.missing },
   { value: 'accessible', label: siteDeliveryAddressFilters.accessible },
 ] as const;
+type QuickViewKey = 'all' | 'running' | 'attention' | 'ready' | 'completed';
+const quickViews: Array<{ key: QuickViewKey; label: string; disposition: DispositionFilter; state: string }> = [
+  { key: 'all', label: '全部在列', disposition: 'active', state: '' },
+  { key: 'running', label: '进行中', disposition: 'active', state: 'running' },
+  { key: 'attention', label: '需要处理', disposition: 'active', state: 'attention' },
+  { key: 'ready', label: '可交付', disposition: 'active', state: 'ready' },
+  { key: 'completed', label: '已归档', disposition: 'completed', state: '' },
+];
+const activeQuickView = computed<QuickViewKey | null>(() => {
+  if (disposition.value === 'active' && !state.value && !address.value) return 'all';
+  if (disposition.value === 'active' && state.value === 'running') return 'running';
+  if (disposition.value === 'active' && state.value === 'attention' && !address.value) return 'attention';
+  if (disposition.value === 'active' && state.value === 'ready') return 'ready';
+  if (disposition.value === 'completed' && !state.value) return 'completed';
+  return null;
+});
+function applyQuickView(view: (typeof quickViews)[number]) {
+  disposition.value = view.disposition;
+  state.value = view.state;
+  address.value = '';
+  page.value = 1;
+  selected.value = [];
+  batchIssues.value = [];
+}
 const { data, loading, error, load } = useTaskSection<SiteDeliveryPage>(() =>
   `/automation/site-deliveries?page=${page.value}&pageSize=20&disposition=${disposition.value}&q=${encodeURIComponent(search.value)}${state.value ? '&state=' + state.value : ''}${address.value ? '&address=' + address.value : ''}${site ? '&site=' + encodeURIComponent(site) : ''}`);
 const rows = computed(() => data.value?.items || []);
@@ -53,6 +80,41 @@ const batchResumeLabel = computed(() => {
     ? `一键恢复 (${resumableSelectedRows.value.length})`
     : '一键恢复';
 });
+function canDirectResumeRow(row: SiteDeliverySummary) {
+  return !row.disposition && (row.recovery?.action === 'resume' || row.recovery?.action === 'adjust-site-names');
+}
+async function runSingleResume(row: SiteDeliverySummary) {
+  if (batchResuming.value || resumingRowId.value || !canDirectResumeRow(row) || !row.recovery) return;
+  resumingRowId.value = row.id;
+  const endpoint = row.recovery.action === 'adjust-site-names'
+    ? `/automation/tasks/${row.recovery.taskId}/adjust-site-names`
+    : `/automation/tasks/${row.recovery.taskId}/resume`;
+  try {
+    await api(endpoint, { method: 'POST' });
+    notify.success(row.recovery.action === 'adjust-site-names' ? `已调整名称并恢复 ${row.resourceName}` : `已提交恢复 ${row.resourceName}`);
+    await load();
+    void refreshStatus();
+  } catch (reason) {
+    notify.error(message(reason));
+  } finally {
+    resumingRowId.value = null;
+  }
+}
+async function copySiteUrl(url: string) {
+  try {
+    await navigator.clipboard.writeText(url);
+    notify.success('已复制站点地址');
+  } catch {
+    notify.error('无法访问剪贴板，请手动复制');
+  }
+}
+async function openCompare(row: SiteDeliverySummary) {
+  if (!row.detailTaskId) return;
+  const reportId = row.report?.id || null;
+  compareTarget.value = { taskId: row.detailTaskId, defaultReportId: reportId };
+  await nextTick();
+  await liveComparisonDialog.value?.open(reportId);
+}
 async function runBatchResume() {
   if (batchResuming.value) return;
   const targets = [...selectedRows.value];
@@ -194,7 +256,20 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
     <div><span>生成站 / 待建任务</span><strong>{{ data?.activeTotal ?? data?.total ?? '—' }}</strong></div>
   </div>
   <section class="panel">
-    <div class="table-toolbar"><label class="search-field"><Search :size="18" /><input v-model="query" placeholder="搜索资源或生成站" aria-label="搜索生成站" /></label><div class="toolbar-actions">
+    <div class="quick-view-bar">
+      <div class="segmented compact quick-view-pills" role="group" aria-label="快捷视图">
+        <button
+          v-for="view in quickViews"
+          :key="view.key"
+          type="button"
+          class="quick-view-btn"
+          :class="{ selected: activeQuickView === view.key }"
+          :aria-pressed="activeQuickView === view.key"
+          @click="applyQuickView(view)"
+        >
+          {{ view.label }}
+        </button>
+      </div>
       <button
         type="button"
         class="quick-attention-filter"
@@ -205,6 +280,8 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
       >
         需处理 · 尚无可访问地址<span :class="{ 'count-attention': (data?.attentionMissingAddress ?? 0) > 0 }">{{ data?.attentionMissingAddress ?? 0 }}</span>
       </button>
+    </div>
+    <div class="table-toolbar"><label class="search-field"><Search :size="18" /><input v-model="query" placeholder="搜索资源或生成站" aria-label="搜索生成站" /></label><div class="toolbar-actions">
       <BaseSelect v-model="disposition" size="small" aria-label="归档状态" :options="dispositionFilterOptions" />
       <BaseSelect v-model="state" size="small" aria-label="交付状态" :options="[{value:'',label:'全部交付状态'},...Object.entries(siteDeliveryStates).map(([value,label])=>({value,label}))]" />
       <BaseSelect v-if="state === 'attention'" v-model="address" size="small" aria-label="可访问地址" :options="attentionAddressOptions" />
@@ -240,27 +317,78 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
     </div>
     <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="reload">重试</button></p>
     <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="18" />正在加载生成站…</p>
-    <div v-if="data" class="table-scroll" :aria-busy="loading"><table class="task-table site-table"><thead><tr><th class="checkbox-cell"><input type="checkbox" aria-label="选择本页全部生成站" :checked="checked" :indeterminate.prop="partial" :disabled="!rows.length || batchResuming" @change="toggleAll" /></th><th>生成站</th><th>环境</th><th>场景 / 范围</th><th>当前结果</th><th>当前评分</th><th>站点总成本</th><th>最近更新</th><th /></tr></thead><tbody>
+    <div v-if="data" class="table-scroll" :aria-busy="loading"><table class="task-table site-table"><thead><tr><th class="checkbox-cell"><input type="checkbox" aria-label="选择本页全部生成站" :checked="checked" :indeterminate.prop="partial" :disabled="!rows.length || batchResuming" @change="toggleAll" /></th><th>任务与站点</th><th>任务状态</th><th>评分</th><th>总成本</th><th>最近更新</th><th>快捷操作</th></tr></thead><tbody>
       <tr v-for="row in data.items" :key="row.id" :class="{ 'row-selected': selected.includes(row.id) }">
         <td class="checkbox-cell"><input v-model="selected" type="checkbox" :value="row.id" :disabled="batchResuming" :aria-label="`选择 ${row.resourceName}`" /></td>
-        <td><div class="site-title-row"><a class="task-title" :href="row.detailTaskId ? '#/tasks/' + row.detailTaskId : '#/resources/' + row.resourceId">{{ row.resourceName }}</a><span v-if="row.disposition" class="disposition-badge" :class="row.disposition.state" :title="dispositionTitle(row)">{{ dispositionStateNames[row.disposition.state] }}</span></div><a v-if="siteLinks(row).primary" class="site-address" :class="{ 'site-address-delivered': siteLinks(row).primary!.delivered, 'site-address-delivery-pending': siteLinks(row).primary!.deliveryPending }" :href="siteLinks(row).primary!.url" target="_blank" rel="noopener noreferrer" :title="siteLinks(row).primary!.title"><span v-if="siteLinks(row).primary!.badge" class="delivery-link-badge" :class="{ pending: siteLinks(row).primary!.deliveryPending }">{{ siteLinks(row).primary!.badge }}</span><span class="site-address-url">{{ siteLinks(row).primary!.url }}</span><ExternalLink :size="12" /></a><span v-else class="table-subtitle">{{ row.generatedSiteId ? '尚无可访问地址' : '等待创建生成站' }}</span><a v-if="siteLinks(row).source" class="site-address-secondary" :href="siteLinks(row).source" target="_blank" rel="noopener noreferrer" :title="'源站：' + siteLinks(row).source"><span>源站：{{ siteLinks(row).source }}</span><ExternalLink :size="11" /></a><span v-if="row.disposition?.note" class="table-subtitle disposition-note" :title="row.disposition.note">{{ row.disposition.note }}</span></td>
-        <td class="environment-cell"><EnvironmentName :environment-id="row.environmentId" /></td>
-        <td>{{ scenarios[row.scenario] }}<span class="table-subtitle">{{ scopeName(row.scope) }}</span></td>
-        <td><div class="delivery-result-content"><span class="delivery-result" :class="row.state" :title="row.reason">{{ siteDeliveryStates[row.state] }}</span><a v-if="row.state==='attention' && row.delivery && ['failed','uncertain'].includes(row.delivery.status)" class="text-action delivery-reason" :href="`#/tasks/${row.delivery.taskId}?tab=delivery`">查看交付<ArrowUpRight :size="12" /></a><a v-else-if="row.state==='attention' && row.detailTaskId" class="text-action delivery-reason" :href="`#/tasks/${row.detailTaskId}?tab=execution`">查看原因<ArrowUpRight :size="12" /></a><a v-else-if="row.delivery && ['queued','running','verifying'].includes(row.delivery.status)" class="text-action delivery-status-link" :href="`#/tasks/${row.delivery.taskId}?tab=delivery`">{{ deliveryStatusNames[row.delivery.status] }}<ArrowUpRight :size="12" /></a></div></td>
-        <td><a v-if="row.report?.report" class="site-scores" :href="siteReportLink(row.detailTaskId || row.report.id, row.report.id)"><span v-for="score in row.report.report.scores" :key="score.viewport" class="site-score" :class="scoreTone(score.value,row.targetScore)" :title="`${viewportNames[score.viewport] || score.viewport}，目标 ${row.targetScore} 分`"><span>{{ viewportNames[score.viewport] || score.viewport }}</span><strong>{{ score.value ?? '—' }}</strong></span></a><span v-else class="text-muted">{{ row.state==='running' || row.state==='queued' ? '当前版本待评测' : '暂无有效报告' }}</span></td>
+        <td>
+          <div class="site-title-row">
+            <a class="task-title" :href="row.detailTaskId ? '#/tasks/' + row.detailTaskId : '#/resources/' + row.resourceId">{{ row.resourceName }}</a>
+            <span class="site-meta-inline">{{ scenarios[row.scenario] }} · {{ scopeName(row.scope) }}</span>
+            <span v-if="row.disposition" class="disposition-badge" :class="row.disposition.state" :title="dispositionTitle(row)">{{ dispositionStateNames[row.disposition.state] }}</span>
+          </div>
+          <div v-if="siteLinks(row).primary" class="site-address-row">
+            <a class="site-address" :class="{ 'site-address-delivered': siteLinks(row).primary!.delivered, 'site-address-delivery-pending': siteLinks(row).primary!.deliveryPending }" :href="siteLinks(row).primary!.url" target="_blank" rel="noopener noreferrer" :title="siteLinks(row).primary!.title"><span v-if="siteLinks(row).primary!.badge" class="delivery-link-badge" :class="{ pending: siteLinks(row).primary!.deliveryPending }">{{ siteLinks(row).primary!.badge }}</span><span class="site-address-url">{{ siteLinks(row).primary!.url }}</span><ExternalLink :size="12" /></a>
+            <button type="button" class="copy-site-btn" aria-label="复制站点地址" :title="`复制地址：${siteLinks(row).primary!.url}`" @click="copySiteUrl(siteLinks(row).primary!.url)"><Copy :size="12" /></button>
+          </div>
+          <span v-else class="table-subtitle">{{ row.generatedSiteId ? '尚无可访问地址' : '等待创建生成站' }}</span>
+          <a v-if="siteLinks(row).source" class="site-address-secondary" :href="siteLinks(row).source" target="_blank" rel="noopener noreferrer" :title="'源站：' + siteLinks(row).source"><span>源站：{{ siteLinks(row).source }}</span><ExternalLink :size="11" /></a>
+          <span v-if="row.disposition?.note" class="table-subtitle disposition-note" :title="row.disposition.note">{{ row.disposition.note }}</span>
+        </td>
+        <td>
+          <div class="delivery-result-content">
+            <span class="delivery-result" :class="row.state">{{ siteDeliveryStates[row.state] }}</span>
+            <a v-if="row.state==='attention' && row.delivery && ['failed','uncertain'].includes(row.delivery.status)" class="text-action delivery-reason" :href="`#/tasks/${row.delivery.taskId}?tab=delivery`">查看交付<ArrowUpRight :size="12" /></a>
+            <a v-else-if="row.delivery && ['queued','running','verifying'].includes(row.delivery.status)" class="text-action delivery-status-link" :href="`#/tasks/${row.delivery.taskId}?tab=delivery`">{{ deliveryStatusNames[row.delivery.status] }}<ArrowUpRight :size="12" /></a>
+          </div>
+          <span v-if="row.reason" class="delivery-reason-text" :title="row.reason">{{ row.reason }}</span>
+        </td>
+        <td><a v-if="row.report?.report" class="site-scores" :href="siteReportLink(row.detailTaskId || row.report.id, row.report.id)"><span v-for="score in row.report.report.scores" :key="score.viewport" class="site-score" :class="scoreTone(score.value,row.targetScore)" :title="`${viewportNames[score.viewport] || score.viewport}，目标 ${row.targetScore} 分`"><span>{{viewportNames[score.viewport] || score.viewport}}</span><strong>{{score.value ?? '—'}}</strong></span></a><span v-else class="text-muted">{{ row.state==='running' || row.state==='queued' ? '待评测' : '暂无' }}</span></td>
         <td class="site-cost"><a v-if="row.detailTaskId" :href="`#/tasks/${row.detailTaskId}?tab=usage`">{{ row.usage.priced ? '¥ ' + row.usage.knownCny.toFixed(4) : '—' }}</a><span v-else>—</span></td>
         <td class="date-cell">{{ formatDate(row.updatedAt) }}</td>
-        <td><div class="toolbar-actions"><a class="text-action" :href="row.detailTaskId ? '#/tasks/' + row.detailTaskId : '#/resources/' + row.resourceId">详情<ArrowUpRight :size="14" /></a></div></td>
+        <td>
+          <div class="row-quick-actions">
+            <button
+              v-if="canDirectResumeRow(row)"
+              type="button"
+              class="button primary small row-action-btn"
+              :disabled="batchResuming || resumingRowId === row.id"
+              @click="runSingleResume(row)"
+            >
+              <LoaderCircle v-if="resumingRowId === row.id" class="spin" :size="13" />
+              <Play v-else :size="13" />
+              恢复
+            </button>
+            <button
+              v-else-if="row.detailTaskId && siteLinks(row).primary"
+              type="button"
+              class="button secondary small row-action-btn"
+              @click="openCompare(row)"
+            >
+              <Columns2 :size="13" />对比
+            </button>
+            <a
+              v-else-if="row.state==='attention' && row.detailTaskId"
+              class="text-action row-action-link"
+              :href="row.delivery && ['failed','uncertain'].includes(row.delivery.status) ? `#/tasks/${row.delivery.taskId}?tab=delivery` : `#/tasks/${row.detailTaskId}`"
+            >
+              去处理<ArrowUpRight :size="13" />
+            </a>
+            <a v-else class="text-action row-action-link" :href="row.detailTaskId ? '#/tasks/' + row.detailTaskId : '#/resources/' + row.resourceId">详情<ArrowUpRight :size="13" /></a>
+          </div>
+        </td>
       </tr>
     </tbody></table></div>
     <div v-if="data && !data.items.length" class="empty-state"><Clock3 :size="30" /><h2>{{ query || state || address ? '没有匹配的生成站' : disposition === 'completed' ? '暂无已完成的生成站' : disposition === 'discarded' ? '暂无已舍弃的生成站' : '暂无在列生成站' }}</h2><p>{{ disposition === 'active' ? '从资源库创建任务，生成、跟进、评测与后续修复会归入同一个生成站。' : '可切换归档状态返回“在列”查看当前任务。' }}</p></div>
     <TablePagination v-if="data" :page="data.page" :pages="data.pages" :total="data.total" :busy="loading" @change="page=$event" />
   </section>
   <DispositionDialog ref="dispositionDialog" @saved="onDispositionSaved" />
+  <LiveSiteComparisonDialog v-if="compareTarget" :key="compareTarget.taskId" ref="liveComparisonDialog" :task-id="compareTarget.taskId" :default-report-id="compareTarget.defaultReportId" />
 </template>
 
 <style scoped>
-.quick-attention-filter{min-height:36px;padding:6px 12px;display:inline-flex;align-items:center;gap:7px;border-radius:9px;border:1px solid #e2e8f2;background:#fff;color:#526079;font-size:12px;font-weight:600;white-space:nowrap;transition:border-color .15s,background .15s,color .15s,box-shadow .15s}
+.quick-view-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 24px 0}
+.quick-view-pills{flex-wrap:wrap}
+.quick-attention-filter{min-height:34px;padding:5px 12px;display:inline-flex;align-items:center;gap:7px;border-radius:9px;border:1px solid #e2e8f2;background:#fff;color:#526079;font-size:12px;font-weight:600;white-space:nowrap;transition:border-color .15s,background .15s,color .15s,box-shadow .15s}
 .quick-attention-filter:hover:not(.selected){border-color:#d6b68a;background:#fffaf2;color:#995608}
 .quick-attention-filter.selected{border-color:#e7be80;background:#fff4e5;color:#995608;box-shadow:0 1px 3px #9956081a}
 .quick-attention-filter>span{font-size:11px;padding:1px 6px;min-width:20px;text-align:center;border-radius:5px;background:#e8eef7;color:#71809b;font-weight:600;font-variant-numeric:tabular-nums}
@@ -275,12 +403,50 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
 .batch-issues-list a{color:var(--blue);font-weight:600}
 .batch-issues-list a:hover{text-decoration:underline}
 .batch-issue-name{font-weight:600}
-.site-table th.checkbox-cell,.site-table td.checkbox-cell{width:50px;padding-left:22px;padding-right:8px}
-.site-title-row{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.site-table{width:100%;min-width:780px;table-layout:fixed}
+.site-table th,.site-table td{padding:14px 12px;vertical-align:middle}
+.site-table th.checkbox-cell,.site-table td.checkbox-cell{width:44px;padding:14px 4px 14px 18px}
+.site-table th:nth-child(2){width:33%}
+.site-table th:nth-child(3){width:22%}
+.site-table th:nth-child(4){width:14%}
+.site-table th:nth-child(5){width:10%}
+.site-table th:nth-child(6){width:10%}
+.site-table th:nth-child(7),.site-table td:last-child{width:9%;padding-right:18px}
+.site-title-row{display:flex;align-items:center;gap:4px 8px;flex-wrap:wrap;white-space:normal}
+.site-title-row .task-title{min-width:0;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.site-meta-inline{font-size:11px;color:var(--muted);white-space:nowrap}
 .disposition-badge{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;font-size:11px;font-weight:550;line-height:1.4;white-space:nowrap}
 .disposition-badge.completed{color:#16765d;background:#eaf7f1}
 .disposition-badge.discarded{color:#64748b;background:#eef2f7}
-.disposition-note{display:block;max-width:340px;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
-.delivery-result-content{display:flex;align-items:center;gap:12px;flex-wrap:wrap}.delivery-reason,.delivery-status-link{font-size:12px;padding:0;white-space:nowrap}
-.environment-cell{min-width:100px;max-width:180px;overflow-wrap:anywhere}.site-table{min-width:1150px}.site-table td{vertical-align:middle}.site-table th:nth-child(2){width:28%}.site-address{display:flex;align-items:center;gap:5px;max-width:340px;margin-top:6px;color:var(--blue);font-size:11px}.site-address-delivered{color:#16765d;font-weight:550}.site-address-delivery-pending{color:#995608;font-weight:550}.delivery-link-badge{flex:none;padding:1px 6px;border-radius:4px;background:#eaf7f1;color:#16765d;font-size:10px;font-weight:600;line-height:1.4;white-space:nowrap}.delivery-link-badge.pending{background:#fff4e5;color:#995608}.site-address-url{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.site-address svg,.site-address-secondary svg{flex:none}.site-address:hover .site-address-url,.site-address-secondary:hover span{text-decoration:underline}.site-address-secondary{display:flex;align-items:center;gap:4px;max-width:340px;margin-top:3px;color:var(--muted);font-size:11px}.site-address-secondary span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}.delivery-result{font-weight:550;white-space:nowrap}.delivery-result.ready{color:#16765d}.delivery-result.attention,.delivery-result.needs-improvement{color:#a65e0a}.delivery-result.unverified,.delivery-result.awaiting-evaluation{color:var(--muted)}.delivery-result.running,.delivery-result.queued{color:var(--blue)}.site-scores{display:flex;flex-wrap:wrap;gap:6px;max-width:245px}.site-score{display:inline-flex;align-items:baseline;gap:6px;padding:4px 7px;border-radius:5px;background:var(--field);font-variant-numeric:tabular-nums}.site-score span{font-size:10px}.site-score strong{font-size:15px;font-weight:600}.site-score.good{color:#16765d;background:#eaf7f1}.site-score.warning{color:#a65e0a;background:#fff4e5}.site-score.low{color:#b53b4b;background:#fff0f2}.site-score.unknown{color:var(--muted)}.site-scores:hover .site-score{box-shadow:inset 0 0 0 1px currentColor}.site-cost{font-variant-numeric:tabular-nums;font-weight:550;white-space:nowrap}.site-cost a:hover{text-decoration:underline}
+.disposition-note{display:block;max-width:100%;overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.site-address-row{display:flex;align-items:center;gap:4px;margin-top:5px;max-width:100%}
+.site-address{display:inline-flex;align-items:center;gap:5px;min-width:0;max-width:100%;color:var(--blue);font-size:11.5px}
+.site-address-delivered{color:#16765d;font-weight:550}
+.site-address-delivery-pending{color:#995608;font-weight:550}
+.delivery-link-badge{flex:none;padding:1px 6px;border-radius:4px;background:#eaf7f1;color:#16765d;font-size:10px;font-weight:600;line-height:1.4;white-space:nowrap}
+.delivery-link-badge.pending{background:#fff4e5;color:#995608}
+.site-address-url{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.site-address svg,.site-address-secondary svg{flex:none}
+.site-address:hover .site-address-url,.site-address-secondary:hover span{text-decoration:underline}
+.copy-site-btn{flex:none;display:inline-flex;align-items:center;justify-content:center;width:22px;height:22px;border-radius:6px;color:var(--muted);background:transparent;transition:background .15s,color .15s}
+.copy-site-btn:hover{background:#eef3ff;color:var(--blue)}
+.site-address-secondary{display:flex;align-items:center;gap:4px;max-width:100%;margin-top:3px;color:var(--muted);font-size:11px}
+.site-address-secondary>span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.delivery-result-content{display:flex;align-items:center;gap:8px;flex-wrap:wrap;white-space:normal}
+.delivery-reason,.delivery-status-link{font-size:12px;padding:0;white-space:nowrap}
+.delivery-reason-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word;margin-top:4px;font-size:11.5px;line-height:1.45;color:var(--muted);max-width:100%}
+.delivery-result{font-weight:600;white-space:nowrap}
+.delivery-result.ready{color:#16765d}.delivery-result.attention,.delivery-result.needs-improvement{color:#a65e0a}.delivery-result.unverified,.delivery-result.awaiting-evaluation{color:var(--muted)}.delivery-result.running,.delivery-result.queued{color:var(--blue)}
+.site-scores{display:flex;flex-wrap:wrap;gap:5px;max-width:100%}
+.site-score{display:inline-flex;align-items:baseline;gap:4px;padding:3px 6px;border-radius:5px;background:var(--field);font-variant-numeric:tabular-nums}
+.site-score span{font-size:10px}.site-score strong{font-size:13.5px;font-weight:600}
+.site-score.good{color:#16765d;background:#eaf7f1}.site-score.warning{color:#a65e0a;background:#fff4e5}.site-score.low{color:#b53b4b;background:#fff0f2}.site-score.unknown{color:var(--muted)}
+.site-scores:hover .site-score{box-shadow:inset 0 0 0 1px currentColor}
+.site-cost{font-variant-numeric:tabular-nums;font-weight:550;white-space:nowrap}
+.site-cost a:hover{text-decoration:underline}
+.site-table .date-cell{white-space:nowrap;font-size:12px;color:var(--muted)}
+.row-quick-actions{display:flex;align-items:center;gap:6px;white-space:nowrap}
+.row-action-btn{min-height:28px;padding:4px 10px;font-size:12px;border-radius:7px}
+.row-action-link{font-size:12.5px;white-space:nowrap}
+@media(max-width:700px){.quick-view-bar{padding:14px 18px 0}}
 </style>

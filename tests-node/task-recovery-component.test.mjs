@@ -164,7 +164,7 @@ test('confirmation is available across tabs and a selected evaluation uses its o
     await f.buttons('已检查并确认原执行停止')[1].props.onClick(); await settle();
     assert.deepEqual(f.calls.filter(c => c.method === 'POST').map(c => c.path), ['/automation/tasks/child/confirm-stopped']);
     assert.equal(f.root.status, 'completed');
-    f.buttons('输入与配置')[0].props.onClick(); await settle();
+    f.buttons('输入与发送快照')[0].props.onClick(); await settle();
     assert.equal(f.buttons('恢复任务').length, 1, 'shared header remains available outside Overview');
   } finally { f.close(); }
 });
@@ -196,7 +196,7 @@ test('cancelled tasks expose restart button in header and execution tab and queu
   const f = await fixture({ cancelled: true });
   try {
     assert.equal(f.buttons('重新启动').length, 1, 'header exposes restart on Overview');
-    await f.buttons('执行记录')[0].props.onClick(); await settle();
+    await f.buttons('研发排障')[0].props.onClick(); await settle();
     assert.equal(f.buttons('重新启动').length, 2, 'both header and execution panel expose restart');
     assert.ok(f.text().includes('任务已取消'));
     await f.buttons('重新启动')[0].props.onClick(); await settle();

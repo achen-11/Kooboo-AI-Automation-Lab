@@ -55,6 +55,7 @@ import {
 import { buildHarnessCatalog, harnessBindings } from './harness.js';
 import { deriveHumanNotice } from '../../shared/human-diagnostics.js';
 import { registerTaskSupplementApi } from './supplement-api.js';
+import { registerWorkflowGraphApi } from './workflow-graph.js';
 
 const url=z.union([z.literal(''),z.url().refine(v=>/^https?:/.test(v),'只支持 HTTP(S) 地址')]);
 const uuid=z.string().uuid();
@@ -96,6 +97,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerLiveComparisonApi(app,store);
   registerTemplateWorkflowApi(app,store,directory);
   registerTaskSupplementApi(app,store,vault,directory);
+  registerWorkflowGraphApi(app,store,vault,directory,owns,workerReady);
   registerExecutionLogApi(app,store);
   registerLearningApi(app,store,vault,directory,owns,cancel);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);

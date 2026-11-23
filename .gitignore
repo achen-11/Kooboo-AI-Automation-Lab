@@ -166,3 +166,7 @@ vite.config.ts.timestamp-*
 
 # Local run, benchmark, and audit outputs
 /outputs/
+
+# Local agent skills, diagnostic bundles, and raw triage case notes
+/.agents/
+/.diagnostics/

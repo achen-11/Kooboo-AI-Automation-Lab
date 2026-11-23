@@ -25,6 +25,7 @@ const props = defineProps<{
   attention?: string;
   nextStep?: string;
   createdAt: number;
+  hideStageBar?: boolean;
 }>();
 
 const emit = defineEmits<{
@@ -72,7 +73,7 @@ function iconStateClass(state: 'completed' | 'running' | 'attention' | 'pending'
       <span class="text-muted small-text">{{ formatDate(createdAt) }} 创建</span>
     </div>
 
-    <div class="task-workflow template-stage-bar">
+    <div v-if="!hideStageBar" class="task-workflow template-stage-bar">
       <template v-for="(step, idx) in steps" :key="step.id">
         <div v-if="idx > 0" class="workflow-connector" />
         <div class="workflow-stage">

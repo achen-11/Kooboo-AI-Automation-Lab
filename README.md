@@ -1,5 +1,7 @@
 # Kooboo AI Automation Lab
 
+v0.9.2 对齐跨环境迁移（`sitemigrate`）接口的 Kooboo Jint 脚本引擎超时：发起跨环境交付请求时自动按当前连接配置的 `delivery.policy.timeoutSeconds`（默认 `180` 秒）附加 `?__engine_timeout__=<timeoutSeconds>` 查询参数（保留已显式配置的非空 `__engine_timeout__`、其他查询参数及持久化的 `policy.endpoint` 原值），使平台侧请求超时与 DE Kooboo 站点脚本执行时限保持一致，配合 DE 端 `httpClient` 超时对齐修改即可消除长耗时站点迁移的脚本/客户端超时不一致问题。详情与验证边界见 [v0.9.2 发布说明](docs/release-notes-0.9.2.md)。
+
 v0.9.1 针对生成与异常跟进阶段的平台侧耗时瓶颈完成四项优化：（1）将 Kooboo AI Chat 首次桥接冷加载改为分段超时（`goto 45s + ready 45s/60s`）并在未挂载桥接时保留浏览器缓存自动页内刷新恢复，同时在跳转到非 AI Chat 登录页时快速失败；（2）`httpRead` 透明支持 `gzip` / `deflate` / `br` 压缩传输并校验解压后字节预算，降低跨区拉取长会话与大 JSON 的传输耗时；（3）为 Followup 阶段的 `get_conversation` 增加单轮超时防重复连撞保护并更新故障手册，避免对超大会话连续撞满 120s 超时；（4）升级生成上下文阅读器至 `v6`（新增 `automationBatch` 支持单次最多 12 项批量读取），并在委托指令中明确只读 `k.ai.callFunction` 编排边界及写站前精简思考约束。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.9.1 发布说明](docs/release-notes-0.9.1.md)。
 
 v0.9.0 引入 **Verification Engineering（有界验证工程）全链路重构** 并完整合入 `v0.8.3` 的 Kooboo GUID 与交付脱敏诊断修复：（1）首页、多页全站与跨环境 `delivery` 全面切换至「宿主确定性取证与预检 + `read-only` 多模态有界评判 + 宿主硬封顶裁决」，结合移动菜单关闭探针（`MOBILE_MENU_TRAPPED`）、超长页面断点续采切片（最高 40 屏）与并发批次缓冲，请求数降低 **95%+**、单页评测耗时提速至 1–3 分钟；（2）引入单步只读有界优化规划器（`bounded-optimization-planner`），解锁 `materials` 自动优化、同修订手动重评识别与 Kooboo `+` 文件名规范化，并将仅静态截图不可观测的微交互归入 `outOfScope`；（3）推出 **「`CHECKS.md` 一错一规」产品闭环与自动回归测试集**，支持从任意评测报告一键将漏判/虚高沉淀为版本化红线规则或为误判追加豁免、绑定真实截图为标定反例，并在规则管理台及 CLI 零 Token 运行确定性回归（支持 `--live` 真图复验）。详情与验证边界见 [v0.9.0 发布说明](docs/release-notes-0.9.0.md)。

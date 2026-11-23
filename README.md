@@ -1,5 +1,7 @@
 # Kooboo AI Automation Lab
 
+v0.9.4 将资料包中的用户图片类资源（`png/jpg/jpeg/webp/svg/gif/avif/ico/bmp`）直接上传至目标站 Kooboo **媒体库**（`/_api/v2/Upload/Image`，目录为 `/materials/<原相对子目录>/<安全文件名>`），排除平台侧 A 段采集目录 `collection/`，并在任务检查点 `importedMedia`、站点映射清单 `_automation-manifests/<taskId>.json` 与升级至 `v7` 的 `automationMaterials()` 索引中同步暴露媒体库 URL 与 `imageId`（同时兼容升级前已导入旧任务的 `CmsFile` 路径）。详情与验证边界见 [v0.9.4 发布说明](docs/release-notes-0.9.4.md)。
+
 v0.9.3 修复未尝试建站任务在准备阶段因瞬时网络抖动中断后陷入「人工恢复 → AI 跟进立即再次中断」的死循环问题，并升级经验库自愈机制：（1）对尚未创建站点且未发出建站请求（`!generatedSiteId && !generation.createAttempted`）的中断生成任务，人工点击「恢复任务」直接重新排队执行建站；（2）为 `koobooClient` 的幂等只读 GET 请求增加短退避重试（绝不重试 POST 变更或超时/取消请求）；（3）隔离 0 token 模型传输断连与真实 AI 跟进决策次数，在 `get_task` 中保底保留入队/报错/恢复等关键事件，并在中断后人工恢复时重置跟进 `threadId` 与补充前置状态说明；（4）为 `followup` 经验引入 `runtimeEpoch` 代际升级退役与 Kooboo 下划线域名规则语义自检迁移（启动幂等执行，保留历史修订且不覆盖人工修改），向筛选/复盘/跟进宿主提示词注入平台硬契约护栏，并按真实执行进度指纹对无报告中断复盘去重，防止重复复盘污染与阻塞恢复。详情与验证边界见 [v0.9.3 发布说明](docs/release-notes-0.9.3.md)。
 
 v0.9.2 对齐跨环境迁移（`sitemigrate`）接口的 Kooboo Jint 脚本引擎超时：发起跨环境交付请求时自动按当前连接配置的 `delivery.policy.timeoutSeconds`（默认 `180` 秒）附加 `?__engine_timeout__=<timeoutSeconds>` 查询参数（保留已显式配置的非空 `__engine_timeout__`、其他查询参数及持久化的 `policy.endpoint` 原值），使平台侧请求超时与 DE Kooboo 站点脚本执行时限保持一致，配合 DE 端 `httpClient` 超时对齐修改即可消除长耗时站点迁移的脚本/客户端超时不一致问题。详情与验证边界见 [v0.9.2 发布说明](docs/release-notes-0.9.2.md)。

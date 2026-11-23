@@ -280,7 +280,7 @@ export async function applySupplementBatch(params: {
     uploadedCount = uploadResult.uploaded.length;
     for (const u of uploadResult.uploaded) uploadedMappings.push(u.mapping);
 
-    if (allFiles.length && uploadResult.uploaded.some(u => u.storage === 'cmsFile')) {
+    if (allFiles.length && mode === 'materials' && uploadResult.uploaded.length > 0) {
       await syncMaterialManifestToSite({ task, siteId: site.siteId, allFiles, request });
     }
 

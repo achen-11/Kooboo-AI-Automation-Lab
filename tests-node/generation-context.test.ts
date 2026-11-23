@@ -399,3 +399,50 @@ test('automationBatch consolidates multi-file reads within budget, isolates item
     assert.throws(() => execute(`return automationBatch([{ kind: 'eval' }]);`), /Unknown batch request kind/);
   } finally { await f.close(); }
 });
+
+test('automationMaterials exposes imageId and mediaLibrary storage while blocking text reads', async () => {
+  const f = await fixture();
+  try {
+    const materials = [
+      {
+        name: 'images/logo.svg',
+        id: 'logo-1',
+        destination: '/materials/images/logo.svg',
+        type: 'image/svg+xml',
+        size: 120,
+        sha256: 'c'.repeat(64),
+        storage: 'mediaLibrary',
+        imageId: 'img-uuid-123',
+      },
+    ];
+    await prepareGenerationContext(f.task, f.store, f.request, f.siteId, {
+      instructions: 'Use media library images directly',
+      materials,
+    });
+    const pkg = new GenerationContextStore(f.store).packages(f.task.id)[0];
+    const base = pkg.index.slice(0, pkg.index.lastIndexOf('/') + 1);
+    const reader = f.remote.get(base + 'reader.js')!;
+    const execute = (code: string) =>
+      JSON.parse(
+        runInNewContext(
+          `${reader};JSON.stringify((function(){${code}})());`,
+          { k: { file: { read: (path: string) => f.remote.get(path) ?? null } } },
+        ),
+      );
+    const list = execute('return automationMaterials();');
+    assert.equal(list.items.length, 1);
+    assert.deepEqual(list.items[0], {
+      name: 'images/logo.svg',
+      id: 'logo-1',
+      destination: '/materials/images/logo.svg',
+      type: 'image/svg+xml',
+      size: 120,
+      sha256: 'c'.repeat(64),
+      storage: 'mediaLibrary',
+      imageId: 'img-uuid-123',
+    });
+    assert.throws(() => execute('return automationMaterialRead("images/logo.svg");'), /not a text kfile/);
+  } finally {
+    await f.close();
+  }
+});

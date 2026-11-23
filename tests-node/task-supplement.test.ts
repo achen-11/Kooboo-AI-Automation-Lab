@@ -624,13 +624,26 @@ test('URL overrides preserve frozen InputVersion and propagate to generator Tran
 });
 
 test('AI-assisted intake stages ready draft for confirmation, supports selective apply, cancel, and autoApply', async () => {
+  const imageUploads: Array<{ folder: string; filename: string }> = [];
+  const manifestWrites: string[] = [];
   const server = createServer(async (req: IncomingMessage, res: ServerResponse) => {
     const url = req.url || '';
-    const body = (await readBody(req)).toString('utf8');
+    const buf = await readBody(req);
+    const body = buf.toString('utf8');
     if (url.startsWith('/_api/v2/AI/CallFunction')) {
       const code = String(JSON.parse(body)?.arguments?.code || '');
+      if (code.includes('_automation-manifests/')) manifestWrites.push(code);
       res.writeHead(200, { 'content-type': 'application/json' });
       res.end(JSON.stringify(handleMockKscript(code)));
+      return;
+    }
+    if (url.startsWith('/_api/v2/Upload/Image')) {
+      const latin = buf.toString('latin1');
+      const folder = latin.match(/name="Folder"\r\n\r\n([^\r\n]+)/)?.[1] || '';
+      const filename = latin.match(/name="file"; filename="([^"]+)"/)?.[1] || 'image.png';
+      imageUploads.push({ folder, filename });
+      res.writeHead(200, { 'content-type': 'application/json' });
+      res.end(JSON.stringify([{ id: `media-${filename}`, url: `${folder}/${filename}`.replace(/\/+/g, '/') }]));
       return;
     }
     if (url.startsWith('/_api/v2/Upload/File')) {
@@ -831,6 +844,11 @@ test('AI-assisted intake stages ready draft for confirmation, supports selective
     });
     assert.equal(completedBatch.status, 'applied');
     assert.equal(f.automationStore.task(task.id)?.status, 'queued');
+    assert.deepEqual(imageUploads, [
+      { folder: '/materials/supplement/screenshots', filename: 'home.png' },
+      { folder: '/materials/supplement/assets', filename: 'home-img-1.png' },
+    ]);
+    assert.ok(manifestWrites.length >= 2);
   } finally {
     await f.close();
     await closeServer(server);

@@ -128,22 +128,34 @@ test('Codex relay captures individual SSE requests and failures, forwards bytes 
 test('material manifest maps normalized Kooboo filenames and evaluation copies real directory paths with integrity checks',async()=>{
   const {materialDestination,copyEvaluationMaterials}=await import('../server/automation/materials.js');const f=await fixture();try{
     const bytes=Buffer.from('<svg/>'),file={id:randomUUID(),name:'images/hero banner.svg',type:'image/svg+xml',size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};mkdirSync(join(f.directory,'materials'),{recursive:true});writeFileSync(join(f.directory,'materials',file.id),bytes);
-    const mapping=materialDestination(f.resource.id,f.site.versionId,file);assert.equal(mapping.text,false);assert.equal(mapping.filename,file.id+'.svg');assert.ok(mapping.path.endsWith('/images/'+file.id+'.svg'));
+    const mapping=materialDestination(f.resource.id,f.site.versionId,file);assert.equal(mapping.text,false);assert.equal(mapping.media,true);assert.equal(mapping.storage,'mediaLibrary');assert.equal(mapping.folder,'materials/images');assert.equal(mapping.filename,file.id+'.svg');assert.equal(mapping.path,'/materials/images/'+file.id+'.svg');
     const work=join(f.directory,'copy');mkdirSync(work);copyEvaluationMaterials(f.directory,work,[file]);assert.equal(readFileSync(join(work,'materials','images','hero banner.svg'),'utf8'),'<svg/>');assert.equal(JSON.parse(readFileSync(join(work,'materials-manifest.json'),'utf8'))[0].name,file.name);
     writeFileSync(join(f.directory,'materials',file.id),'corrupt');assert.throws(()=>copyEvaluationMaterials(f.directory,work,[file]),/校验失败/);
   }finally{await f.close();}
 });
 
-test('material preparation accepts Kooboo v2 null receipts only with matching persisted assets',async()=>{
-  const {executeGeneration}=await import('../server/automation/generator.js');const {materialDestination}=await import('../server/automation/materials.js');const f=await fixture();let origin='';const uploads:string[]=[],scripts:string[]=[];
-  const server=createServer(async(req,res)=>{res.setHeader('Content-Type','application/json');if(req.method==='GET'){const url=new URL(req.url!,origin);res.end(url.pathname==='/_api/v2/File/List'?JSON.stringify({files:{list:[{url:url.searchParams.get('path')+'/'+url.searchParams.get('keyword'),size:6}],totalPages:1}}):url.pathname==='/_api/v2/Site/List'?JSON.stringify([{siteId:f.site.siteId,homePageLink:origin+'/'}]):'true');return;}let body='';for await(const c of req)body+=c;if(req.url?.startsWith('/_api/v2/Upload/File')){uploads.push(body);res.end('null');}else{scripts.push(JSON.parse(body).arguments.code);res.end(JSON.stringify({contents:[{result:true}]}));}});
+test('material preparation accepts Kooboo v2 null receipts for CmsFile and uploads user images to media library',async()=>{
+  const {executeGeneration}=await import('../server/automation/generator.js');const {materialDestination}=await import('../server/automation/materials.js');const f=await fixture();let origin='';const fileUploads:string[]=[],imageUploads:string[]=[],scripts:string[]=[];
+  const server=createServer(async(req,res)=>{res.setHeader('Content-Type','application/json');const url=new URL(req.url!,origin);if(req.method==='GET'){res.end(url.pathname==='/_api/v2/File/List'?JSON.stringify({files:{list:[{url:url.searchParams.get('path')+'/'+url.searchParams.get('keyword'),size:6}],totalPages:1}}):url.pathname==='/_api/v2/Site/List'?JSON.stringify([{siteId:f.site.siteId,homePageLink:origin+'/'}]):'true');return;}let body='';for await(const c of req)body+=c;if(url.pathname==='/_api/v2/Upload/File'){fileUploads.push(body);res.end('null');}else if(url.pathname==='/_api/v2/Upload/Image'){imageUploads.push(body);res.end(JSON.stringify([{id:'img-hero-1',url:'/materials/images/hero-resolved.svg',size:6}]));}else{scripts.push(JSON.parse(body).arguments.code);res.end(JSON.stringify({contents:[{result:true}]}));}});
   origin=await listen(server);try{
     const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
-    const files=[{name:'README.md',text:'![hero](images/hero banner.svg)',type:'text/markdown'},{name:'images/hero banner.svg',text:'<svg/>',type:'image/svg+xml'}].map(x=>{const bytes=Buffer.from(x.text),file={id:randomUUID(),name:x.name,type:x.type,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};mkdirSync(join(f.directory,'materials'),{recursive:true});writeFileSync(join(f.directory,'materials',file.id),bytes);return file;});
+    const files=[
+      {name:'README.md',text:'![hero](images/hero banner.svg)',type:'text/markdown'},
+      {name:'images/hero banner.svg',text:'<svg/>',type:'image/svg+xml'},
+      {name:'docs/company profile.pdf',text:'%PDF-1',type:'application/pdf'},
+    ].map(x=>{const bytes=Buffer.from(x.text),file={id:randomUUID(),name:x.name,type:x.type,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};mkdirSync(join(f.directory,'materials'),{recursive:true});writeFileSync(join(f.directory,'materials',file.id),bytes);return file;});
     f.automationStore.saveResource({...f.resource,files},f.resource.id,f.resource.revision);const t=f.create('generation');t.generation={deliveryState:'completed'};
-    await executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000));assert.equal(uploads.length,1);assert.ok(uploads[0].includes('filename="'+files[1].id+'.svg"'));assert.ok(uploads[0].includes(`materials/${f.resource.id}/${t.versionId}/images`));assert.equal(scripts.length,2);
+    await executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000));
+    assert.equal(fileUploads.length,1);assert.ok(fileUploads[0].includes('filename="'+files[2].id+'.pdf"'));assert.ok(fileUploads[0].includes(`materials/${f.resource.id}/${t.versionId}/docs`));
+    assert.equal(imageUploads.length,1);assert.ok(imageUploads[0].includes('filename="'+files[1].id+'.svg"'));assert.ok(imageUploads[0].includes('/materials/images'));
+    assert.equal(scripts.length,2);
     let manifestPath='',manifest:any[]=[];runInNewContext('(function(){'+scripts[1]+'})()',{k:{file:{write:(path:string,value:string)=>{manifestPath=path;manifest=JSON.parse(value);}}}});
-    assert.equal(manifestPath,`_automation-manifests/${t.id}.json`);assert.equal(manifest.find(item=>item.id===files[1].id)?.destination,materialDestination(f.resource.id,t.versionId,files[1]).path);assert.ok(t.message.includes('kfile:'+manifestPath));assert.ok(!t.message.includes(files[1].name+' → '),'the prompt points to the persisted index without expanding every material');assert.equal(t.generation.prepared,true);assert.equal(t.stage,'handoff');
+    assert.equal(manifestPath,`_automation-manifests/${t.id}.json`);
+    assert.equal(manifest.find(item=>item.id===files[1].id)?.destination,'/materials/images/hero-resolved.svg');
+    assert.equal(manifest.find(item=>item.id===files[1].id)?.storage,'mediaLibrary');
+    assert.equal(manifest.find(item=>item.id===files[1].id)?.imageId,'img-hero-1');
+    assert.equal(manifest.find(item=>item.id===files[2].id)?.destination,materialDestination(f.resource.id,t.versionId,files[2]).path);
+    assert.ok(t.message.includes('kfile:'+manifestPath));assert.ok(!t.message.includes(files[1].name+' → '),'the prompt points to the persisted index without expanding every material');assert.equal(t.generation.prepared,true);assert.equal(t.stage,'handoff');
   }finally{await close(server);await f.close();}
 });
 
@@ -162,7 +174,7 @@ test('material preparation resumes confirmed files and rejects HTTP success with
   });
   origin=await listen(server);try{
     const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
-    const files=[{name:'README.md',text:'Source content',type:'text/markdown'},{name:'DH Trading/images/badge.svg',text:'<svg/>',type:'image/svg+xml'}].map(x=>{const bytes=Buffer.from(x.text),file={id:randomUUID(),name:x.name,type:x.type,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};mkdirSync(join(f.directory,'materials'),{recursive:true});writeFileSync(join(f.directory,'materials',file.id),bytes);return file;});
+    const files=[{name:'README.md',text:'Source content',type:'text/markdown'},{name:'DH Trading/docs/brochure.pdf',text:'%PDF-1',type:'application/pdf'}].map(x=>{const bytes=Buffer.from(x.text),file={id:randomUUID(),name:x.name,type:x.type,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};mkdirSync(join(f.directory,'materials'),{recursive:true});writeFileSync(join(f.directory,'materials',file.id),bytes);return file;});
     f.automationStore.saveResource({...f.resource,files},f.resource.id,f.resource.revision);let task=f.create('generation');task.generation={deliveryState:'completed'};
     for(const mismatch of ['missing','wrong-path','wrong-size'] as const){
       confirmation=mismatch;await assert.rejects(executeGeneration(task,f.automationStore,f.vault,f.directory,AbortSignal.timeout(3000)),/上传资料未确认/);
@@ -174,6 +186,116 @@ test('material preparation resumes confirmed files and rejects HTTP success with
     let manifest:any[]=[];runInNewContext('(function(){'+scripts[1]+'})()',{k:{file:{write:(_path:string,value:string)=>{manifest=JSON.parse(value);}}}});
     assert.equal(manifest.find(item=>item.id===files[0].id)?.destination,materialDestination(task.resourceId,task.versionId,files[0]).path);assert.equal(manifest.find(item=>item.id===files[1].id)?.destination,materialDestination(task.resourceId,task.versionId,files[1]).path);assert.ok(task.message.includes(`kfile:_automation-manifests/${task.id}.json`));assert.ok(!task.message.includes('README.md → kfile:'));
     assert.equal(task.generation?.importedMaterials?.[files[1].id],files[1].sha256);assert.equal(task.stage,'handoff');
+  }finally{await close(server);await f.close();}
+});
+
+test('user images of all supported types upload to media library, exclude collection/, validate receipts, and stay idempotent',async()=>{
+  const {uploadMaterialsToKoobooSite,resolveTaskMaterialEntry}=await import('../server/automation/kooboo-materials.js');
+  const {legacyCmsFileDestination}=await import('../server/automation/materials.js');
+  const f=await fixture();
+  const imageReqs:Array<{folder:string;filename:string;mime:string}>=[],fileReqs:Array<{folder:string;filename:string}>=[];
+  let nextImageReceipt:(folder:string,filename:string,size:number)=>unknown=(folder,filename,size)=>[{id:'media-'+filename,url:`${folder}/${filename}`,size}];
+  const server=createServer(async(req,res)=>{
+    res.setHeader('Content-Type','application/json');const url=new URL(req.url!,origin);
+    if(req.method==='GET'&&url.pathname==='/_api/v2/File/List'){
+      const p=url.searchParams.get('path')||'',kw=url.searchParams.get('keyword')||'';
+      res.end(JSON.stringify({files:{list:[{url:`${p}/${kw}`.replace(/\/+/g,'/'),size:3}],totalPages:1}}));return;
+    }
+    const chunks:Buffer[]=[];for await(const c of req)chunks.push(Buffer.isBuffer(c)?c:Buffer.from(c));
+    const body=Buffer.concat(chunks).toString('latin1');
+    const folderMatch=body.match(/name="Folder"\r\n\r\n([^\r\n]+)/);
+    const fileMatch=body.match(/name="file"; filename="([^"]+)"\r\nContent-Type: ([^\r\n]+)/);
+    if(url.pathname==='/_api/v2/Upload/Image'){
+      const folder=folderMatch?.[1]||'',filename=fileMatch?.[1]||'',mime=fileMatch?.[2]||'';
+      imageReqs.push({folder,filename,mime});
+      res.end(JSON.stringify(nextImageReceipt(folder,filename,3)));
+      return;
+    }
+    if(url.pathname==='/_api/v2/Upload/File'){
+      fileReqs.push({folder:folderMatch?.[1]||'',filename:fileMatch?.[1]||''});
+      res.end('true');return;
+    }
+    res.end('{}');
+  });
+  const origin=await listen(server);
+  try{
+    const mkFile=(name:string,type:string,content='abc')=>{
+      const bytes=Buffer.from(content),file={id:randomUUID(),name,type,size:bytes.length,sha256:createHash('sha256').update(bytes).digest('hex')};
+      mkdirSync(join(f.directory,'materials'),{recursive:true});writeFileSync(join(f.directory,'materials',file.id),bytes);
+      return file;
+    };
+    const userImages=[
+      mkFile('logo.svg','image/svg+xml'),
+      mkFile('images/photo.jpg','image/jpeg'),
+      mkFile('images/hero.png','image/png'),
+      mkFile('images/banner.webp','image/webp'),
+      mkFile('images/anim.gif','image/gif'),
+      mkFile('images/modern.avif','image/avif'),
+      mkFile('favicon.ico','application/octet-stream'),
+      mkFile('images/legacy.bmp','application/octet-stream'),
+    ];
+    const collectionShot=mkFile('collection/site/visual/screens/home.png','image/png');
+    const legacyPreUpgrade=mkFile('images/old_cached.jpg','image/jpeg');
+    const task=f.create('generation');
+    task.generation={importedMaterials:{[legacyPreUpgrade.id]:legacyPreUpgrade.sha256}};
+    const request=async(path:string)=>{
+      if(path.startsWith('File/List?')){
+        const qs=new URLSearchParams(path.slice('File/List?'.length));
+        const p=qs.get('path')||'',kw=qs.get('keyword')||'';
+        return {files:{list:[{url:`${p}/${kw}`.replace(/\/+/g,'/'),size:3}],totalPages:1}};
+      }
+      throw new Error('unexpected kscript: '+path);
+    };
+
+    // Invalid Upload/Image receipts fail without marking importedMaterials
+    for(const invalid of [[],[{}],[{id:'id-only-wrong-size',url:'/materials/logo.svg',size:999}]]){
+      nextImageReceipt=()=>invalid;
+      await assert.rejects(uploadMaterialsToKoobooSite({
+        task,siteId:f.site.siteId,files:[userImages[0]],apiOrigin:origin,token:'tok',request,directory:f.directory,signal:AbortSignal.timeout(3000),mode:'materials',
+      }),/媒体库上传回执/);
+      assert.equal(task.generation?.importedMaterials?.[userImages[0].id],undefined);
+    }
+
+    nextImageReceipt=(folder,filename,size)=>[{id:'id-'+filename,url:`${folder}/${filename}`,size}];
+    const all=[...userImages,collectionShot,legacyPreUpgrade];
+    const first=await uploadMaterialsToKoobooSite({
+      task,siteId:f.site.siteId,files:all,apiOrigin:origin,token:'tok',request,directory:f.directory,signal:AbortSignal.timeout(3000),mode:'materials',
+    });
+    assert.equal(first.newlyImportedCount,userImages.length+1);
+    assert.equal(imageReqs.length,userImages.length+3);
+    assert.equal(fileReqs.length,1);
+    assert.equal(fileReqs[0].folder,`materials/${task.resourceId}/${task.versionId}/collection/site/visual/screens`);
+    assert.equal(fileReqs[0].filename,'home.png');
+
+    assert.equal(imageReqs[3].folder,'/materials');
+    assert.equal(imageReqs[3].filename,'logo.svg');
+    assert.equal(imageReqs[4].folder,'/materials/images');
+    assert.equal(imageReqs[4].filename,'photo.jpg');
+    assert.equal(imageReqs[9].folder,'/materials');
+    assert.equal(imageReqs[9].filename,'favicon.ico');
+    assert.equal(imageReqs[9].mime,'image/x-icon');
+    assert.equal(imageReqs[10].mime,'image/bmp');
+
+    // Legacy pre-upgrade entry resolves to CmsFile without re-uploading
+    const legacyEntry=resolveTaskMaterialEntry(task,legacyPreUpgrade);
+    assert.equal(legacyEntry.storage,'file');
+    assert.equal(legacyEntry.destination,legacyCmsFileDestination(task.resourceId,task.versionId,legacyPreUpgrade).path);
+
+    // Resolving new media entries includes mediaLibrary storage and imageId
+    const resolvedLogo=resolveTaskMaterialEntry(task,userImages[0]);
+    assert.equal(resolvedLogo.storage,'mediaLibrary');
+    assert.equal(resolvedLogo.destination,'/materials/logo.svg');
+    assert.equal(resolvedLogo.imageId,'id-logo.svg');
+
+    // Resume skips all already-imported files without extra network uploads
+    const beforeImages=imageReqs.length,beforeFiles=fileReqs.length;
+    const second=await uploadMaterialsToKoobooSite({
+      task,siteId:f.site.siteId,files:all,apiOrigin:origin,token:'tok',request,directory:f.directory,signal:AbortSignal.timeout(3000),mode:'materials',
+    });
+    assert.equal(second.newlyImportedCount,0);
+    assert.equal(imageReqs.length,beforeImages);
+    assert.equal(fileReqs.length,beforeFiles);
+    assert.equal(second.uploaded.length,all.length);
   }finally{await close(server);await f.close();}
 });
 

@@ -21,8 +21,8 @@ import {
   fetchKoobooTemplateDetail,
   probeKoobooApiMethod,
 } from './kooboo.js';
-import { materialDestination, readMaterial } from './materials.js';
-import { mergeTaskMaterials, syncMaterialManifestToSite, uploadMaterialsToKoobooSite } from './kooboo-materials.js';
+import { readMaterial } from './materials.js';
+import { mergeTaskMaterials, resolveTaskMaterialEntry, syncMaterialManifestToSite, uploadMaterialsToKoobooSite } from './kooboo-materials.js';
 import { generationSession, matchingGenerationOutcome } from './generation-session.js';
 import { ensureManifest, ManifestStore } from './completeness.js';
 import { selectExperience, adoptedGuidance } from './experience.js';
@@ -425,7 +425,6 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   }
   // Materials are copied into the chosen target; no mandatory README or naming convention.
   const allMaterialFiles=mergeTaskMaterials(input.files,task.generation.supplementalFiles);
-  const materials=allMaterialFiles.map(file=>{const destination=materialDestination(task.resourceId,task.versionId,file);return {name:file.name,id:file.id,destination:destination.path,type:file.type,size:file.size,sha256:file.sha256,storage:destination.text?'kfile':'file'};});
   const pendingFiles=task.generation.next?.action==='answer'
     ?[]
     :task.generation.prepared
@@ -454,6 +453,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
       store.put(task);
     }
   }
+  const materials=allMaterialFiles.map(file=>resolveTaskMaterialEntry(task,file));
   task.generation.prepared=true;store.put(task);
   if((!task.generation.deliveryId||task.generation.next)&&!task.generation.legacySubmitted&&(task.generation.deliveryState!=='completed'||task.generation.next)){
     if(!task.templateWorkflow)await ensureManifest(task,store,vault,directory,signal);

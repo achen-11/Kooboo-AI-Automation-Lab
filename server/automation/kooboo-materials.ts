@@ -2,7 +2,14 @@ import { randomUUID } from 'node:crypto';
 import type { AutomationTask, MaterialFile } from '../../shared/automation.js';
 import { materialPath } from '../../shared/materials.js';
 import type { ContextRequest } from './generation-context.js';
-import { koobooSafeFilename, materialDestination, readMaterial } from './materials.js';
+import {
+  inferImageMimeType,
+  isImageMaterial,
+  koobooSafeFilename,
+  legacyCmsFileDestination,
+  materialDestination,
+  readMaterial,
+} from './materials.js';
 
 export interface UploadedSiteMaterial {
   file: MaterialFile;
@@ -15,6 +22,80 @@ export interface UploadedSiteMaterial {
   size: number;
   storage: 'cmsFile' | 'mediaLibrary';
   mapping: string;
+}
+
+export interface TaskMaterialEntry {
+  name: string;
+  id: string;
+  destination: string;
+  type: string;
+  size: number;
+  sha256: string;
+  storage: 'kfile' | 'file' | 'mediaLibrary';
+  imageId?: string;
+}
+
+export function resolveTaskMaterialEntry(
+  task: Pick<AutomationTask, 'resourceId' | 'versionId' | 'generation'>,
+  file: MaterialFile,
+): TaskMaterialEntry {
+  const dest = materialDestination(task.resourceId, task.versionId, file);
+  if (dest.text) {
+    return {
+      name: file.name,
+      id: file.id,
+      destination: dest.path,
+      type: file.type,
+      size: file.size,
+      sha256: file.sha256,
+      storage: 'kfile',
+    };
+  }
+  if (dest.media) {
+    const cachedMedia = task.generation?.importedMedia?.[file.id];
+    if (cachedMedia && cachedMedia.sha256 === file.sha256) {
+      return {
+        name: file.name,
+        id: file.id,
+        destination: cachedMedia.url,
+        type: file.type,
+        size: file.size,
+        sha256: file.sha256,
+        storage: 'mediaLibrary',
+        ...(cachedMedia.id ? { imageId: cachedMedia.id } : {}),
+      };
+    }
+    if (task.generation?.importedMaterials?.[file.id] === file.sha256) {
+      const legacy = legacyCmsFileDestination(task.resourceId, task.versionId, file);
+      return {
+        name: file.name,
+        id: file.id,
+        destination: legacy.path,
+        type: file.type,
+        size: file.size,
+        sha256: file.sha256,
+        storage: 'file',
+      };
+    }
+    return {
+      name: file.name,
+      id: file.id,
+      destination: dest.path,
+      type: file.type,
+      size: file.size,
+      sha256: file.sha256,
+      storage: 'mediaLibrary',
+    };
+  }
+  return {
+    name: file.name,
+    id: file.id,
+    destination: dest.path,
+    type: file.type,
+    size: file.size,
+    sha256: file.sha256,
+    storage: 'file',
+  };
 }
 
 /** Merge original frozen files with task-level supplemental files, keeping newer supplement when paths collide. */
@@ -39,8 +120,6 @@ function safeUploadBasename(file: MaterialFile): string {
   return koobooSafeFilename(file, original);
 }
 
-const IMAGE_MIME_RE = /^image\/(png|jpeg|jpg|webp|svg\+xml|gif)$/i;
-
 export async function uploadMaterialsToKoobooSite(params: {
   task: AutomationTask;
   siteId: string;
@@ -64,15 +143,51 @@ export async function uploadMaterialsToKoobooSite(params: {
   for (const file of files) {
     signal.throwIfAborted();
     const bytes = readMaterial(directory, file);
-    const { filename, folder, text, path } = materialDestination(task.resourceId, task.versionId, file);
-    const isMedia = mode === 'mediaLibrary' && IMAGE_MIME_RE.test(file.type || '');
+    const dest = materialDestination(task.resourceId, task.versionId, file);
+    const { filename, folder, text, path } = dest;
+    const isExplicitMedia = mode === 'mediaLibrary' && isImageMaterial(file);
+    const isMaterialMedia = mode === 'materials' && dest.media;
 
-    if (isMedia) {
-      const targetFolder = '/' + String(params.mediaFolder || `automation-uploads/${task.id}`).replace(/^\/+|\/+$/g, '');
-      const uploadName = safeUploadBasename(file);
+    if (isExplicitMedia || isMaterialMedia) {
+      const alreadyImported = isMaterialMedia && task.generation?.importedMaterials?.[file.id] === file.sha256;
+      if (alreadyImported) {
+        const cachedMedia = task.generation?.importedMedia?.[file.id];
+        if (cachedMedia && cachedMedia.sha256 === file.sha256) {
+          results.push({
+            file,
+            ...(cachedMedia.id ? { id: cachedMedia.id } : {}),
+            name: file.name,
+            url: cachedMedia.url,
+            relativeUrl: cachedMedia.url,
+            mimeType: inferImageMimeType(dest.filename, file.type),
+            size: bytes.length,
+            storage: 'mediaLibrary',
+            mapping: `${file.name} → media:${cachedMedia.url}`,
+          });
+        } else {
+          const legacyPath = legacyCmsFileDestination(task.resourceId, task.versionId, file).path;
+          results.push({
+            file,
+            name: file.name,
+            url: legacyPath,
+            relativeUrl: legacyPath,
+            mimeType: file.type || 'application/octet-stream',
+            size: bytes.length,
+            storage: 'cmsFile',
+            mapping: `${file.name} → ${legacyPath}`,
+          });
+        }
+        continue;
+      }
+
+      const targetFolder = isExplicitMedia
+        ? '/' + String(params.mediaFolder || `automation-uploads/${task.id}`).replace(/^\/+|\/+$/g, '')
+        : '/' + folder.replace(/^\/+|\/+$/g, '');
+      const uploadName = isExplicitMedia ? safeUploadBasename(file) : filename;
+      const mimeType = inferImageMimeType(uploadName, file.type);
       const form = new FormData();
       form.append('Folder', targetFolder);
-      form.append('file', new Blob([new Uint8Array(bytes)], { type: file.type }), uploadName);
+      form.append('file', new Blob([new Uint8Array(bytes)], { type: mimeType }), uploadName);
       const url = new URL('/_api/v2/Upload/Image', apiOrigin);
       url.searchParams.set('SiteId', siteId);
       url.searchParams.set('provider', 'default');
@@ -86,19 +201,35 @@ export async function uploadMaterialsToKoobooSite(params: {
       if (!response.ok) throw new Error(`媒体库图片上传失败（HTTP ${response.status}）：${file.name}`);
       const receipt = await response.json();
       const item = Array.isArray(receipt) && receipt.length ? receipt[0] : undefined;
-      if (!item || (typeof item.id !== 'string' && typeof item.url !== 'string')) {
+      const hasValidId = typeof item?.id === 'string' && item.id.trim().length > 0;
+      const hasValidUrl = typeof item?.url === 'string' && item.url.trim().length > 0;
+      if (!item || (!hasValidId && !hasValidUrl)) {
         throw new Error(`媒体库上传回执无效：${file.name}`);
       }
+      if (typeof item.size === 'number' && item.size !== bytes.length) {
+        throw new Error(`媒体库上传回执大小不匹配：${file.name}`);
+      }
+      const imageId = hasValidId ? item.id.trim() : undefined;
+      const resolvedUrl = hasValidUrl ? item.url.trim() : isMaterialMedia ? path : '';
+      task.generation ??= {};
+      task.generation.importedMaterials ??= {};
+      task.generation.importedMaterials[file.id] = file.sha256;
+      task.generation.importedMedia ??= {};
+      task.generation.importedMedia[file.id] = {
+        sha256: file.sha256,
+        ...(imageId ? { id: imageId } : {}),
+        url: resolvedUrl,
+      };
       const uploadedItem: UploadedSiteMaterial = {
         file,
-        id: typeof item.id === 'string' ? item.id : undefined,
+        ...(imageId ? { id: imageId } : {}),
         name: file.name,
-        url: typeof item.url === 'string' ? item.url : '',
-        relativeUrl: typeof item.url === 'string' ? item.url : '',
-        mimeType: file.type || 'image/png',
+        url: resolvedUrl,
+        relativeUrl: resolvedUrl,
+        mimeType,
         size: bytes.length,
         storage: 'mediaLibrary',
-        mapping: `${file.name} → media:${String(item.url || item.id || '')}`,
+        mapping: `${file.name} → media:${resolvedUrl || imageId || ''}`,
       };
       results.push(uploadedItem);
       newlyImportedCount++;
@@ -187,11 +318,16 @@ export async function syncMaterialManifestToSite(params: {
 }): Promise<string> {
   const { task, siteId, allFiles, request } = params;
   const manifestPath = `_automation-manifests/${task.id}.json`;
-  const mappings = allFiles.map(file => ({
-    name: file.name,
-    id: file.id,
-    destination: materialDestination(task.resourceId, task.versionId, file).path,
-  }));
+  const mappings = allFiles.map(file => {
+    const entry = resolveTaskMaterialEntry(task, file);
+    return {
+      name: entry.name,
+      id: entry.id,
+      destination: entry.destination,
+      storage: entry.storage,
+      ...(entry.imageId ? { imageId: entry.imageId } : {}),
+    };
+  });
   const result = await request(
     'AI/CallFunction',
     {

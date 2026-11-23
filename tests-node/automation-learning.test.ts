@@ -11,8 +11,14 @@ import { RequestBudget, ModelBudgetExceeded } from '../server/automation/request
 import { usageCapture } from '../server/automation/usage-proxy.js';
 import { defaultAutomationSettings, type AutomationReport, type MaterialFile } from '../shared/automation.js';
 import { defaultLearningSettings, type ExperienceInput } from '../shared/experience.js';
-import { ExperienceStore } from '../server/automation/experience-store.js';
-import { selectExperience, adoptedGuidance, queueReflection, reflectExperience } from '../server/automation/experience.js';
+import {
+  ExperienceStore,
+  FOLLOWUP_EPOCH_MIGRATION_ID,
+  FOLLOWUP_RUNTIME_EPOCH,
+  KOOBOO_SUBDOMAIN_CONFLICT_MIGRATION_ID,
+  hasKoobooSubdomainHyphenConflict,
+} from '../server/automation/experience-store.js';
+import { selectExperience, adoptedGuidance, queueReflection, reflectExperience, PLATFORM_HARD_CONTRACTS } from '../server/automation/experience.js';
 import { localDecision } from '../server/automation/local-decision.js';
 import { ManifestStore, validateCompleteness, inspectImplementation, sourceReader } from '../server/automation/completeness.js';
 import { validateResult } from '../server/automation/evaluator.js';
@@ -22,7 +28,7 @@ import type { Requirement, RequirementCheck } from '../shared/completeness.js';
 import { inspectionTools } from '../server/automation/inspection-tools.js';
 import { createAutonomousExecution } from '../shared/autonomy.js';
 import { retainStoppedLearningReservations } from '../server/automation/budget-recovery.js';
-import { AutomationWorker } from '../server/automation/worker.js';
+import { AutomationWorker, syncReflectionCandidates } from '../server/automation/worker.js';
 
 const experience:ExperienceInput={title:'先查交付记录',scenarios:['site-template'],stages:['generation','followup','evaluation'],conditions:'续建前不确定原会话状态',exclusions:'没有原会话',guidance:'查询实际交付回执后再决定，不重复发送。'};
 test('learning defaults off; disabling it blocks adoption, manual reflection and queued scheduling without deleting history',async()=>{
@@ -399,4 +405,285 @@ test('source material reads retain binary originals and do not decode images as 
     const reader=sourceReader(task,f.automationStore,f.directory,v=>{evidence=v;return {evidence:'file-proof',result:v};}),value=await reader({kind:'material',id:file.id},new AbortController().signal) as {imagePath:string};assert.equal(value.imagePath,join(f.directory,'materials',file.id));assert.deepEqual(readFileSync(value.imagePath),bytes);assert.equal('text' in (evidence as object),false);assert.equal('imagePath' in (evidence as object),false);
     writeFileSync(value.imagePath,'changed');await assert.rejects(reader({kind:'material',id:file.id},new AbortController().signal),/资料校验失败/);
   }finally{await f.close();}
+});
+
+test('startup experience epoch migration retires legacy AI followup entries, strips followup from multi-stage entries, preserves human edits, and is idempotent', async () => {
+  const f = await fixture();
+  try {
+    // Ensure tables exist, then simulate an older DB before epoch migration ran:
+    new ExperienceStore(f.automationStore);
+    f.automationStore.db.prepare('DELETE FROM auto_experience_migrations WHERE id=?').run(FOLLOWUP_EPOCH_MIGRATION_ID);
+
+    const seedLegacy = (id: string, stages: ExperienceInput['stages'], actor: 'ai' | 'human', title: string) => {
+      const now = Date.now();
+      const exp = {
+        id,
+        revision: 1,
+        title,
+        scenarios: ['upgrade' as const],
+        stages,
+        conditions: '准备阶段未建站',
+        exclusions: '',
+        guidance: `${title} 指导内容`,
+        enabled: true,
+        manualDisabled: false,
+        evidence: 'supported' as const,
+        createdAt: now,
+        updatedAt: now,
+        sourceTaskId: null,
+        sourceEvidence: [],
+      };
+      f.automationStore.db.prepare('INSERT INTO auto_experiences VALUES(?,?,?)').run(exp.id, 1, JSON.stringify(exp));
+      f.automationStore.db.prepare('INSERT INTO auto_experience_revisions VALUES(?,?,?)').run(exp.id, 1, JSON.stringify({ experience: exp, actor, reason: 'legacy seed', time: now }));
+    };
+
+    const legacyFollowupAiId = randomUUID();
+    const legacyMultiStageAiId = randomUUID();
+    const legacyHumanFollowupId = randomUUID();
+    seedLegacy(legacyFollowupAiId, ['followup'], 'ai', '旧版AI纯跟进经验');
+    seedLegacy(legacyMultiStageAiId, ['generation', 'followup'], 'ai', '旧版AI跨阶段经验');
+    seedLegacy(legacyHumanFollowupId, ['followup'], 'human', '人工编写跟进经验');
+
+    // Trigger startup migration:
+    const es = new ExperienceStore(f.automationStore);
+
+    // 1) Pure AI followup experience is disabled via system revision without manualDisabled=true:
+    const retired = es.get(legacyFollowupAiId)!;
+    assert.equal(retired.enabled, false);
+    assert.equal(retired.manualDisabled, false);
+    assert.equal(retired.revision, 2);
+    const retiredHist = es.history(legacyFollowupAiId, 1, 10);
+    assert.equal(retiredHist.total, 2);
+    assert.equal(retiredHist.items[0].actor, 'system');
+    assert.match(retiredHist.items[0].reason, /\[系统升级自检\]/);
+
+    // Human can restore revision 1 via API and upgrade it to current epoch:
+    const restored = await f.app.inject({
+      method: 'POST',
+      url: `/api/automation/experiences/${legacyFollowupAiId}/restore`,
+      headers: f.headers,
+      payload: { from: 1, revision: 2, reason: '人工确认仍需要' },
+    });
+    assert.equal(restored.statusCode, 200, restored.body);
+    assert.equal(restored.json().runtimeEpoch, FOLLOWUP_RUNTIME_EPOCH);
+
+    // 2) Multi-stage AI experience keeps generation stage with original verdict and strips followup:
+    const stripped = es.get(legacyMultiStageAiId)!;
+    assert.equal(stripped.enabled, true);
+    assert.deepEqual(stripped.stages, ['generation']);
+    assert.equal(stripped.evidence, 'supported');
+    assert.equal(stripped.revision, 2);
+
+    // 3) Human-authored followup experience is untouched:
+    const human = es.get(legacyHumanFollowupId)!;
+    assert.equal(human.enabled, true);
+    assert.deepEqual(human.stages, ['followup']);
+    assert.equal(human.revision, 1);
+
+    // 4) Newly saved AI followup experience receives current FOLLOWUP_RUNTIME_EPOCH and stays enabled:
+    const fresh = es.save(
+      { title: '新版跟进经验', scenarios: ['upgrade'], stages: ['followup'], conditions: 'x', exclusions: '', guidance: '新版指导' },
+      { actor: 'ai', reason: 'new epoch' },
+    );
+    assert.equal(fresh.runtimeEpoch, FOLLOWUP_RUNTIME_EPOCH);
+
+    // Re-running startup check is idempotent (no extra revisions):
+    const esAgain = new ExperienceStore(f.automationStore);
+    assert.equal(esAgain.get(legacyMultiStageAiId)!.revision, 2);
+    assert.equal(esAgain.get(legacyHumanFollowupId)!.revision, 1);
+    assert.equal(esAgain.get(fresh.id)!.enabled, true);
+    assert.equal(esAgain.get(fresh.id)!.revision, 1);
+  } finally {
+    await f.close();
+  }
+});
+
+test('startup semantic migration disables AI experiences conflicting with Kooboo underscore subdomain rule, ignores valid rules and human edits, and is idempotent', async () => {
+  const f = await fixture();
+  try {
+    new ExperienceStore(f.automationStore);
+    f.automationStore.db.prepare('DELETE FROM auto_experience_migrations WHERE id=?').run(KOOBOO_SUBDOMAIN_CONFLICT_MIGRATION_ID);
+
+    const seed = (id: string, actor: 'ai' | 'human', title: string, guidance: string) => {
+      const now = Date.now();
+      const exp = {
+        id,
+        revision: 1,
+        title,
+        scenarios: ['upgrade' as const],
+        stages: ['generation' as const],
+        conditions: '检查 subDomain 命名',
+        exclusions: '',
+        guidance,
+        enabled: true,
+        manualDisabled: false,
+        evidence: 'supported' as const,
+        createdAt: now,
+        updatedAt: now,
+        sourceTaskId: null,
+        sourceEvidence: [],
+      };
+      f.automationStore.db.prepare('INSERT INTO auto_experiences VALUES(?,?,?)').run(exp.id, 1, JSON.stringify(exp));
+      f.automationStore.db.prepare('INSERT INTO auto_experience_revisions VALUES(?,?,?)').run(exp.id, 1, JSON.stringify({ experience: exp, actor, reason: 'seed', time: now }));
+    };
+
+    const badAiId = randomUUID();
+    const badHumanId = randomUUID();
+    const validAiId = randomUUID();
+
+    seed(badAiId, 'ai', '校验并修正 DNS 安全的 subDomain', 'subDomain 禁止下划线，只含字母、数字和连字符，把下划线改为连字符。');
+    seed(badHumanId, 'human', '人工测试保留条目', 'subDomain 禁止下划线，改用连字符。');
+    seed(validAiId, 'ai', 'Kooboo 真实命名规范', 'Kooboo siteName 与 subDomain 不能包含连字符（-），请改用下划线（_），只能使用英文字母、数字和下划线。');
+
+    assert.equal(hasKoobooSubdomainHyphenConflict({ title: 'bad', conditions: 'subDomain', guidance: '不能包含连字符（-），请改用下划线（_）' }), false);
+
+    const es = new ExperienceStore(f.automationStore);
+
+    const badAi = es.get(badAiId)!;
+    assert.equal(badAi.enabled, false);
+    assert.equal(badAi.manualDisabled, false);
+    assert.equal(badAi.revision, 2);
+    assert.equal(es.history(badAiId, 1, 10).items[0].actor, 'system');
+    assert.match(es.history(badAiId, 1, 10).items[0].reason, /Kooboo 域名校验规则/);
+
+    // Human-edited entry is untouched:
+    assert.equal(es.get(badHumanId)!.enabled, true);
+    assert.equal(es.get(badHumanId)!.revision, 1);
+
+    // Valid Kooboo rule is untouched:
+    assert.equal(es.get(validAiId)!.enabled, true);
+    assert.equal(es.get(validAiId)!.revision, 1);
+
+    // Idempotent on subsequent initializations:
+    const es2 = new ExperienceStore(f.automationStore);
+    assert.equal(es2.get(badAiId)!.revision, 2);
+    assert.ok(f.automationStore.db.prepare('SELECT 1 FROM auto_experience_migrations WHERE id=?').get(KOOBOO_SUBDOMAIN_CONFLICT_MIGRATION_ID));
+  } finally {
+    await f.close();
+  }
+});
+
+test('experience selection and reflection host prompts inject Kooboo hard-contract guardrails', async () => {
+  const f = await fixture();
+  try {
+    const es = new ExperienceStore(f.automationStore);
+    es.save(experience, { actor: 'human', reason: 'seed candidate' });
+    const task = f.create();
+    task.learningPolicy = { ...defaultLearningSettings, use: true, collect: true };
+    task.status = 'interrupted';
+    task.stopped = true;
+    f.automationStore.interrupt(task, { reason: '准备阶段失败', evidence: [], attempted: [], nextSteps: ['检查'], resumeFrom: '继续' });
+
+    const sops: string[] = [];
+    const decide = (async (options: Parameters<typeof localDecision>[0]) => {
+      sops.push(options.sop);
+      if (options.sop.includes('adoptions') || options.sop.includes('selected')) {
+        return options.submit({ reason: '跳过冲突经验', selected: [] });
+      }
+      return options.submit({ reason: '无可沉淀经验', changes: [], outcomes: [] });
+    }) as typeof localDecision;
+
+    await selectExperience(task, 'generation', f.automationStore, f.vault, f.directory, new AbortController().signal, decide);
+    const run = queueReflection(task, f.automationStore)!;
+    await reflectExperience(run, f.automationStore, f.vault, f.directory, new AbortController().signal, decide);
+
+    assert.equal(sops.length, 2);
+    for (const sop of sops) {
+      assert.ok(sop.includes(PLATFORM_HARD_CONTRACTS));
+      assert.match(sop, /严禁使用连字符（-）/);
+      assert.match(sop, /createAttempted=false/);
+      assert.match(sop, /counterexample/);
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test('interruption reflection deduplicates repeated interruptions with same execution progress fingerprint, allows manual reflect, and unlocks on real progress', async () => {
+  const f = await fixture();
+  try {
+    const task = f.create();
+    task.learningPolicy = { ...defaultLearningSettings, use: true, collect: true };
+    task.stage = 'prepare';
+    task.status = 'interrupted';
+    task.stopped = true;
+    f.automationStore.interrupt(task, {
+      reason: '第 6 次跟进仍未推进，observation-aaa',
+      evidence: ['observation-aaa'],
+      attempted: ['attempt 6'],
+      nextSteps: ['检查'],
+      resumeFrom: '继续',
+    });
+
+    const es = new ExperienceStore(f.automationStore);
+    // 1) First automatic interruption queues reflection:
+    syncReflectionCandidates(f.automationStore, es);
+    const runs1 = es.runs(task.id, 1, 20).items.filter(r => r.kind === 'reflection');
+    assert.equal(runs1.length, 1);
+    assert.equal(runs1[0].status, 'queued');
+    assert.ok(runs1[0].progressKey);
+    runs1[0].status = 'completed';
+    runs1[0].reason = '第 1 次复盘完成';
+    es.put(runs1[0]);
+
+    // 2) Second interruption with DIFFERENT wording / evidence / attempts, but SAME real execution progress:
+    task.followup = { policy: f.vault.automation().followup, state: 'interrupted', attempts: 7, startedAt: 1, nextAt: 1, tokens: 100, threadId: '', executionStopped: true, observations: ['observation-bbb'] };
+    f.automationStore.interrupt(task, {
+      reason: '第 7 次跟进仍未推进，observation-bbb',
+      evidence: ['observation-bbb'],
+      attempted: ['attempt 7'],
+      nextSteps: ['检查'],
+      resumeFrom: '继续',
+    });
+    syncReflectionCandidates(f.automationStore, es);
+    const runs2 = es.runs(task.id, 1, 20).items.filter(r => r.kind === 'reflection');
+    assert.equal(runs2.length, 2);
+    const skippedRun = runs2[0];
+    assert.equal(skippedRun.status, 'completed');
+    assert.match(skippedRun.reason, /^跳过复盘：自上次中断复盘以来任务未产生新的执行进展/);
+
+    // 3) Manual POST /reflect can still explicitly force re-queueing that skipped run:
+    const manualRes = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${task.id}/reflect`, headers: f.headers });
+    assert.equal(manualRes.statusCode, 200, manualRes.body);
+    assert.equal(manualRes.json().queued, true);
+    assert.equal(es.run(skippedRun.id)!.status, 'queued');
+
+    // Mark it failed and verify a failed run does NOT block a new automatic reflection at the same progressKey:
+    const failedRun = es.run(skippedRun.id)!;
+    failedRun.status = 'failed';
+    es.put(failedRun);
+    const r1 = es.run(runs1[0].id)!;
+    r1.status = 'failed';
+    es.put(r1);
+    f.automationStore.interrupt(task, {
+      reason: '第 8 次跟进失败（此前复盘均 failed）',
+      evidence: ['observation-ccc'],
+      attempted: [],
+      nextSteps: ['检查'],
+      resumeFrom: '继续',
+    });
+    syncReflectionCandidates(f.automationStore, es);
+    const runs3 = es.runs(task.id, 1, 20).items.filter(r => r.kind === 'reflection');
+    assert.equal(runs3.length, 3);
+    assert.equal(runs3[0].status, 'queued');
+    runs3[0].status = 'completed';
+    es.put(runs3[0]);
+
+    // 4) Once real progress happens (createAttempted becomes true), a new interruption reflection IS queued:
+    task.generation = { ...(task.generation || {}), createAttempted: true };
+    f.automationStore.interrupt(task, {
+      reason: '已尝试建站但仍中断',
+      evidence: ['observation-ddd'],
+      attempted: [],
+      nextSteps: ['检查'],
+      resumeFrom: '继续',
+    });
+    syncReflectionCandidates(f.automationStore, es);
+    const runs4 = es.runs(task.id, 1, 20).items.filter(r => r.kind === 'reflection');
+    assert.equal(runs4.length, 4);
+    assert.equal(runs4[0].status, 'queued');
+    assert.notEqual(runs4[0].progressKey, runs3[0].progressKey);
+  } finally {
+    await f.close();
+  }
 });

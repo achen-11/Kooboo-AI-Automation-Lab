@@ -46,6 +46,11 @@ export function syncReflectionCandidates(store:AutomationStore,experiences=new E
     queueReflection(candidate,store);
   }
 }
+export function isFollowupTransportDisconnect(error:unknown):boolean {
+  if(error instanceof UnconfirmedStop||error instanceof FollowupRuntimeError||error instanceof ModelBudgetExceeded||isModelBillingOrAuthError(error))return false;
+  const text=error instanceof Error?error.message:String(error??'');
+  return /stream disconnected before completion|error sending request|socket hang up|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|EPIPE|fetch failed|connection reset|connection refused/i.test(text);
+}
 export class AutomationWorker{
   private timer?:ReturnType<typeof setInterval>;
   private running=new Map<string,{controller:AbortController;promise:Promise<void>}>();
@@ -308,19 +313,21 @@ export class AutomationWorker{
     const monotonicStart=performance.now(),windowAtStart=task.autonomy?.window.index,followupWindowAtStart=followup.window?.index;const activeStart=Date.now();followup.activeStartedAt=activeStart;followup.activeHeartbeatAt=activeStart;followup.activeElapsedMs=0;
     const heartbeat=setInterval(()=>{followup.activeHeartbeatAt=Date.now();followup.activeElapsedMs=Math.max(0,Math.round(performance.now()-monotonicStart));this.store.put(task);},1000);heartbeat.unref();
     const timer=setTimeout(()=>controller.abort(new Error('AI 跟进达到累计时间预算')),remaining);timer.unref();
+    const attemptsBefore=followup.attempts,tokensBefore=followup.tokens,observationsBefore=followup.observations.length;
     try{
       if(task.optimization?.state==='planning')optimizationEvidence(task,this.store,this.directory);
       await selectExperience(task,'followup',this.store,this.vault,this.directory,controller.signal);
       followup.attempts++;this.store.put(task);this.store.event(task.id,`AI 跟进第 ${followup.attempts} 次，阶段：${task.stage||task.kind}`);
       const action=await this.followupExecute(task,this.store,this.vault,this.directory,controller.signal);
       if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){task.stopped=followup.executionStopped;if(task.stopped){task.status='cancelled';this.store.put(task);if(task.kind==='generation')await trimTaskGenerationBrowserCache(this.directory,task.id);}else this.interrupt(task,'取消时原执行仍未确认停止。',['检查原执行并确认停止后释放名额。']);return;}
-      controller.signal.throwIfAborted();task.stopped=followup.executionStopped;followup.lastAction=action;
+      controller.signal.throwIfAborted();task.stopped=followup.executionStopped;followup.consecutiveTransportFailures=0;delete followup.manualResume;followup.lastAction=action;
       this.applyAction(task,action);
       if(task.kind==='generation'&&task.stopped&&task.status==='completed')await trimTaskGenerationBrowserCache(this.directory,task.id);
     }catch(error){
       task.stopped=error instanceof UnconfirmedStop?false:followup.executionStopped;
       const reason=controller.signal.reason||error;const detail=reason instanceof Error?reason.message:'跟进 Agent 执行失败';
       this.store.event(task.id,'AI 跟进未完成：'+detail);
+      const zeroTokenTransport=!controller.signal.aborted&&isFollowupTransportDisconnect(reason)&&followup.tokens===tokensBefore&&followup.observations.length===observationsBefore;
       if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')&&task.stopped){task.status='cancelled';this.store.put(task);if(task.kind==='generation')await trimTaskGenerationBrowserCache(this.directory,task.id);}
       else if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){this.interrupt(task,'取消时原执行仍未确认停止：'+detail,['检查原执行并确认停止后释放名额。']);}
       else if(error instanceof UnconfirmedStop){followup.executionStopped=false;this.interrupt(task,detail,['确认原浏览器已停止后释放名额，再恢复本任务。'],followup.observations);}
@@ -329,6 +336,30 @@ export class AutomationWorker{
       else if(isModelBillingOrAuthError(reason)){this.interrupt(task,detail,['请检查模型账户余额、额度及服务配置，确认恢复后再点击“恢复任务”。'],followup.observations);}
       else if(error instanceof ModelBudgetExceeded){this.interrupt(task,detail,['检查用量、未知请求及预算配置，确认后再恢复。恢复不会清零已用额度。'],followup.observations);}
       else if(error instanceof FollowupRuntimeError){this.interrupt(task,detail,error.nextSteps,followup.observations,error.userSummary);}
+      else if(zeroTokenTransport){
+        followup.attempts=attemptsBefore;
+        followup.transportFailures=(followup.transportFailures||0)+1;
+        followup.consecutiveTransportFailures=(followup.consecutiveTransportFailures||0)+1;
+        if(!followup.lastAction&&followup.tokens===0){followup.threadId='';delete followup.imageThread;}
+        const maxTransportFailures=Math.max(1,Math.min(policy.maxAttempts||5,5));
+        if(!this.stopping&&followup.consecutiveTransportFailures>=maxTransportFailures){
+          this.interrupt(
+            task,
+            `AI 跟进模型连接连续 ${followup.consecutiveTransportFailures} 次断连（0 token，未执行实际跟进决策）：${detail}；原任务错误保留：${task.error}`,
+            ['检查模型服务网络连通性、接口地址与上游状态，确认恢复后点击“恢复任务”。'],
+            followup.observations,
+            {
+              headline:'AI 模型连接连续断连，已暂停跟进重试',
+              category:'ai-model',
+              explanation:'系统在准备调用 AI 跟进分析时连续遇到模型服务断连，尚未实际执行任何跟进决策，也未重复创建站点。请先确认模型服务网络和接口状态恢复正常后再继续。',
+              userActions:['检查系统设置中的模型接口连通性或稍后重试测试。','确认模型服务恢复正常后，回到本任务页面点击「恢复任务」。'],
+            },
+          );
+        }else{
+          task.status='following-up';followup.state='waiting';followup.nextAt=Date.now()+Math.min(30000,5000*followup.consecutiveTransportFailures);this.store.put(task);
+          this.store.event(task.id,`AI 跟进模型传输断连（0 token，不计入跟进决策次数；连续第 ${followup.consecutiveTransportFailures}/${maxTransportFailures} 次）：${detail}`);
+        }
+      }
       else if(!this.stopping&&autonomousWindowRemaining(task).attempts<=0){this.interrupt(task,`${task.error}；AI 跟进未能继续：${detail}`,['查看跟进记录，检查模型连接、环境及任务条件，处理后恢复本任务。'],followup.observations);}
       else{task.status='following-up';followup.state='waiting';followup.nextAt=Date.now()+5000;this.store.put(task);}
     }finally{clearTimeout(timer);clearInterval(heartbeat);const elapsed=Math.max(0,Math.round(performance.now()-monotonicStart));followup.elapsedMs=(followup.elapsedMs||0)+elapsed;if(task.autonomy&&task.autonomy.window.index!==windowAtStart)task.autonomy.window.elapsedMsBase+=elapsed;if(followup.window&&followup.window.index!==followupWindowAtStart)followup.window.elapsedMsBase+=elapsed;delete followup.activeStartedAt;delete followup.activeHeartbeatAt;delete followup.activeElapsedMs;this.store.put(task);}

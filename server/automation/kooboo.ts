@@ -131,13 +131,57 @@ export function httpRead(url:URL,options:{token?:string;body?:unknown;signal:Abo
   });
 }
 
-export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vault,signal:AbortSignal) {
+export function isTransientKoobooReadError(error: unknown): boolean {
+  if (!error || typeof error !== 'object') return false;
+  const name = (error as Error).name;
+  if (name === 'AbortError' || name === 'TimeoutError') return false;
+  const code = String((error as NodeJS.ErrnoException).code || '').toUpperCase();
+  if (['ECONNRESET', 'ETIMEDOUT', 'EPIPE', 'EAI_AGAIN', 'ENOTFOUND', 'UND_ERR_SOCKET'].includes(code)) return true;
+  const message = String((error as Error).message || '');
+  return /socket hang up|ECONNRESET|ETIMEDOUT|EPIPE|EAI_AGAIN|Client network socket disconnected/i.test(message);
+}
+
+async function delayWithSignal(ms: number, signal: AbortSignal): Promise<void> {
+  if (ms <= 0) {
+    signal.throwIfAborted();
+    return;
+  }
+  await new Promise<void>((resolve, reject) => {
+    signal.throwIfAborted();
+    const onAbort = () => {
+      clearTimeout(timer);
+      signal.removeEventListener('abort', onAbort);
+      reject(signal.reason);
+    };
+    const timer = setTimeout(() => {
+      signal.removeEventListener('abort', onAbort);
+      resolve();
+    }, ms);
+    timer.unref();
+    signal.addEventListener('abort', onAbort, { once: true });
+  });
+}
+
+const DEFAULT_READ_RETRY_DELAYS_MS = [500, 1500] as const;
+
+export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vault,signal:AbortSignal,options?:{retryDelaysMs?:readonly number[]}) {
   const environment=vault.get().environments.find(e=>e.id===task.environmentId);
   if(!environment?.token)throw new Error('缺少 Kooboo 环境令牌，请在系统设置补齐');
   const origin=new URL(environment.origin).origin,apiOrigin=new URL(environment.apiOrigin||origin).origin;
+  const retryDelaysMs=options?.retryDelaysMs??DEFAULT_READ_RETRY_DELAYS_MS;
   const request=async(path:string,body?:unknown,siteId?:string):Promise<any>=>{
     const url=new URL(`/_api/v2/${path}`,apiOrigin);if(siteId)url.searchParams.set('SiteId',siteId);
-    const result=await httpRead(url,{token:environment.token,body,signal:AbortSignal.any([signal,AbortSignal.timeout(120000)])});
+    const canRetryRead=body===undefined;
+    let result!:{status:number;body:string};
+    for(let attempt=0;;attempt++){
+      try{
+        result=await httpRead(url,{token:environment.token,body,signal:AbortSignal.any([signal,AbortSignal.timeout(120000)])});
+        break;
+      }catch(error){
+        if(!canRetryRead||signal.aborted||attempt>=retryDelaysMs.length||!isTransientKoobooReadError(error))throw error;
+        await delayWithSignal(retryDelaysMs[attempt]!,signal);
+      }
+    }
     // ApiManager converts bool returns into Success, and v2 renders true as 200/null.
     // Decode this contract only for these read-only boolean checks; other null results stay null.
     const availability=body===undefined&&!siteId&&['Site/IsUniqueName','Site/IsSubdomainAvailable'].includes(path.split('?')[0]!);

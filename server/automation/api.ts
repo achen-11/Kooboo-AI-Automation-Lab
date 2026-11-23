@@ -242,18 +242,27 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const preTransferUpgrade=Boolean(task.kind==='generation'&&task.scenario==='upgrade'&&!task.generation?.prepared&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!wasCancelled&&(task.generation?.transferFallbackAttempted||task.interruption?.userSummary?.category==='source-access'));
       if(task.generation?.transferFallbackAttempted)delete task.generation.transferFallbackAttempted;
       const neverStartedGeneration=wasCancelled&&task.kind==='generation'&&!task.followup&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted;
+      const preCreateGeneration=!preCreateCollection&&task.kind==='generation'&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted;
       if(root?.optimization){
         const run=root.optimization;
-        run.state=preCreateCollection||neverStartedGeneration||prePrepareTemplate||preTransferUpgrade?'waiting-evaluation':task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';
+        run.state=preCreateCollection||neverStartedGeneration||prePrepareTemplate||preTransferUpgrade||preCreateGeneration?'waiting-evaluation':task.id===root.id?(run.reportId&&task.stage==='optimization'?'planning':'waiting-evaluation'):task.kind==='generation'?'repairing':'waiting-evaluation';
         run.reason='';run.nextSteps=[];delete run.stoppedAt;store.put(root,true);
         if(task.id===root.id)task.optimization=run;
       }
       if(preCreateCollection){task.status='queued';store.put(task);store.event(task.id,'按原输入和采集检查点恢复A段');return task;}
-      if(neverStartedGeneration||prePrepareTemplate||preTransferUpgrade){
+      if(neverStartedGeneration||prePrepareTemplate||preTransferUpgrade||preCreateGeneration){
         task.status='queued';delete task.interruption;task.error='';
-        if(task.followup){task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);task.followup.state='resolved';task.followup.executionStopped=true;}
+        if(task.followup){
+          task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);
+          prepareManualFollowupResume(task,store);
+          task.followup.state='resolved';
+          task.followup.executionStopped=true;
+          task.followup.threadId='';
+          delete task.followup.imageThread;
+          delete task.followup.manualResume;
+        }
         clearSiteRetry(task,store);
-        store.put(task);store.event(id,preTransferUpgrade?'已清理源站克隆失败标记，按当前站点/Sandbox 状态重新检查并恢复执行。':prePrepareTemplate?'按原固定输入与已采集证据直接恢复模板分析准备；保留累计用量。':'重新启动已取消的未建站任务，按原固定输入与规则排队执行。');return task;
+        store.put(task);store.event(id,preTransferUpgrade?'已清理源站克隆失败标记，按当前站点/Sandbox 状态重新检查并恢复执行。':prePrepareTemplate?'按原固定输入与已采集证据直接恢复模板分析准备；保留累计用量。':neverStartedGeneration?'重新启动已取消的未建站任务，按原固定输入与规则排队执行。':'尚未尝试建站，按原固定输入与规则直接重新排队准备建站。');return task;
       }
       // The user explicitly resumed a stopped evaluation. No AI decision is
       // needed to decide whether to retry, nor another spent followup window.

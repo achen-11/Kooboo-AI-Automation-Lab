@@ -8,8 +8,15 @@ import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { ExperienceStore, experienceInput } from './experience-store.js';
 import { localDecision } from './local-decision.js';
-import { reflectionDataKey } from './task-index.js';
+import { interruptionReflectionProgressKey, reflectionDataKey } from './task-index.js';
 import { TemplateWorkflowStore } from './template-workflow-store.js';
+
+export const PLATFORM_HARD_CONTRACTS = [
+  '平台硬契约（最高优先级事实，不可被历史经验覆盖）：',
+  '1. Kooboo 站点命名规则（对齐 shared/kooboo-domains.ts）：siteName 与 subDomain 仅允许英文字母、数字和下划线（_），最长 63 字符，严禁使用连字符（-）。不得按通用 DNS 常识建议把下划线改成连字符。',
+  '2. 建站前置状态判据：当 generatedSiteId=null 且 generation.createAttempted=false 时，表示平台尚未发起任何建站请求，不属于自动化桥接卡死，也无重复建站风险；“已转交内置 AI 跟进”仅表示宿主将控制权交由跟进流程，不是建站执行回执。',
+  '3. 冲突裁决规则：任何历史经验若与上述平台硬契约或工具返回的实时字段事实冲突，一律以平台硬契约和实时事实为准；筛选阶段必须跳过冲突经验，复盘阶段应将其判为 counterexample 或停用，不得继续强化错误经验。',
+].join('\n');
 
 const selection=z.object({reason:z.string().min(1).max(4000),selected:z.array(z.object({id:z.string(),revision:z.number().int(),reason:z.string().min(1).max(2000)}).strict()).max(5)}).strict();
 const reflection=z.object({reason:z.string().min(1).max(4000),changes:z.array(z.object({id:z.string().optional(),revision:z.number().int().optional(),input:experienceInput,enabled:z.boolean(),reason:z.string().min(1).max(4000),evidence:z.array(z.string()).min(1).max(20)}).strict()).max(5),outcomes:z.array(z.object({experienceId:z.string(),revision:z.number().int(),state:z.enum(['applied-unverified','supported','counterexample','not-applied']),reason:z.string().min(1).max(4000),evidence:z.array(z.string()).min(1).max(20)}).strict()).max(30)}).strict();
@@ -21,7 +28,7 @@ export async function selectExperience(task:AutomationTask,phase:ExperienceStage
   const experiences=new ExperienceStore(store),key=selectionKey(task,phase);if(experiences.run(key))return;
   const candidates=experiences.candidates(task,phase,'',1,task.scenario==='site-template'?12:60);if(!candidates.length)return;
   const run=experiences.enqueue(task,phase,'selection',key);run.status='running';experiences.put(run);
-  try{await decide({task,store,vault,directory,id:run.id,stage:'experience',sop:run.policy.selectionSop+'\n需要更多候选时，可 read input={kind:"experiences",query:"关键词",page:1} 检索当前场景和阶段的启用经验。submit 结构：'+JSON.stringify(z.toJSONSchema(selection)),context:{...context(task,store),phase,candidates},policy:{key:run.budgetId,runKey:run.id,maxTokens:run.policy.maxTokens,maxRequests:run.policy.maxRequests},minutes:run.policy.maxMinutes,signal,read:async raw=>{const q=z.object({kind:z.literal('experiences'),query:z.string().max(200),page:z.number().int().min(1).max(1000).default(1)}).strict().parse(raw);const items=experiences.candidates(task,phase,q.query,q.page,20);for(const e of items)if(!candidates.some(c=>c.id===e.id&&c.revision===e.revision))candidates.push(e);return {items,page:q.page};},
+  try{await decide({task,store,vault,directory,id:run.id,stage:'experience',sop:run.policy.selectionSop+'\n需要更多候选时，可 read input={kind:"experiences",query:"关键词",page:1} 检索当前场景和阶段的启用经验。submit 结构：'+JSON.stringify(z.toJSONSchema(selection))+'\n\n'+PLATFORM_HARD_CONTRACTS,context:{...context(task,store),phase,candidates},policy:{key:run.budgetId,runKey:run.id,maxTokens:run.policy.maxTokens,maxRequests:run.policy.maxRequests},minutes:run.policy.maxMinutes,signal,read:async raw=>{const q=z.object({kind:z.literal('experiences'),query:z.string().max(200),page:z.number().int().min(1).max(1000).default(1)}).strict().parse(raw);const items=experiences.candidates(task,phase,q.query,q.page,20);for(const e of items)if(!candidates.some(c=>c.id===e.id&&c.revision===e.revision))candidates.push(e);return {items,page:q.page};},
     submit:raw=>{const value=selection.parse(raw);if(new Set(value.selected.map(s=>s.id)).size!==value.selected.length)throw new Error('经验选择不能重复');run.adoptions=value.selected.map(s=>{const e=candidates.find(e=>e.id===s.id&&e.revision===s.revision);if(!e||!experiences.get(e.id)?.enabled||experiences.get(e.id)?.revision!==e.revision)throw new Error('经验不存在、版本不匹配或已停用');return {experienceId:e.id,revision:e.revision,title:e.title,guidance:e.guidance,reason:s.reason};});run.status='completed';run.reason=value.reason;experiences.put(run);return {adoptions:run.adoptions};}});
   }catch(error){if(experiences.run(run.id)?.status==='completed')return;run.status='failed';run.reason=error instanceof Error?error.message:'经验选择失败';experiences.put(run);store.event(task.id,'经验选择未完成，沿用原 SOP：'+run.reason);}
 }
@@ -36,19 +43,29 @@ export function queueReflection(task:AutomationTask,store:AutomationStore,manual
   if(!task.report&&!task.interruption)throw new Error('尚无独立评测或明确中断证据，不能复盘');
   const experiences=new ExperienceStore(store),key=reflectionDataKey(task)!;
   const existing=experiences.run(key);
+  const progressKey=!task.report&&task.interruption?interruptionReflectionProgressKey(task):undefined;
   if(manual&&existing?.status==='completed'&&existing.reason.startsWith('跳过复盘：')){
-    existing.status='queued';existing.reason='';return experiences.put(existing);
+    existing.status='queued';existing.reason='';if(progressKey)existing.progressKey=progressKey;return experiences.put(existing);
   }
   // An evaluation stopped by its contract or preflight before any scoring call has no model behaviour to learn from.
   if(!manual&&task.kind==='evaluation'&&!task.report&&!existing&&!store.usage.entries(task.id).some(entry=>entry.stage!=='experience')){
     const run=experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
-    run.status='completed';run.reason='跳过复盘：任务在请求工作模型前已因契约或预检中断，没有可复盘的模型执行。';experiences.put(run);return run;
+    run.status='completed';run.reason='跳过复盘：任务在请求工作模型前已因契约或预检中断，没有可复盘的模型执行。';if(progressKey)run.progressKey=progressKey;experiences.put(run);return run;
   }
   if(!manual&&!task.report&&task.interruption&&!existing&&/模型服务拒绝请求（HTTP 402）|模型服务返回 HTTP 40[123]\b|insufficient[_ ]quota|余额不足|AI 跟进已达到配置的次数、时间或 token 预算|仍有模型请求执行中|同一预算仍有模型请求执行中|操作者强制中断/i.test(task.interruption.reason)){
     const run=experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
-    run.status='completed';run.reason='跳过复盘：任务因模型账户额度/鉴权或预算保护中断，不自动发起消耗配额的复盘请求。';experiences.put(run);return run;
+    run.status='completed';run.reason='跳过复盘：任务因模型账户额度/鉴权或预算保护中断，不自动发起消耗配额的复盘请求。';if(progressKey)run.progressKey=progressKey;experiences.put(run);return run;
   }
-  return experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
+  if(!manual&&progressKey&&!existing){
+    const priorSameProgress=store.db.prepare("SELECT 1 FROM auto_learning_runs WHERE json_extract(json,'$.taskId')=? AND json_extract(json,'$.kind')='reflection' AND status!='failed' AND json_extract(json,'$.progressKey')=? LIMIT 1").get(task.id,progressKey);
+    if(priorSameProgress){
+      const run=experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
+      run.status='completed';run.reason='跳过复盘：自上次中断复盘以来任务未产生新的执行进展，避免重复复盘';run.progressKey=progressKey;experiences.put(run);return run;
+    }
+  }
+  const run=experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
+  if(progressKey&&run.progressKey!==progressKey){run.progressKey=progressKey;experiences.put(run);}
+  return run;
 }
 export async function reflectExperience(run:LearningRun,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,decide:typeof localDecision=localDecision){
   const experiences=new ExperienceStore(store),task=store.task(run.taskId);if(!task)throw new Error('经验来源任务已不存在');
@@ -73,7 +90,7 @@ export async function reflectExperience(run:LearningRun,store:AutomationStore,va
     if(/^observation-[a-f0-9-]+$/.test(id))return {evidenceId:id,text:readFileSync(resolve(directory,'followup-runs',task.id,id+'.json'),'utf8').slice(0,100000)};
     throw new Error('此证据不能读取；请保留未验证状态');
   };
-  try{await decide({task,store,vault,directory,id:run.id,stage:'experience',onThreadStarted:id=>{run.threadId=id;experiences.put(run);},sop:run.policy.reflectionSop+'\n先读上下文中的完整报告、来源覆盖及经验库总数。library.total=0 时全库为空，不需要再次搜索。报告足够支持具体经验时直接提交，不需要重新评测或遍历所有截图；报告结论与亲自看图要区分，未实际查看图片不得宣称亲眼确认视觉缺陷。最多选取少量最有价值的经验，不为凑数耗尽预算。\n仅在需要时通过 read input={kind:"experiences",query:"标题关键词",page:1} 查已有条目；通过 read input={kind:"evidence",page:1} 分页找其他报告证据。read input={id:证据标识} 读取真实证据或截图路径。只有已采用的经验可以做效果归因；supported/counterexample 必须有直接证据，整体分数改变不算因果证据。submit 结构：'+JSON.stringify(z.toJSONSchema(reflection)),context:{...source,adoptions,evidence:initialEvidence,evidenceTotal:evidence.size,library:{total:library.total},candidates:experiences.candidates(task,run.phase)},policy:{key:run.budgetId,runKey:run.id,maxTokens:run.policy.maxTokens,maxRequests:run.policy.maxRequests},minutes:run.policy.maxMinutes,signal,read,
+  try{await decide({task,store,vault,directory,id:run.id,stage:'experience',onThreadStarted:id=>{run.threadId=id;experiences.put(run);},sop:run.policy.reflectionSop+'\n先读上下文中的完整报告、来源覆盖及经验库总数。library.total=0 时全库为空，不需要再次搜索。报告足够支持具体经验时直接提交，不需要重新评测或遍历所有截图；报告结论与亲自看图要区分，未实际查看图片不得宣称亲眼确认视觉缺陷。最多选取少量最有价值的经验，不为凑数耗尽预算。\n仅在需要时通过 read input={kind:"experiences",query:"标题关键词",page:1} 查已有条目；通过 read input={kind:"evidence",page:1} 分页找其他报告证据。read input={id:证据标识} 读取真实证据或截图路径。只有已采用的经验可以做效果归因；supported/counterexample 必须有直接证据，整体分数改变不算因果证据。submit 结构：'+JSON.stringify(z.toJSONSchema(reflection))+'\n\n'+PLATFORM_HARD_CONTRACTS,context:{...source,adoptions,evidence:initialEvidence,evidenceTotal:evidence.size,library:{total:library.total},candidates:experiences.candidates(task,run.phase)},policy:{key:run.budgetId,runKey:run.id,maxTokens:run.policy.maxTokens,maxRequests:run.policy.maxRequests},minutes:run.policy.maxMinutes,signal,read,
     submit:raw=>store.db.transaction(()=>{
       const value=reflection.parse(raw);if(new Set(value.outcomes.map(o=>o.experienceId+':'+o.revision)).size!==value.outcomes.length)throw new Error('同一采用版本只能有一项效果判定');value.changes.forEach(c=>checkEvidence(c.evidence));value.outcomes.forEach(o=>{checkEvidence(o.evidence);if(!adoptions.some(a=>a.experienceId===o.experienceId&&a.revision===o.revision))throw new Error('效果判定必须对应实际采用版本');});
       const produced=value.changes.map(c=>experiences.save(c.input,{id:c.id,revision:c.revision,enabled:c.enabled,actor:'ai',reason:c.reason,taskId:task.id,evidence:c.evidence}));

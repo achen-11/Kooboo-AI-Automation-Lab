@@ -118,15 +118,15 @@ const actionNames: Record<string, string> = { repair: '委托站点修复',retry
         <div class="tech-detail-stack">
           <p v-if="data.interruption" class="text-muted small-text">阶段：<code>{{ data.interruption.stage }}</code> · 恢复策略：{{ data.interruption.resumeFrom }}</p>
           <p class="task-prose"><strong>原始原因：</strong>{{ data.interruption?.reason || data.error }}</p>
-          <div v-if="data.interruption?.nextSteps.length">
+          <div v-if="data.interruption?.nextSteps?.length">
             <strong>原始下一步</strong>
             <ul class="task-text-list"><li v-for="step in data.interruption.nextSteps" :key="step">{{ step }}</li></ul>
           </div>
-          <div v-if="data.interruption?.evidence.length">
+          <div v-if="data.interruption?.evidence?.length">
             <strong>关联证据</strong>
             <ul class="task-text-list"><li v-for="ev in data.interruption.evidence" :key="ev">{{ ev }}</li></ul>
           </div>
-          <div v-if="data.interruption?.attempted.length">
+          <div v-if="data.interruption?.attempted?.length">
             <strong>已尝试的处理（{{ data.interruption.attempted.length }}）</strong>
             <ol class="task-text-list"><li v-for="(attempt, index) in data.interruption.attempted" :key="index">{{ attempt }}</li></ol>
           </div>

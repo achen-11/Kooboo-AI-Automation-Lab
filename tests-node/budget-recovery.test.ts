@@ -569,11 +569,61 @@ test('in-flight reflection owned by a live worker is aborted cleanly by both lea
     assert.equal(workerRef!.owns(liveRun1.id), false);
     assert.equal(experiences.run(liveRun1.id)!.status, 'failed');
     assert.equal(experiences.run(liveRun1.id)!.reason, '操作者强制中断执行中的经验学习并恢复任务');
-    assert.equal(store.task(task.id)!.status, 'following-up');
+    assert.equal(store.task(task.id)!.status, 'queued');
   } finally {
     await workerRef?.stop();
     await f.app.close();
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('pre-create interrupted generation task resumes directly to queued with fresh followup window when exhausted, while post-create interrupt resume resets followup threadId', async () => {
+  const f = await fixture();
+  try {
+    const settings = f.vault.automation();
+    // 1) Pre-create generation task interrupted after exhausted followup attempts:
+    const preCreate = f.store.create({ resourceIds: [f.task.resourceId], kind: 'generation', scope: 'homepage', environmentId: '', requirements: '' }, settings)[0];
+    f.store.scheduleFollowup(preCreate, settings.followup);
+    preCreate.followup!.attempts = 5;
+    preCreate.followup!.tokens = 0;
+    preCreate.followup!.elapsedMs = 12000;
+    preCreate.followup!.threadId = 'stale-followup-thread';
+    preCreate.followup!.lastAction = { action: 'interrupt', reason: '尚未绑定实际生成站', evidence: ['obs-1'], nextSteps: ['检查'] };
+    preCreate.status = 'interrupted';
+    preCreate.stopped = true;
+    preCreate.error = 'socket hang up';
+    f.store.put(preCreate);
+
+    const preRes = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${preCreate.id}/resume`, headers: f.headers });
+    assert.equal(preRes.statusCode, 200, preRes.body);
+    const savedPre = f.store.task(preCreate.id)!;
+    assert.equal(savedPre.status, 'queued');
+    assert.equal(savedPre.error, '');
+    assert.equal(savedPre.interruption, undefined);
+    assert.equal(savedPre.followup!.state, 'resolved');
+    assert.equal(savedPre.followup!.threadId, '');
+    assert.equal(savedPre.followup!.attempts, 5);
+    assert.equal(savedPre.followup!.window?.attemptsBase, 5);
+    assert.equal(savedPre.followup!.window?.index, 1);
+
+    // 2) Post-create generation task whose lastAction was interrupt resets threadId and marks manualResume.afterInterrupt:
+    const postCreate = f.store.task(f.task.id)!;
+    postCreate.followup!.attempts = 1;
+    postCreate.followup!.threadId = 'prior-interrupt-thread';
+    postCreate.followup!.lastAction = { action: 'interrupt', reason: '旧中断原因', evidence: ['obs-2'], nextSteps: ['人工处理'] };
+    postCreate.status = 'interrupted';
+    postCreate.stopped = true;
+    f.store.put(postCreate);
+
+    const postRes = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${postCreate.id}/resume`, headers: f.headers });
+    assert.equal(postRes.statusCode, 200, postRes.body);
+    const savedPost = f.store.task(postCreate.id)!;
+    assert.equal(savedPost.status, 'following-up');
+    assert.equal(savedPost.followup!.threadId, '');
+    assert.equal(savedPost.followup!.manualResume?.afterInterrupt, true);
+    assert.match(f.store.events(postCreate.id).map(e => e.message).join('\n'), /已重置跟进会话上下文/);
+  } finally {
+    await f.close();
   }
 });
 

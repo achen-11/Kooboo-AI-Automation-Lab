@@ -72,6 +72,13 @@ export function prepareManualFollowupResume(task: AutomationTask, store: Automat
   }
   const followup = task.followup;
   if (!followup) return;
+  followup.consecutiveTransportFailures = 0;
+  const afterInterrupt = followup.lastAction?.action === 'interrupt';
+  followup.manualResume = {
+    at: now,
+    afterInterrupt,
+    ...(afterInterrupt && followup.lastAction?.reason ? { previousInterruptReason: followup.lastAction.reason.slice(0, 600) } : {}),
+  };
   const rem = autonomousWindowRemaining(task);
   const hasRequestsTable = Boolean(store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_model_requests'").get());
   const account = followup.budgetId && hasRequestsTable ? followupAccountState(task, store) : undefined;
@@ -91,8 +98,15 @@ export function prepareManualFollowupResume(task: AutomationTask, store: Automat
     followup.threadId = '';
     delete followup.imageThread;
     store.event(task.id, `人工恢复跟进：保留累计 ${followup.attempts} 次、${followup.tokens} token 与历史耗时，开启新一轮跟进预算窗口。`);
-  } else if (/重复提交相同模型请求/.test(reasonText)) {
-    followup.runId = randomUUID();
+  } else {
+    if (afterInterrupt) {
+      followup.threadId = '';
+      delete followup.imageThread;
+      store.event(task.id, '人工恢复跟进：上一次跟进决策为中断，已重置跟进会话上下文并开启人工确认后的重新检查。');
+    }
+    if (/重复提交相同模型请求/.test(reasonText)) {
+      followup.runId = randomUUID();
+    }
   }
 }
 /** Caller must await usage.close and its tool/browser shutdown first. Estimates remain charged. */

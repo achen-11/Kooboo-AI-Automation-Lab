@@ -35,6 +35,27 @@ export function reflectionDataKey(task: Pick<AutomationTask, 'id' | 'report' | '
   return `${task.id}:reflection:${createHash('sha256').update(JSON.stringify(stable)).digest('hex')}`;
 }
 
+export function interruptionReflectionProgressKey(
+  task: Pick<AutomationTask, 'kind' | 'versionId' | 'generatedSiteId' | 'stage' | 'siteRevision' | 'generation' | 'artifacts'>,
+): string {
+  const generation = task.generation;
+  return createHash('sha256').update(JSON.stringify({
+    kind: task.kind,
+    versionId: task.versionId,
+    generatedSiteId: task.generatedSiteId ?? null,
+    stage: task.stage ?? null,
+    siteRevision: task.siteRevision ?? null,
+    createAttempted: Boolean(generation?.createAttempted),
+    prepared: Boolean(generation?.prepared),
+    deliveryId: generation?.deliveryId ?? null,
+    deliveryState: generation?.deliveryState ?? null,
+    runId: generation?.runId ?? null,
+    transferComplete: Boolean(generation?.transferComplete),
+    importedMaterialCount: Object.keys(generation?.importedMaterials || {}).length,
+    artifactCount: task.artifacts?.length ?? 0,
+  })).digest('hex');
+}
+
 export function taskHeader(task: AutomationTask): TaskHeader {
   const summary = taskSummary(task), report = task.report, optimization = task.optimization;
   delete summary.usage;

@@ -96,16 +96,47 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
     if (path.includes('/sections/execution')) {
       const task = path.includes('taskId=child') ? child : root;
       const followup = windowedFollowup ? { state: 'interrupted', attempts: 6, elapsedMs: 42000, startedAt: 1, nextAt: 1, tokens: 500, threadId: 't-1', executionStopped: true, observations: [], policy: { enabled: true, maxAttempts: 5, maxMinutes: 20, maxTokens: 10000000, maxRequests: 80, concurrency: 1, sop: 'sop' }, window: { index: 1, startedAt: 2, attemptsBase: 5, tokensBase: 400, elapsedMsBase: 36000 } } : undefined;
-      return structuredClone({ task: legacy ? undefined : { id: task.id, status: task.status, stopped: task.stopped, canAdjustSiteNames: task.canAdjustSiteNames }, context: '', error: '', followup, interruption: task.status === 'interrupted' ? { reason: task.attention, nextSteps: ['先确认停止再恢复'], resumeFrom: '保留证据', attempted: [] } : undefined });
+      return structuredClone({ task: legacy ? undefined : { id: task.id, status: task.status, stopped: task.stopped, canAdjustSiteNames: task.canAdjustSiteNames }, context: '', error: '', followup, interruption: task.status === 'interrupted' ? { reason: task.attention, evidence: [], nextSteps: ['先确认停止再恢复'], resumeFrom: '保留证据', attempted: [] } : undefined });
     }
     throw Error(`Unexpected request ${path}`);
   };
+  const trackedIntervals = new Set();
+  const originalSetInterval = globalThis.setInterval;
+  const originalClearInterval = globalThis.clearInterval;
+  globalThis.setInterval = (...args) => {
+    const id = originalSetInterval(...args);
+    trackedIntervals.add(id);
+    return id;
+  };
+  globalThis.clearInterval = (id) => {
+    trackedIntervals.delete(id);
+    return originalClearInterval(id);
+  };
+  const restoreTimers = () => {
+    for (const id of trackedIntervals) originalClearInterval(id);
+    trackedIntervals.clear();
+    globalThis.setInterval = originalSetInterval;
+    globalThis.clearInterval = originalClearInterval;
+  };
   for (const [key, value] of Object.entries({ window, document, __recoveryServices: { request, notified } })) Object.defineProperty(globalThis, key, { value, configurable: true });
   const container = new HostNode('root'), app = renderer.createApp({ render: () => h(TaskDetail, { id: root.id }) });
-  app.mount(container); await settle();
+  try {
+    app.mount(container); await settle();
+  } catch (error) {
+    try { app.unmount(); } catch {}
+    restoreTimers();
+    for (const [key, value] of previous) { if (value) Object.defineProperty(globalThis, key, value); else delete globalThis[key]; }
+    throw error;
+  }
   return { calls, notified, root, child, text: () => text(container), nodes: () => descendants(container),
     buttons: label => descendants(container).filter(n => n.tag === 'button' && text(n) === label),
-    close() { app.unmount(); for (const [key, value] of previous) { if (value) Object.defineProperty(globalThis, key, value); else delete globalThis[key]; } },
+    close() {
+      try { app.unmount(); }
+      finally {
+        restoreTimers();
+        for (const [key, value] of previous) { if (value) Object.defineProperty(globalThis, key, value); else delete globalThis[key]; }
+      }
+    },
   };
 }
 

@@ -24,6 +24,32 @@ export function followupReportComparison(current:AutomationReport,previous?:Auto
   };
 }
 
+const chatterEventPattern = /^(?:跟进工具执行 |AI 工具 [^失]|本地 AI experience 工具：|本地 AI experience 会话：|Codex 流程跟进会话：|AI 跟进：)/;
+
+/** Keep initial enqueue/failure context and key state transitions even when tool chatter fills recent logs. */
+export function selectFollowupTaskEvents<T extends { seq?: number; time: number; message: string }>(
+  events: readonly T[],
+  options?: { recentLimit?: number; keyHeadLimit?: number; keyTailLimit?: number; maxMessageLength?: number },
+): T[] {
+  if (!events.length) return [];
+  const recentLimit = options?.recentLimit ?? 12;
+  const keyHeadLimit = options?.keyHeadLimit ?? 4;
+  const keyTailLimit = options?.keyTailLimit ?? 12;
+  const maxMessageLength = options?.maxMessageLength ?? 1500;
+  const indices = new Set<number>([0]);
+  const keyIndices: number[] = [];
+  for (let i = 0; i < events.length; i++) {
+    if (!chatterEventPattern.test(events[i]!.message)) keyIndices.push(i);
+  }
+  for (const idx of keyIndices.slice(0, keyHeadLimit)) indices.add(idx);
+  for (const idx of keyIndices.slice(-keyTailLimit)) indices.add(idx);
+  const recentStart = Math.max(0, events.length - recentLimit);
+  for (let i = recentStart; i < events.length; i++) indices.add(i);
+  return [...indices]
+    .sort((a, b) => a - b)
+    .map(i => ({ ...events[i]!, message: events[i]!.message.slice(0, maxMessageLength) }));
+}
+
 /** Preserve operational facts without resending entire SOPs and past repair messages. */
 export function followupTaskContext(task:AutomationTask) {
   const optimization=task.optimization;
@@ -32,7 +58,7 @@ export function followupTaskContext(task:AutomationTask) {
     artifacts:task.artifacts?.filter(file=>file.type==='image/png'),
     collectionPendingReport:task.collectionPendingReport?{...task.collectionPendingReport,report:{summary:task.collectionPendingReport.report.summary,quality:task.collectionPendingReport.report.quality}}:undefined,
     migrationPendingReport:task.migrationPendingReport?{...task.migrationPendingReport,report:{summary:task.migrationPendingReport.report.summary,quality:task.migrationPendingReport.report.quality}}:undefined,
-    generation:task.generation?{...task.generation,importedMaterials:undefined,importedMaterialCount:Object.keys(task.generation.importedMaterials||{}).length}:undefined,
+    generation:task.generation||task.kind==='generation'?{...(task.generation||{}),createAttempted:Boolean(task.generation?.createAttempted),importedMaterials:undefined,importedMaterialCount:Object.keys(task.generation?.importedMaterials||{}).length}:undefined,
     context:task.context.slice(-16000),message:task.message.slice(0,20000),
     optimization:optimization?{...optimization,policy:{...optimization.policy,sop:'见 SKILL.md'},recoveryPolicy:{...optimization.recoveryPolicy,sop:'见 SKILL.md'},rounds:optimization.rounds.map(({brief,images,...round})=>round)}:undefined,
     followup:task.followup?{...task.followup,policy:{...task.followup.policy,sop:'见 SKILL.md'},lastAction:task.followup.lastAction?{action:task.followup.lastAction.action,reason:task.followup.lastAction.reason}:undefined}:undefined,

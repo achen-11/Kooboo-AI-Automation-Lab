@@ -19,14 +19,16 @@ export interface Experience extends ExperienceInput {
   id: string; revision: number; enabled: boolean; manualDisabled: boolean;
   evidence: ExperienceEvidence; createdAt: number; updatedAt: number;
   sourceTaskId: string | null; sourceEvidence: string[];
+  runtimeEpoch?: number;
 }
-export interface ExperienceRevision { experience: Experience; actor: 'human' | 'ai'; reason: string; time: number }
+export interface ExperienceRevision { experience: Experience; actor: 'human' | 'ai' | 'system'; reason: string; time: number }
 export interface ExperienceAdoption { experienceId: string; revision: number; title: string; guidance: string; reason: string }
 export interface LearningRun {
   id: string; taskId: string; workflowId: string; phase: ExperienceStage;
   kind: 'selection' | 'reflection'; key: string; status: 'queued' | 'running' | 'completed' | 'failed';
   policy: LearningSettings; createdAt: number; updatedAt: number;
   threadId: string; reason: string; adoptions: ExperienceAdoption[]; produced: string[]; budgetId: string;
+  progressKey?: string;
   outcomes?: { experienceId:string;revision:number;state:'applied-unverified'|'supported'|'counterexample'|'not-applied';reason:string;evidence:string[] }[];
 }
 export const experienceStageNames: Record<ExperienceStage, string> = { generation: '生成', followup: 'AI 跟进', evaluation: '评测' };

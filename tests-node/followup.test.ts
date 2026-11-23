@@ -13,7 +13,8 @@ import { createApp } from '../server/app.js';
 import { defaultAutomationSettings, type AutomationTask, type FollowupAction } from '../shared/automation.js';
 import { AutomationWorker, type Execute } from '../server/automation/worker.js';
 import { executeFollowup, validateFollowupAction, type FollowupExecute, type RecoveryInspection } from '../server/automation/followup.js';
-import { httpRead, probeSite, siteIdentity, summarizeMessages } from '../server/automation/kooboo.js';
+import { httpRead, koobooClient, probeSite, siteIdentity, summarizeMessages } from '../server/automation/kooboo.js';
+import { selectFollowupTaskEvents } from '../server/automation/followup-context.js';
 import { executeGeneration } from '../server/automation/generator.js';
 import { codexClient, recoverEvaluationSession, reviewWithValidation } from '../server/automation/evaluator.js';
 import { applyGenerationObservation, type GenerationObservation } from '../server/automation/generation-session.js';
@@ -655,6 +656,227 @@ test('followup blocks duplicate get_conversation retries in the same turn after 
   } finally {
     server.closeAllConnections();
     await new Promise<void>(r => server.close(() => r()));
+    await f.close();
+  }
+});
+
+test('koobooClient retries transient socket drops on idempotent GET reads but never retries POST mutations or aborted calls', async () => {
+  const f = await fixture();
+  let getAttempts = 0;
+  let postAttempts = 0;
+  const server = createServer((req, res) => {
+    if (req.url?.includes('Domain/Available')) {
+      getAttempts++;
+      if (getAttempts <= 2) {
+        req.socket.destroy();
+        return;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify([{ domainName: '-test.kooboo.io', sudDomainUseDash: true }]));
+      return;
+    }
+    if (req.url?.includes('Site/Create')) {
+      postAttempts++;
+      req.socket.destroy();
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  try {
+    f.vault.update({
+      ...f.vault.get(),
+      environments: [{ id: f.environmentId, name: 'Test', origin, apiOrigin: origin, token: 'test-only-token' }],
+    });
+    const task = f.create();
+    const { request } = koobooClient(task, f.vault, AbortSignal.timeout(5000), { retryDelaysMs: [10, 10] });
+    const domains = await request('Domain/Available');
+    assert.equal(getAttempts, 3);
+    assert.equal(domains.length, 1);
+
+    await assert.rejects(() => request('Site/Create', { SiteName: 'x' }), /socket hang up|ECONNRESET/i);
+    assert.equal(postAttempts, 1, 'POST mutations must never be retried automatically');
+
+    getAttempts = 0;
+    const aborted = new AbortController();
+    aborted.abort(new Error('caller cancelled'));
+    await assert.rejects(() => koobooClient(task, f.vault, aborted.signal, { retryDelaysMs: [10, 10] }).request('Domain/Available'));
+    assert.equal(getAttempts, 0);
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(r => server.close(() => r()));
+    await f.close();
+  }
+});
+
+test('0-token model transport disconnects do not burn followup decision attempts and interrupt cleanly after consecutive failures', async () => {
+  const f = await fixture();
+  let worker: AutomationWorker | undefined;
+  try {
+    const t = f.create();
+    f.automationStore.scheduleFollowup(t, { ...f.settings.followup, maxAttempts: 5 });
+    let calls = 0;
+    worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      f.directory,
+      { generation: idle, evaluation: idle },
+      () => true,
+      async (task) => {
+        calls++;
+        if (calls <= 2) {
+          task.followup!.threadId = 'broken-thread';
+          throw new Error('stream disconnected before completion: error sending request');
+        }
+        return decision('interrupt', { reason: '已完成真实查证并决策', nextSteps: ['人工处理'] });
+      },
+    );
+
+    await worker.tick();
+    await until(() => f.automationStore.task(t.id)?.followup?.state === 'waiting');
+    let mid = f.automationStore.task(t.id)!;
+    assert.equal(mid.followup!.attempts, 0, '0-token disconnect must not count as a followup decision attempt');
+    assert.equal(mid.followup!.transportFailures, 1);
+    assert.equal(mid.followup!.consecutiveTransportFailures, 1);
+    assert.equal(mid.followup!.threadId, '', 'empty broken threadId must be cleared');
+
+    mid.followup!.nextAt = Date.now() - 1;
+    f.automationStore.put(mid);
+    await worker.tick();
+    await until(() => (f.automationStore.task(t.id)?.followup?.transportFailures || 0) === 2 && f.automationStore.task(t.id)?.followup?.state === 'waiting');
+    mid = f.automationStore.task(t.id)!;
+    assert.equal(mid.followup!.attempts, 0);
+    assert.equal(mid.followup!.consecutiveTransportFailures, 2);
+
+    mid.followup!.nextAt = Date.now() - 1;
+    f.automationStore.put(mid);
+    await worker.tick();
+    await until(() => f.automationStore.task(t.id)?.status === 'interrupted');
+    const done = f.automationStore.task(t.id)!;
+    assert.equal(done.followup!.attempts, 1, 'real decision increments attempts to 1');
+    assert.equal(done.followup!.transportFailures, 2);
+    assert.equal(done.followup!.consecutiveTransportFailures, 0);
+    await worker.stop();
+
+    // 5 consecutive 0-token disconnects interrupt with ai-model summary while keeping attempts at 0:
+    const t2 = f.create();
+    f.automationStore.scheduleFollowup(t2, { ...f.settings.followup, maxAttempts: 5 });
+    const worker2 = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      f.directory,
+      { generation: idle, evaluation: idle },
+      () => true,
+      async () => {
+        throw new Error('stream disconnected before completion: error sending request');
+      },
+    );
+    try {
+      for (let i = 0; i < 5; i++) {
+        const cur = f.automationStore.task(t2.id)!;
+        if (cur.followup?.state === 'waiting') {
+          cur.followup.nextAt = Date.now() - 1;
+          f.automationStore.put(cur);
+        }
+        await worker2.tick();
+        await until(() => {
+          const s = f.automationStore.task(t2.id)!;
+          return s.status === 'interrupted' || (s.followup?.consecutiveTransportFailures || 0) === i + 1;
+        });
+      }
+      const stopped = f.automationStore.task(t2.id)!;
+      assert.equal(stopped.status, 'interrupted');
+      assert.equal(stopped.followup!.attempts, 0);
+      assert.equal(stopped.followup!.transportFailures, 5);
+      assert.equal(stopped.interruption?.userSummary?.category, 'ai-model');
+    } finally {
+      await worker2.stop();
+    }
+  } finally {
+    await f.close();
+  }
+});
+
+test('selectFollowupTaskEvents preserves initial failure and resume context past tool chatter, and get_task/prompt expose manualResume and createAttempted=false', async () => {
+  const f = await fixture();
+  try {
+    const t = f.create();
+    f.automationStore.event(t.id, '任务已入队，输入版本及评测规则已固定');
+    f.automationStore.event(t.id, 'socket hang up');
+    f.automationStore.scheduleFollowup(t, f.settings.followup);
+    t.followup!.lastAction = { action: 'interrupt', reason: '旧中断', evidence: ['obs-0'], nextSteps: ['人工处理'] };
+    t.followup!.threadId = 'old-interrupt-thread';
+    t.followup!.manualResume = { at: Date.now(), afterInterrupt: true, previousInterruptReason: '旧中断' };
+    f.automationStore.put(t);
+    f.automationStore.event(t.id, '人工恢复跟进：上一次跟进决策为中断，已重置跟进会话上下文并开启人工确认后的重新检查。');
+    for (let i = 0; i < 20; i++) {
+      f.automationStore.event(t.id, `跟进工具执行 completed：step ${i}`);
+      f.automationStore.event(t.id, `AI 工具 get_site → observation-${i}`);
+    }
+
+    const selected = selectFollowupTaskEvents(f.automationStore.events(t.id));
+    const joined = selected.map(e => e.message).join('\n');
+    assert.match(joined, /任务已入队/);
+    assert.match(joined, /socket hang up/);
+    assert.match(joined, /人工恢复跟进/);
+
+    // Note: in executeFollowup, if threadId is already cleared before calling executeFollowup (by resume), startThread is used.
+    t.followup!.threadId = '';
+    f.automationStore.put(t);
+    let env: Record<string, string> = {};
+    let usedStartThread = false;
+    let receivedPrompt = '';
+    const run = async (payload: unknown) =>
+      JSON.parse((await promisify(execFile)(
+        process.execPath,
+        [join(f.directory, 'followup-runs', t.id, 'tools.mjs'), JSON.stringify(payload)],
+        { env: { ...process.env, ...env } },
+      )).stdout);
+    const stream = async function* (): AsyncGenerator<ThreadEvent> {
+      const obs = await run({ tool: 'get_task' });
+      assert.equal(obs.result.diagnostics.createAttempted, false);
+      assert.equal(obs.result.diagnostics.manualResumeAfterInterrupt, true);
+      assert.match(obs.result.events.map((e: any) => e.message).join('\n'), /socket hang up/);
+      const accepted = await run({
+        tool: 'act',
+        decision: decision('retry', { evidence: [obs.evidenceId], reason: '尚未尝试建站且网络恢复，重新准备建站' }),
+      });
+      assert.equal(accepted.accepted, true);
+      yield { type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, cache_write_input_tokens: 0, reasoning_output_tokens: 0, output_tokens: 5 } };
+    };
+    const thread = {
+      runStreamed: async (prompt: unknown) => {
+        receivedPrompt = String(prompt);
+        return { events: stream() };
+      },
+    };
+    const action = await executeFollowup(
+      t,
+      f.automationStore,
+      f.vault,
+      f.directory,
+      AbortSignal.timeout(10000),
+      (_v, _d, extra) => {
+        env = extra;
+        return {
+          startThread: () => {
+            usedStartThread = true;
+            return thread;
+          },
+          resumeThread: () => {
+            throw new Error('must not resume previous interrupt thread');
+          },
+        };
+      },
+    );
+    assert.equal(usedStartThread, true);
+    assert.equal(action.action, 'retry');
+    assert.match(receivedPrompt, /人工恢复上下文/);
+    assert.match(receivedPrompt, /createAttempted=false/);
+    assert.match(receivedPrompt, /严禁使用连字符（-）/);
+  } finally {
     await f.close();
   }
 });

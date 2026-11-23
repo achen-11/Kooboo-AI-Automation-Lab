@@ -15,13 +15,13 @@ import { generationSession, matchingGenerationOutcome, type GenerationObservatio
 import { readConversation, refreshSite, probeSite } from './kooboo.js';
 import { FollowupRuntimeError } from './errors.js';
 import { optimizationEvidence, planningImageInput } from './optimization-evidence.js';
-import { adoptedGuidance } from './experience.js';
+import { adoptedGuidance, PLATFORM_HARD_CONTRACTS } from './experience.js';
 import { copyHarnessReferences } from './harness.js';
 import { migrationRepairContext } from './migration-verification.js';
 import { followupRequestPolicy, followupAccountState, retainStoppedFollowupReservations } from './autonomy.js';
 import { collectionTargetRepairContext } from './collection/report.js';
 import { collectionSourceGaps, recollectionObjectiveSchema, validateRecollectionAction } from './collection/recollection.js';
-import { followupTaskContext, followupReportComparison } from './followup-context.js';
+import { followupTaskContext, followupReportComparison, selectFollowupTaskEvents } from './followup-context.js';
 import { toolsClientScript, windowsToolsHint } from './tools-client.js';
 import {
   canUseBoundedOptimizationPlanning,
@@ -136,7 +136,20 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
     const input=toolInput.parse(raw);
     if(input.tool==='act')assertActionAllowed();
     if(selected){if(input.tool==='act'&&[selectedInput,selected].some(value=>JSON.stringify(input.decision)===JSON.stringify(value)))return {accepted:true,decision:selected};throw new Error('本轮行动已经提交，请等待调度执行结果');}
-    if(input.tool==='get_task')return observe(input.tool,{task:followupTaskContext(task),input:{...store.version(task.versionId),description:store.version(task.versionId)?.description.slice(0,20000)},site:task.generatedSiteId?store.site(task.generatedSiteId):null,events:store.events(task.id).slice(-12).map(e=>({...e,message:e.message.slice(0,1500)}))});
+    if(input.tool==='get_task')return observe(input.tool,{
+      task:followupTaskContext(task),
+      input:{...store.version(task.versionId),description:store.version(task.versionId)?.description.slice(0,20000)},
+      site:task.generatedSiteId?store.site(task.generatedSiteId):null,
+      events:selectFollowupTaskEvents(store.events(task.id)),
+      diagnostics:{
+        manualResumeAfterInterrupt:Boolean(task.followup?.manualResume?.afterInterrupt),
+        manualResumedAt:task.followup?.manualResume?.at??null,
+        createAttempted:task.kind==='generation'?Boolean(task.generation?.createAttempted):null,
+        hasGeneratedSite:Boolean(task.generatedSiteId),
+        decisionAttempts:task.followup?.attempts??0,
+        transportFailures:task.followup?.transportFailures??0,
+      },
+    });
     if(input.tool==='get_report'){
       if(!quality)throw new Error('当前不是质量优化');
       const selectedNames=new Set(images?.available.map(i=>i.file.name));
@@ -207,7 +220,19 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
   const thread=task.followup.threadId?codex.resumeThread(task.followup.threadId,options):codex.startThread(options);
     const activeWindow=task.followup.window||task.autonomy?.window;
     const windowAttempts=task.followup.attempts-(activeWindow?.attemptsBase||0);
-    const prompt=`按照 SKILL.md 自主跟进 task.json 中的本轮任务（工作区 references/ 目录下附带故障排查手册 failure-playbook.md 与人工可读输出规范 human-output.md，请按需读取）。当前尝试 ${windowAttempts}/${task.followup.policy.maxAttempts}${activeWindow?.attemptsBase?`（累计第 ${task.followup.attempts} 次）`:''}，阶段 ${task.stage}，最近问题：${task.error}。
+    const promptNotes=[
+      task.followup.manualResume?.afterInterrupt
+        ?'人工恢复上下文：这是人工确认后的重新检查（上一次跟进决策为 interrupt，已重置会话上下文）。请基于当前实时查证结果重新决策，不要沿用历史中断结论，也不要把“已转交内置 AI 跟进”事件误判为建站或调度失败。'
+        :'',
+      task.kind==='generation'&&!task.generatedSiteId&&!task.generation?.createAttempted
+        ?'建站状态说明：当前 generatedSiteId=null 且 generation.createAttempted=false，表示尚未建站也未发出建站请求（无重复建站风险）；若前置网络或环境条件已恢复，应优先评估 retry 重新准备建站，不要仅因尚未绑定站点直接 interrupt。'
+        :'',
+      (task.followup.transportFailures||0)>0
+        ?`模型传输说明：此前发生过 ${task.followup.transportFailures} 次 0 token 模型传输断连，均未执行实际跟进决策，不计入有效尝试次数。`
+        :'',
+    ].filter(Boolean);
+    const prompt=`按照 SKILL.md 自主跟进 task.json 中的本轮任务（工作区 references/ 目录下附带故障排查手册 failure-playbook.md 与人工可读输出规范 human-output.md，请按需读取）。当前尝试 ${windowAttempts}/${task.followup.policy.maxAttempts}${activeWindow?.attemptsBase?`（累计第 ${task.followup.attempts} 次）`:''}，阶段 ${task.stage}，最近问题：${task.error}。${promptNotes.length?'\n'+promptNotes.join('\n'):''}
+${PLATFORM_HARD_CONTRACTS}
 你必须通过本轮 tools.mjs 查询事实并调用 act 工具推动流程，不要只写建议，不要直接修改目标站或任务文件。使用 node tools.mjs '<JSON>'（${windowsToolsHint}），工具服务地址和令牌已由运行环境注入，不要输出令牌。每次恢复都使用当前工具环境。
 查询示例：{"tool":"get_task"}。其他查询工具：get_conversation、get_site、probe_site、inspect_execution。工具返回 evidenceId，行动必须引用本轮已取得的 evidenceId。
 行动示例：{"tool":"act","decision":{"action":"retry","reason":"依据实际错误决定重试本阶段","evidence":["工具返回的 evidenceId"]}}。

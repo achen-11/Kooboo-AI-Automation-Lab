@@ -1,5 +1,7 @@
 # Kooboo AI Automation Lab
 
+v0.9.1 针对生成与异常跟进阶段的平台侧耗时瓶颈完成四项优化：（1）将 Kooboo AI Chat 首次桥接冷加载改为分段超时（`goto 45s + ready 45s/60s`）并在未挂载桥接时保留浏览器缓存自动页内刷新恢复，同时在跳转到非 AI Chat 登录页时快速失败；（2）`httpRead` 透明支持 `gzip` / `deflate` / `br` 压缩传输并校验解压后字节预算，降低跨区拉取长会话与大 JSON 的传输耗时；（3）为 Followup 阶段的 `get_conversation` 增加单轮超时防重复连撞保护并更新故障手册，避免对超大会话连续撞满 120s 超时；（4）升级生成上下文阅读器至 `v6`（新增 `automationBatch` 支持单次最多 12 项批量读取），并在委托指令中明确只读 `k.ai.callFunction` 编排边界及写站前精简思考约束。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.9.1 发布说明](docs/release-notes-0.9.1.md)。
+
 v0.9.0 引入 **Verification Engineering（有界验证工程）全链路重构** 并完整合入 `v0.8.3` 的 Kooboo GUID 与交付脱敏诊断修复：（1）首页、多页全站与跨环境 `delivery` 全面切换至「宿主确定性取证与预检 + `read-only` 多模态有界评判 + 宿主硬封顶裁决」，结合移动菜单关闭探针（`MOBILE_MENU_TRAPPED`）、超长页面断点续采切片（最高 40 屏）与并发批次缓冲，请求数降低 **95%+**、单页评测耗时提速至 1–3 分钟；（2）引入单步只读有界优化规划器（`bounded-optimization-planner`），解锁 `materials` 自动优化、同修订手动重评识别与 Kooboo `+` 文件名规范化，并将仅静态截图不可观测的微交互归入 `outOfScope`；（3）推出 **「`CHECKS.md` 一错一规」产品闭环与自动回归测试集**，支持从任意评测报告一键将漏判/虚高沉淀为版本化红线规则或为误判追加豁免、绑定真实截图为标定反例，并在规则管理台及 CLI 零 Token 运行确定性回归（支持 `--live` 真图复验）。详情与验证边界见 [v0.9.0 发布说明](docs/release-notes-0.9.0.md)。
 
 v0.8.3 修复跨环境交付到 DE 时两类关键问题：（1）将 Kooboo `siteId`、`templateId` 与会话 `sessionId` 的 Zod 校验由严格 RFC 4122 `z.string().uuid()` 调整为 `z.guid()`，避免有效的非 RFC 4122 .NET/Kooboo GUID 在 `sitemigrate` 回执、人工补录回执、站点绑定、模板详情及问题交接接口误报 `Invalid UUID`；（2）在跨环境迁移接口返回非 2xx 状态码或异常 200 回执时，读取并脱敏留存有界响应体摘要、链路追踪响应头及耗时到交付错误和任务事件（保持不确定状态禁止自动重发），同时修复 `store` 持久层 `Bearer` 脱敏正则未排除 `\` 导致的 JSON 转义破坏问题。无需改动 Kooboo 服务端即可生效，详情与验证边界见 [v0.8.3 发布说明](docs/release-notes-0.8.3.md)。

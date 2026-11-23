@@ -317,6 +317,15 @@ function summarizeErrorBody(raw: string, contentType: string, redactor: ReturnTy
   return summary.slice(0, Math.max(0, maxChars - 1)).trimEnd() + '…';
 }
 
+export function deliveryRequestUrl(endpoint: string, timeoutSeconds: number): string {
+  const url = new URL(endpoint);
+  const seconds = Number.isFinite(timeoutSeconds) && timeoutSeconds > 0 ? Math.trunc(timeoutSeconds) : 180;
+  if (!url.searchParams.get('__engine_timeout__')?.trim()) {
+    url.searchParams.set('__engine_timeout__', String(seconds));
+  }
+  return url.href;
+}
+
 export async function executeDelivery(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,verify=verifyDelivery){
   const delivery=task.delivery!;
   if(!delivery.target){
@@ -331,9 +340,11 @@ export async function executeDelivery(task:AutomationTask,store:AutomationStore,
     const startedAt=Date.now();
     delivery.status='running';delivery.attemptedAt=startedAt;store.put(task);store.event(task.id,'正在迁移生成站至目标环境（不会删除源站）');
     const redactor=deliveryRedactor(vault,[config.token]);
+    const timeoutSeconds=Number.isFinite(delivery.policy.timeoutSeconds)&&delivery.policy.timeoutSeconds>0?Math.trunc(delivery.policy.timeoutSeconds):180;
+    const requestUrl=deliveryRequestUrl(delivery.policy.endpoint,timeoutSeconds);
     let eventDetail='';let errorSummary='';
     try{
-      const response=await fetch(delivery.policy.endpoint,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({siteUrl:new URL(delivery.sourceUrl).origin,token:config.token}),signal:AbortSignal.any([signal,AbortSignal.timeout(delivery.policy.timeoutSeconds*1000)]),redirect:'error'});
+      const response=await fetch(requestUrl,{method:'POST',headers:{'Content-Type':'application/json'},body:JSON.stringify({siteUrl:new URL(delivery.sourceUrl).origin,token:config.token}),signal:AbortSignal.any([signal,AbortSignal.timeout(timeoutSeconds*1000)]),redirect:'error'});
       const elapsed=formatElapsedMs(Date.now()-startedAt);
       const contentType=(response.headers.get('content-type')||'').split(';')[0]?.trim()||'';
       const traceHeader=extractTraceHeader(response.headers,redactor.text);

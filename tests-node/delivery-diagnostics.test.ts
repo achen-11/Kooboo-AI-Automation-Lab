@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { defaultDeliveryPolicy } from '../shared/automation.js';
-import { queueDelivery, executeDelivery, deliveryReceipt } from '../server/automation/delivery.js';
+import { queueDelivery, executeDelivery, deliveryReceipt, deliveryRequestUrl } from '../server/automation/delivery.js';
 
 const KOOBOO_GUIDS = [
   '1adbf7f5-d119-0a84-53bb-2ecddb7d9ff1',
@@ -306,12 +306,13 @@ test('migration HTTP 500 JSON records bounded redacted body, trace header and el
     res.writeHead(500, { 'Content-Type': 'application/json; charset=utf-8', 'X-Request-Id': 'req-500-abc' });
     res.end(JSON.stringify({ error: 'export timed out', token: 'test-migration', upstream: 'Bearer leaked-bearer-token' }));
   });
-  const endpoint = await listen(server);
+  const apiOrigin = await listen(server);
+  const endpoint = `${apiOrigin}/api/sitemigrate`;
   try {
     const raw = f.vault.get();
     f.vault.update({
       ...raw,
-      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin: endpoint, delivery: { ...e.delivery!, endpoint } } : e)),
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin, delivery: { ...e.delivery!, endpoint } } : e)),
     });
     const t = f.done();
     queueDelivery(t, f.automationStore, f.vault);
@@ -353,12 +354,13 @@ test('migration HTTP 502 with oversized HTML error page strips markup, redacts s
     res.writeHead(502, { 'Content-Type': 'text/html; charset=utf-8', 'cf-ray': '99aabbcc-AMS' });
     res.end(html);
   });
-  const endpoint = await listen(server);
+  const apiOrigin = await listen(server);
+  const endpoint = `${apiOrigin}/api/sitemigrate`;
   try {
     const raw = f.vault.get();
     f.vault.update({
       ...raw,
-      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin: endpoint, delivery: { ...e.delivery!, endpoint } } : e)),
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin, delivery: { ...e.delivery!, endpoint } } : e)),
     });
     const t = f.done();
     queueDelivery(t, f.automationStore, f.vault);
@@ -395,12 +397,13 @@ test('migration HTTP 500 with empty body records empty-body marker and failure e
     res.writeHead(500);
     res.end();
   });
-  const endpoint = await listen(server);
+  const apiOrigin = await listen(server);
+  const endpoint = `${apiOrigin}/api/sitemigrate`;
   try {
     const raw = f.vault.get();
     f.vault.update({
       ...raw,
-      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin: endpoint, delivery: { ...e.delivery!, endpoint } } : e)),
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin, delivery: { ...e.delivery!, endpoint } } : e)),
     });
     const t = f.done();
     queueDelivery(t, f.automationStore, f.vault);
@@ -429,12 +432,13 @@ test('migration HTTP 200 with malformed non-JSON receipt records parse diagnosti
     res.writeHead(200, { 'Content-Type': 'text/plain; charset=utf-8', 'x-correlation-id': 'corr-200-bad' });
     res.end('<html>unexpected proxy page Bearer leaked-token</html>');
   });
-  const endpoint = await listen(server);
+  const apiOrigin = await listen(server);
+  const endpoint = `${apiOrigin}/api/sitemigrate`;
   try {
     const raw = f.vault.get();
     f.vault.update({
       ...raw,
-      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin: endpoint, delivery: { ...e.delivery!, endpoint } } : e)),
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin, delivery: { ...e.delivery!, endpoint } } : e)),
     });
     const t = f.done();
     queueDelivery(t, f.automationStore, f.vault);
@@ -457,4 +461,103 @@ test('Bearer redaction regex preserves JSON closing quotes and escape backslashe
   const sanitized = serialized.replace(/Bearer\s+[^\s"',;\\]+/gi, 'Bearer [已隐藏]');
   const parsed = JSON.parse(sanitized) as { nested: string };
   assert.deepEqual(JSON.parse(parsed.nested), { msg: 'Bearer [已隐藏]' });
+});
+
+test('deliveryRequestUrl and executeDelivery append __engine_timeout__ aligned with policy.timeoutSeconds', async () => {
+  assert.equal(
+    deliveryRequestUrl('https://launch.kooboo.nl/api/sitemigrate', 180),
+    'https://launch.kooboo.nl/api/sitemigrate?__engine_timeout__=180',
+  );
+  assert.equal(
+    deliveryRequestUrl('https://launch.kooboo.nl/api/sitemigrate', 240),
+    'https://launch.kooboo.nl/api/sitemigrate?__engine_timeout__=240',
+  );
+  assert.equal(
+    deliveryRequestUrl('https://launch.kooboo.nl/api/sitemigrate', 0),
+    'https://launch.kooboo.nl/api/sitemigrate?__engine_timeout__=180',
+  );
+  assert.equal(
+    deliveryRequestUrl('https://launch.kooboo.nl/api/sitemigrate', Number.NaN),
+    'https://launch.kooboo.nl/api/sitemigrate?__engine_timeout__=180',
+  );
+  assert.equal(
+    deliveryRequestUrl('https://launch.kooboo.nl/api/sitemigrate?foo=bar', 180),
+    'https://launch.kooboo.nl/api/sitemigrate?foo=bar&__engine_timeout__=180',
+  );
+  assert.equal(
+    deliveryRequestUrl('https://launch.kooboo.nl/api/sitemigrate?__engine_timeout__=300', 180),
+    'https://launch.kooboo.nl/api/sitemigrate?__engine_timeout__=300',
+  );
+  assert.equal(
+    deliveryRequestUrl('https://launch.kooboo.nl/api/sitemigrate?__engine_timeout__=', 240),
+    'https://launch.kooboo.nl/api/sitemigrate?__engine_timeout__=240',
+  );
+
+  const f = await fixture();
+  const capturedUrls: string[] = [];
+  const siteList = [{ siteId: f.site.siteId, homePageLink: f.site.url }];
+  const server = createServer((req, res) => {
+    res.setHeader('Content-Type', 'application/json');
+    if (req.method === 'GET') {
+      res.end(JSON.stringify(siteList));
+      return;
+    }
+    capturedUrls.push(req.url || '');
+    res.end(JSON.stringify({ siteId: KOOBOO_GUIDS[0], siteUrl: 'https://target.test' }));
+  });
+  const apiOrigin = await listen(server);
+  const endpoint = `${apiOrigin}/api/sitemigrate`;
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin, delivery: { ...e.delivery!, endpoint } } : e)),
+    });
+
+    const t1 = f.done();
+    queueDelivery(t1, f.automationStore, f.vault);
+    await executeDelivery(t1, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000), async task => {
+      task.delivery!.status = 'completed';
+    });
+    assert.equal(capturedUrls.length, 1);
+    assert.equal(capturedUrls[0], '/api/sitemigrate?__engine_timeout__=180');
+    assert.equal(t1.delivery!.policy.endpoint, endpoint);
+
+    const raw2 = f.vault.get();
+    f.vault.update({
+      ...raw2,
+      environments: raw2.environments.map(e => (e.id === f.env ? { ...e, delivery: { ...e.delivery!, timeoutSeconds: 240 } } : e)),
+    });
+    const site2 = {
+      id: randomUUID(),
+      resourceId: f.resource.id,
+      versionId: f.automationStore.versions(f.resource.id)[0].id,
+      environmentId: f.env,
+      siteId: randomUUID(),
+      name: 'Generated240',
+      url: 'https://generated240.test',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(site2);
+    siteList.push({ siteId: site2.siteId, homePageLink: site2.url });
+    const t2 = f.automationStore.create(
+      { resourceIds: [f.resource.id], kind: 'evaluation', scope: 'site', environmentId: f.env, generatedSiteId: site2.id, requirements: '' },
+      f.vault.automation(),
+    )[0];
+    t2.requirementsEnabled = false;
+    t2.learningPolicy = { ...t2.learningPolicy!, use: false, collect: false };
+    t2.status = 'completed';
+    t2.report = t1.report;
+    f.automationStore.put(t2);
+    queueDelivery(t2, f.automationStore, f.vault);
+    await executeDelivery(t2, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000), async task => {
+      task.delivery!.status = 'completed';
+    });
+    assert.equal(capturedUrls.length, 2);
+    assert.equal(capturedUrls[1], '/api/sitemigrate?__engine_timeout__=240');
+    assert.equal(t2.delivery!.policy.endpoint, endpoint);
+  } finally {
+    await close(server);
+    await f.close();
+  }
 });

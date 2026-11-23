@@ -40,3 +40,4 @@
 ## 7. 未预期运行时异常（`runtime`）
 
 - 当以上分类均不命中且经过 `inspect_execution` / `get_conversation` 无法恢复推进时，`interrupt` 并清晰总结“当前做到哪一步、哪一步卡住了、重跑或人工检查前应先确认什么”，禁止把未消化的堆栈原文或 JSON 直接当给用户的提示。
+- 若 `get_conversation` 因远端会话消息体过大而超时，且 `inspect_execution` 已返回明确终态（如 `failed` / `interrupted`），禁止重复重试 `get_conversation`，直接结合 `inspect_execution`、`get_task` 与 `probe_site` 的已有证据作出决策。

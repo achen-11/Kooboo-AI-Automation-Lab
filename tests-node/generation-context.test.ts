@@ -7,7 +7,7 @@ import { join } from 'node:path';
 import { runInNewContext } from 'node:vm';
 import { createApp } from '../server/app.js';
 import { defaultAutomationSettings } from '../shared/automation.js';
-import { assertGenerationInput, cleanupGenerationContext, GenerationContextStore, generationContextReaderVersion, generationInputLimits, generationReaderLimits, prepareGenerationContext, shardContext, contextReader, type ContextRequest, type ContextPackage } from '../server/automation/generation-context.js';
+import { assertGenerationInput, cleanupGenerationContext, GenerationContextStore, generationBatchLimits, generationContextReaderVersion, generationInputLimits, generationReaderLimits, prepareGenerationContext, shardContext, contextReader, type ContextRequest, type ContextPackage } from '../server/automation/generation-context.js';
 import { GenerationInputError } from '../server/automation/errors.js';
 import { isContextOverflow } from '../server/automation/generator.js';
 import { TemplateWorkflowStore } from '../server/automation/template-workflow-store.js';
@@ -307,5 +307,95 @@ test('automationRead with path/paging options lazily reads target nodes, bounds 
     // 4. Invalid options / unknown paths reject explicitly instead of dumping full section
     assert.throws(() => execute(`return automationRead("sourceEvidence", { path: ["entries", 99] });`), /Unknown JSON path/);
     assert.throws(() => execute(`return automationRead("sourceEvidence", "bad");`), /Invalid reader options/);
+  } finally { await f.close(); }
+});
+
+test('automationBatch consolidates multi-file reads within budget, isolates item errors, and ships orchestration/reasoning guidance', async () => {
+  const f = await fixture(); try {
+    const readme = '# Company\n' + 'Details '.repeat(250);
+    const facts = JSON.stringify({ company: 'Verheye', services: ['wiring', 'lighting'] });
+    const materials = [
+      { name: 'README.md', id: 'readme', destination: '_materials/README.md', type: 'text/markdown', size: Buffer.byteLength(readme), sha256: 'a'.repeat(64), storage: 'kfile' },
+      { name: 'ENRICHED_FACTS.json', id: 'facts', destination: '_materials/ENRICHED_FACTS.json', type: 'application/json', size: Buffer.byteLength(facts), sha256: 'b'.repeat(64), storage: 'kfile' },
+      { name: 'images/logo.png', id: 'logo', destination: '/materials/logo.png', type: 'image/png', size: 20, sha256: 'c'.repeat(64), storage: 'file' },
+      ...Array.from({ length: 8 }, (_, idx) => ({
+        name: `extra-${idx}.txt`,
+        id: `extra-${idx}`,
+        destination: `_materials/extra-${idx}.txt`,
+        type: 'text/plain',
+        size: 1900,
+        sha256: String(idx).padStart(64, '0'),
+        storage: 'kfile',
+      })),
+    ];
+    f.remote.set('_materials/README.md', readme);
+    f.remote.set('_materials/ENRICHED_FACTS.json', facts);
+    f.remote.set('/materials/logo.png', 'secret-binary');
+    for (let idx = 0; idx < 8; idx++) f.remote.set(`_materials/extra-${idx}.txt`, `E${idx}:` + 'x'.repeat(1850));
+
+    const prepared = await prepareGenerationContext(f.task, f.store, f.request, f.siteId, {
+      instructions: 'Build homepage only',
+      guidance: '\nUse real images',
+      materials,
+    });
+    assert.equal(prepared.mode, 'kfile');
+    assert.ok(Buffer.byteLength(prepared.text) < generationInputLimits.textBytes);
+    assert.match(prepared.text, /automationBatch/);
+    assert.match(prepared.text, /k\.ai\.callFunction/);
+    assert.match(prepared.text, /禁止在思考/);
+
+    const pkg = new GenerationContextStore(f.store).packages(f.task.id)[0];
+    const base = pkg.index.slice(0, pkg.index.lastIndexOf('/') + 1);
+    const reader = f.remote.get(base + 'reader.js')!;
+    const execute = (code: string) => JSON.parse(runInNewContext(
+      `${reader};JSON.stringify((function(){${code}})());`,
+      { k: { file: { read: (path: string) => f.remote.get(path) ?? null } } },
+    ));
+
+    // 1. Mixed batch: valid reads + missing optional section + binary material rejection
+    const mixed = execute(`return automationBatch([
+      { label: 'list', kind: 'materials', options: { limit: 5 } },
+      { label: 'inst', kind: 'read', section: 'instructions', options: { offset: 0, chars: 500 } },
+      { label: 'missing', kind: 'read', section: 'manifest' },
+      { label: 'readme', kind: 'materialRead', name: 'README.md', options: { offset: 0, chars: 500 } },
+      { label: 'facts', kind: 'materialRead', name: 'ENRICHED_FACTS.json', options: { format: 'json' } },
+      { label: 'bin', kind: 'materialRead', name: 'images/logo.png' }
+    ]);`);
+    assert.equal(mixed.valueType, 'batch');
+    assert.equal(mixed.truncated, false);
+    assert.equal(mixed.nextIndex, null);
+    assert.equal(mixed.results.length, 6);
+    assert.equal(mixed.results[0].ok, true);
+    assert.equal(mixed.results[0].result.total, materials.length);
+    assert.equal(mixed.results[1].result.text, 'Build homepage only');
+    assert.equal(mixed.results[2].ok, false);
+    assert.match(mixed.results[2].error, /Unknown task section/);
+    assert.equal(mixed.results[3].result.text, readme.slice(0, 500));
+    assert.equal(mixed.results[4].result.valueType, 'object');
+    assert.equal(mixed.results[5].ok, false);
+    assert.match(mixed.results[5].error, /not a text kfile/);
+    assert.equal(JSON.stringify(mixed).includes('secret-binary'), false);
+
+    // 2. Budget truncation across 8 large text items + continuation via nextIndex
+    const requests = Array.from({ length: 8 }, (_, idx) => ({
+      kind: 'materialRead',
+      name: `extra-${idx}.txt`,
+      options: { offset: 0, chars: 1900 },
+    }));
+    const page1 = execute(`return automationBatch(${JSON.stringify(requests)});`);
+    assert.ok(JSON.stringify(page1).length <= generationBatchLimits.resultChars);
+    assert.equal(page1.truncated, true);
+    assert.ok(page1.results.length >= 1 && page1.results.length < 8);
+    assert.equal(page1.nextIndex, page1.results.length);
+
+    const page2 = execute(`return automationBatch(${JSON.stringify(requests.slice(page1.nextIndex))});`);
+    assert.ok(JSON.stringify(page2).length <= generationBatchLimits.resultChars);
+    assert.equal(page1.results.length + page2.results.length, 8);
+    assert.equal(page2.truncated, false);
+    assert.equal(page2.nextIndex, null);
+
+    // 3. Structural batch errors throw explicitly
+    assert.throws(() => execute(`return automationBatch([]);`), /Invalid batch requests/);
+    assert.throws(() => execute(`return automationBatch([{ kind: 'eval' }]);`), /Unknown batch request kind/);
   } finally { await f.close(); }
 });

@@ -41,7 +41,43 @@ export function applyGenerationObservation(task:AutomationTask,state:GenerationO
   if(task.kind==='generation'){task.threadId=state.conversationId;task.context=JSON.stringify(state.context).slice(-50000);}
 }
 
-export async function generationSession(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal) {
+export interface GenerationSessionTiming {
+  gotoTimeoutMs?: number;
+  readyTimeoutMs?: number;
+  retryReadyTimeoutMs?: number;
+  maxReloads?: number;
+}
+
+interface BridgeProbe {
+  pathname: string;
+  readyState: string;
+  hasBridge: boolean;
+  ready: boolean;
+  state: string;
+}
+
+async function probeBridgePage(page: { evaluate: (fn: () => any) => Promise<any> }): Promise<BridgeProbe | null> {
+  return Promise.resolve(page.evaluate(() => {
+    const pathname = typeof location !== 'undefined' ? location.pathname : '';
+    const readyState = typeof document !== 'undefined' ? document.readyState : 'unknown';
+    const bridge = (window as any).__koobooAutomation;
+    if (!bridge) return { pathname, readyState, hasBridge: false, ready: false, state: '' };
+    try {
+      const s = bridge.snapshot();
+      return { pathname, readyState, hasBridge: true, ready: s?.ready === true, state: String(s?.state || '') };
+    } catch (err) {
+      return { pathname, readyState, hasBridge: true, ready: false, state: err instanceof Error ? err.message : 'error' };
+    }
+  })).catch(() => null);
+}
+
+function assertAiChatPath(probe: BridgeProbe | null) {
+  if (probe?.pathname && !/^\/_admin\/ai-chat\b/i.test(probe.pathname)) {
+    throw new Pending(`Kooboo AI Chat 页面未能进入工作台（当前路径 ${probe.pathname}），请检查目标环境登录令牌是否有效`);
+  }
+}
+
+export async function generationSession(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,timing?:GenerationSessionTiming) {
   const site=task.generatedSiteId&&store.site(task.generatedSiteId);if(!site)throw new Pending('尚未绑定实际生成站');
   const {origin,environment}=koobooClient(task,vault,signal);
   const expectedConversation=task.generation?.conversationId;
@@ -65,24 +101,56 @@ export async function generationSession(task:AutomationTask,store:AutomationStor
     await context.addCookies([{name:'jwt_token',value:environment.token,url:origin,httpOnly:false,secure:origin.startsWith('https:')}]);
     const page=context.pages()[0]||await context.newPage();
     const url=new URL('/_Admin/ai-chat/overview',origin);url.searchParams.set('SiteId',site.siteId);url.searchParams.set('automationTaskId',task.id);url.searchParams.set('starterSiteCreated','1');
-    await page.goto(url.href,{waitUntil:'domcontentloaded',timeout:120000});
-    await page.waitForFunction(()=>{try{return (window as any).__koobooAutomation?.snapshot().ready===true;}catch{return false;}},{},{timeout:180000}).catch(async()=>{
-      const probe=await Promise.resolve(page.evaluate(()=>{
-        const pathname=typeof location!=='undefined'?location.pathname:'';
-        const readyState=typeof document!=='undefined'?document.readyState:'unknown';
-        const bridge=(window as any).__koobooAutomation;
-        if(!bridge)return {pathname,readyState,hasBridge:false,state:''};
-        try{const s=bridge.snapshot();return {pathname,readyState,hasBridge:true,state:String(s?.state||'')};}
-        catch(err){return {pathname,readyState,hasBridge:true,state:err instanceof Error?err.message:'error'};}
-      })).catch(()=>null);
-      if(probe?.pathname&&!/^\/_admin\/ai-chat\b/i.test(probe.pathname))
-        throw new Pending(`Kooboo AI Chat 页面未能进入工作台（当前路径 ${probe.pathname}），请检查目标环境登录令牌是否有效`);
-      if(probe&&!probe.hasBridge&&probe.readyState!=='complete')
+    const gotoTimeoutMs = timing?.gotoTimeoutMs ?? 45_000;
+    const readyTimeoutMs = timing?.readyTimeoutMs ?? 45_000;
+    const retryReadyTimeoutMs = timing?.retryReadyTimeoutMs ?? 60_000;
+    const maxReloads = timing?.maxReloads ?? 2;
+    const navigate = async (reload: boolean) => {
+      const pageAny = page as any;
+      if (reload && typeof pageAny.reload === 'function') {
+        await pageAny.reload({ waitUntil: 'domcontentloaded', timeout: gotoTimeoutMs });
+      } else {
+        await page.goto(url.href, { waitUntil: 'domcontentloaded', timeout: gotoTimeoutMs });
+      }
+    };
+    try {
+      await navigate(false);
+    } catch (error) {
+      if (signal.aborted || maxReloads <= 0) throw error;
+      store.event(task.id, 'Kooboo AI Chat 首次页面加载较慢，保留缓存并重新打开工作台');
+      await navigate(false);
+    }
+    const initialProbe = await probeBridgePage(page);
+    assertAiChatPath(initialProbe);
+    for (let attempt = 0; attempt <= maxReloads; attempt++) {
+      if (attempt === 0 && initialProbe?.hasBridge && initialProbe.ready) break;
+      const waitTimeout = attempt === 0 ? readyTimeoutMs : retryReadyTimeoutMs;
+      let ready = false;
+      try {
+        await page.waitForFunction(() => { try { return (window as any).__koobooAutomation?.snapshot().ready === true; } catch { return false; } }, {}, { timeout: waitTimeout });
+        ready = true;
+      } catch {
+        signal.throwIfAborted();
+      }
+      if (ready) break;
+      const probe = await probeBridgePage(page);
+      assertAiChatPath(probe);
+      if (attempt < maxReloads) {
+        if (probe?.hasBridge) {
+          store.event(task.id, `Kooboo AI Chat 会话初始化较慢（state=${probe.state || 'loading'}），继续等待桥接就绪（第 ${attempt + 1}/${maxReloads} 次续等）`);
+        } else {
+          store.event(task.id, `Kooboo AI Chat 桥接首次加载较慢（readyState=${probe?.readyState || 'unknown'}），保留缓存并刷新重试（第 ${attempt + 1}/${maxReloads} 次）`);
+          await navigate(true);
+          assertAiChatPath(await probeBridgePage(page));
+        }
+        continue;
+      }
+      if (probe && !probe.hasBridge && probe.readyState !== 'complete')
         throw new Pending(`Kooboo AI Chat 前端静态资源加载超时（readyState=${probe.readyState}），远端网络较慢；浏览器缓存已保留，稍后重试可加速加载`);
-      if(probe?.hasBridge)
-        throw new Pending(`Kooboo AI Chat 会话初始化超时（state=${probe.state||'loading'}），稍后可重试核对`);
+      if (probe?.hasBridge)
+        throw new Pending(`Kooboo AI Chat 会话初始化超时（state=${probe.state || 'loading'}），稍后可重试核对`);
       throw new Pending('Kooboo AI Chat 执行状态桥接尚未就绪；请确认目标环境包含 automation bridge 前端');
-    });
+    }
     task.generation={...task.generation,ownerPid:process.pid};store.put(task);
     const snapshot=async()=>{
       signal.throwIfAborted();

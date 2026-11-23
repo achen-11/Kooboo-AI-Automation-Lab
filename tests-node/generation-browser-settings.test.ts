@@ -124,7 +124,7 @@ test('generation session waits for canSend readiness, retains HTTP cache across 
     const page = {
       goto: async () => {},
       waitForFunction: async (fn: Function, _arg: unknown, opts?: { timeout?: number }) => {
-        assert.ok((opts?.timeout ?? 0) >= 180000);
+        assert.ok((opts?.timeout ?? 0) > 0);
         if (mode !== 'normal') throw new Error('Timeout exceeded');
         assert.equal(evaluate(fn), true);
       },
@@ -144,8 +144,113 @@ test('generation session waits for canSend readiness, retains HTTP cache across 
     assert.equal(existsSync(cacheFile), false, 'terminal task cleanup removes regenerable browser cache');
 
     mode = 'slow-assets';
-    await assert.rejects(generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal), (err: unknown) => err instanceof Pending && /静态资源加载超时/.test(err.message));
+    await assert.rejects(generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal, { gotoTimeoutMs: 500, readyTimeoutMs: 20, retryReadyTimeoutMs: 20, maxReloads: 1 }), (err: unknown) => err instanceof Pending && /静态资源加载超时/.test(err.message));
     mode = 'login-redirect';
-    await assert.rejects(generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal), (err: unknown) => err instanceof Pending && /登录令牌/.test(err.message));
+    await assert.rejects(generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal, { gotoTimeoutMs: 500, readyTimeoutMs: 20, retryReadyTimeoutMs: 20, maxReloads: 1 }), (err: unknown) => err instanceof Pending && /登录令牌/.test(err.message));
+  } finally { t.mock.restoreAll(); await f.close(); }
+});
+
+test('generation session reloads once when cold-load bridge is missing, continues without reload when bridge is initializing, and fails fast on login redirect', async t => {
+  const f = await fixture();
+  const fastTiming = { gotoTimeoutMs: 500, readyTimeoutMs: 20, retryReadyTimeoutMs: 20, maxReloads: 2 };
+  try {
+    // 1. Cold-load missing bridge -> page.reload() recovers without bouncing back to followup
+    {
+      let reloads = 0, gotos = 0, waitCalls = 0, hasBridge = false;
+      const conversationId = f.task.generation!.conversationId!;
+      const bridge = {
+        snapshot: () => ({ version: 1, taskId: f.task.id, siteId: f.site.siteId, conversationId, runId: '', ready: true, running: false, canSend: true, state: 'unknown', pending: null, observedAt: Date.now(), context: [], usage: [] }),
+        selectConversation: () => {},
+        deliver: (input: any) => ({ id: input.id, state: 'accepted', conversationId }),
+      };
+      t.mock.method(chromium, 'launchPersistentContext', async () => {
+        const evaluate = (fn: Function, arg?: unknown) => runInNewContext(`(${fn.toString()})(arg)`, {
+          window: hasBridge ? { __koobooAutomation: bridge } : {},
+          location: { pathname: '/_Admin/ai-chat/overview' },
+          document: { readyState: hasBridge ? 'complete' : 'interactive' },
+          arg,
+        });
+        const page = {
+          goto: async () => { gotos++; },
+          reload: async () => { reloads++; hasBridge = true; },
+          waitForFunction: async (fn: Function) => {
+            waitCalls++;
+            if (!hasBridge) throw new Error('Timeout');
+            assert.equal(evaluate(fn), true);
+          },
+          evaluate,
+        };
+        return { pages: () => [page], addCookies: async () => {}, close: async () => {} };
+      });
+      const session = await generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal, fastTiming);
+      assert.equal(gotos, 1);
+      assert.equal(reloads, 1);
+      assert.equal(waitCalls, 2);
+      await session.close();
+      t.mock.restoreAll();
+    }
+
+    // 2. Bridge mounted but still loading -> continues waiting without calling page.reload()
+    {
+      let reloads = 0, waitCalls = 0, bridgeReady = false;
+      const conversationId = f.task.generation!.conversationId!;
+      const bridge = {
+        snapshot: () => ({ version: 1, taskId: f.task.id, siteId: f.site.siteId, conversationId, runId: '', ready: bridgeReady, running: false, canSend: true, state: bridgeReady ? 'idle' : 'loading', pending: null, observedAt: Date.now(), context: [], usage: [] }),
+        selectConversation: () => {},
+        deliver: (input: any) => ({ id: input.id, state: 'accepted', conversationId }),
+      };
+      t.mock.method(chromium, 'launchPersistentContext', async () => {
+        const evaluate = (fn: Function, arg?: unknown) => runInNewContext(`(${fn.toString()})(arg)`, {
+          window: { __koobooAutomation: bridge },
+          location: { pathname: '/_Admin/ai-chat/overview' },
+          document: { readyState: 'complete' },
+          arg,
+        });
+        const page = {
+          goto: async () => {},
+          reload: async () => { reloads++; },
+          waitForFunction: async (fn: Function) => {
+            waitCalls++;
+            if (waitCalls === 1) throw new Error('Timeout');
+            bridgeReady = true;
+            assert.equal(evaluate(fn), true);
+          },
+          evaluate,
+        };
+        return { pages: () => [page], addCookies: async () => {}, close: async () => {} };
+      });
+      const session = await generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal, fastTiming);
+      assert.equal(reloads, 0);
+      assert.equal(waitCalls, 2);
+      await session.close();
+      t.mock.restoreAll();
+    }
+
+    // 3. Login redirect -> fails immediately without calling waitForFunction or reload
+    {
+      let reloads = 0, waitCalls = 0;
+      t.mock.method(chromium, 'launchPersistentContext', async () => {
+        const evaluate = (fn: Function, arg?: unknown) => runInNewContext(`(${fn.toString()})(arg)`, {
+          window: {},
+          location: { pathname: '/_Admin/account/login' },
+          document: { readyState: 'complete' },
+          arg,
+        });
+        const page = {
+          goto: async () => {},
+          reload: async () => { reloads++; },
+          waitForFunction: async () => { waitCalls++; },
+          evaluate,
+        };
+        return { pages: () => [page], addCookies: async () => {}, close: async () => {} };
+      });
+      await assert.rejects(
+        generationSession(f.task, f.automationStore, f.vault, f.directory, new AbortController().signal, fastTiming),
+        (err: unknown) => err instanceof Pending && /登录令牌/.test(err.message),
+      );
+      assert.equal(reloads, 0);
+      assert.equal(waitCalls, 0);
+      t.mock.restoreAll();
+    }
   } finally { t.mock.restoreAll(); await f.close(); }
 });

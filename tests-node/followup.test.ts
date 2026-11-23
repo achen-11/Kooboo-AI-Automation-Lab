@@ -5,6 +5,7 @@ import { tmpdir } from 'node:os';
 import { join } from 'node:path';
 import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
+import { brotliCompressSync, gzipSync } from 'node:zlib';
 import { execFile } from 'node:child_process';
 import { promisify } from 'node:util';
 import type { ThreadEvent } from '@openai/codex-sdk';
@@ -531,5 +532,129 @@ test('failed generation retry sends once, ignores the previous run and consumes 
       }
       assert.equal(task.generatedSiteId,site.id);assert.equal(task.versionId,f.automationStore.versions(f.resource.id)[0].id);assert.equal(task.generation!.conversationId,conversationId);
     }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await f.close();}
+  }
+});
+
+test('httpRead transparently decompresses gzip and brotli responses while still enforcing decoded byte limits', async () => {
+  const payload = JSON.stringify({ ok: true, items: Array.from({ length: 40 }, (_, i) => `entry-${i}-value`) });
+  const server = createServer((req, res) => {
+    assert.match(String(req.headers['accept-encoding'] || ''), /\bgzip\b/);
+    assert.match(String(req.headers['accept-encoding'] || ''), /\bbr\b/);
+    if (req.url === '/gzip') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Encoding': 'gzip' });
+      res.end(gzipSync(Buffer.from(payload)));
+      return;
+    }
+    if (req.url === '/br') {
+      res.writeHead(200, { 'Content-Type': 'application/json', 'Content-Encoding': 'br' });
+      res.end(brotliCompressSync(Buffer.from(payload)));
+      return;
+    }
+    res.writeHead(204);
+    res.end();
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  try {
+    const gz = await httpRead(new URL('/gzip', origin), { signal: AbortSignal.timeout(2000) });
+    assert.equal(gz.status, 200);
+    assert.deepEqual(JSON.parse(gz.body), JSON.parse(payload));
+
+    const br = await httpRead(new URL('/br', origin), { signal: AbortSignal.timeout(2000) });
+    assert.equal(br.status, 200);
+    assert.deepEqual(JSON.parse(br.body), JSON.parse(payload));
+
+    const empty = await httpRead(new URL('/empty', origin), { signal: AbortSignal.timeout(2000) });
+    assert.equal(empty.status, 204);
+    assert.equal(empty.body, '');
+
+    await assert.rejects(
+      httpRead(new URL('/gzip', origin), { signal: AbortSignal.timeout(2000), limit: 64 }),
+      /响应超过读取预算/,
+    );
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(r => server.close(() => r()));
+  }
+});
+
+test('followup blocks duplicate get_conversation retries in the same turn after a timeout', async () => {
+  const f = await fixture();
+  let getMessagesRequests = 0;
+  let env: Record<string, string> = {};
+  const server = createServer((req, res) => {
+    if (req.url?.startsWith('/_api/v2/AIConversation/GetMessages')) {
+      getMessagesRequests++;
+      // Simulate a stalled oversized response; destroyed when client aborts
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      return;
+    }
+    res.writeHead(404);
+    res.end();
+  });
+  await new Promise<void>(r => server.listen(0, '127.0.0.1', r));
+  const origin = `http://127.0.0.1:${(server.address() as { port: number }).port}`;
+  try {
+    f.vault.update({
+      ...f.vault.get(),
+      environments: [{ id: f.environmentId, name: 'Test', origin, apiOrigin: origin, token: 'test-only-token' }],
+    });
+    const task = f.create();
+    f.attach(task);
+    task.autonomy = createAutonomousExecution('Test timeout guard');
+    f.automationStore.put(task);
+    f.automationStore.scheduleFollowup(task, f.settings.followup);
+
+    const run = async (payload: unknown) => {
+      try {
+        return JSON.parse((await promisify(execFile)(
+          process.execPath,
+          [join(f.directory, 'followup-runs', task.id, 'tools.mjs'), JSON.stringify(payload)],
+          { env: { ...process.env, ...env } },
+        )).stdout);
+      } catch (error) {
+        const stdout = (error as { stdout?: string }).stdout;
+        if (stdout) throw new Error(JSON.parse(stdout).error);
+        throw error;
+      }
+    };
+
+    const outerAbort = new AbortController();
+    const originalTimeout = AbortSignal.timeout;
+    AbortSignal.timeout = ((ms: number) => originalTimeout.call(AbortSignal, Math.min(ms, 120))) as typeof AbortSignal.timeout;
+    try {
+      const stream = async function* (): AsyncGenerator<ThreadEvent> {
+        const taskObs = await run({ tool: 'get_task' });
+        await assert.rejects(() => run({ tool: 'get_conversation' }), /读取远端会话超时.*不要重复调用 get_conversation/);
+        await assert.rejects(() => run({ tool: 'get_conversation' }), /不再重复请求.*不要再次调用 get_conversation/);
+        assert.equal(getMessagesRequests, 1);
+        const accepted = await run({
+          tool: 'act',
+          decision: decision('interrupt', { evidence: [taskObs.evidenceId], nextSteps: ['检查超大会话后手动恢复'] }),
+        });
+        assert.equal(accepted.accepted, true);
+        yield { type: 'turn.completed', usage: { input_tokens: 10, cached_input_tokens: 0, cache_write_input_tokens: 0, reasoning_output_tokens: 0, output_tokens: 5 } };
+      };
+      const thread = { runStreamed: async () => ({ events: stream() }) };
+      const action = await executeFollowup(
+        task,
+        f.automationStore,
+        f.vault,
+        f.directory,
+        outerAbort.signal,
+        (_v, _d, extra) => {
+          env = extra;
+          return { startThread: () => thread, resumeThread: () => thread };
+        },
+      );
+      assert.equal(action.action, 'interrupt');
+      assert.equal(getMessagesRequests, 1);
+    } finally {
+      AbortSignal.timeout = originalTimeout;
+    }
+  } finally {
+    server.closeAllConnections();
+    await new Promise<void>(r => server.close(() => r()));
+    await f.close();
   }
 });

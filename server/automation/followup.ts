@@ -122,6 +122,8 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
   let browser:Awaited<ReturnType<typeof generationSession>>|undefined;
   let activeTool:Promise<unknown>|undefined;
   let toolCount=0,busy=false;
+  const timedOutConversations=new Set<string>();
+  const isTimeoutOrAbortError=(error:unknown)=>error instanceof Error&&(error.name==='TimeoutError'||error.name==='AbortError'||/timeout|timed out|aborted/i.test(error.message));
   const observe=(tool:string,value:unknown)=>{
     const id=`observation-${randomUUID()}`,safe=store.sanitize(value);observations.add(id);
     writeFileSync(resolve(work,id+'.json'),JSON.stringify(safe,null,2),{mode:0o600});
@@ -142,7 +144,23 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
       const sourceGaps=collectionSourceGaps(quality.current.report),observed=observe(input.tool,{currentReportId:quality.current.id,current:bounded(quality.current.report),previous:bounded(quality.previous?.report||null),comparison,reportFiles:{current:'current-report.json',previous:'previous-report.json'},repairHistoryFile:'repair-history.json',sourceGaps,migration:migration?.payload,rounds:followupTaskContext(task).optimization!.rounds,images:images?.available.map(i=>({reportId:i.reportId,...i.file}))});
       inspection.reportObservations||={};inspection.reportObservations[observed.evidenceId]={reportId:quality.current.id,sourceGaps};task.followup!.reportObservations=inspection.reportObservations;store.put(task);return observed;
     }
-    if(input.tool==='get_conversation'){if(task.kind==='evaluation')return observe(input.tool,store.evaluations.observation(task.id));inspection.conversation=await readConversation(task,store,vault,toolSignal);return observe(input.tool,inspection.conversation);}
+    if(input.tool==='get_conversation'){
+      if(task.kind==='evaluation')return observe(input.tool,store.evaluations.observation(task.id));
+      const convKey=task.generation?.conversationId||'__default__';
+      if(timedOutConversations.has(convKey)){
+        throw new Error('本轮 get_conversation 已因远端会话体积过大或网络超时失败，不再重复请求；请直接依据 inspect_execution、get_task 与 probe_site 的已取得证据决策，不要再次调用 get_conversation。');
+      }
+      try{
+        inspection.conversation=await readConversation(task,store,vault,toolSignal);
+        return observe(input.tool,inspection.conversation);
+      }catch(error){
+        if(!signal.aborted&&!toolAbort.signal.aborted&&isTimeoutOrAbortError(error)){
+          timedOutConversations.add(convKey);
+          throw new Error('get_conversation 读取远端会话超时（可能因会话消息体过大或远端网络慢）；不要重复调用 get_conversation，请结合 inspect_execution、get_task 与 probe_site 的已有证据继续决策。');
+        }
+        throw error;
+      }
+    }
     if(input.tool==='get_site')return observe(input.tool,await refreshSite(task,store,vault,toolSignal)||{missing:true});
     if(input.tool==='probe_site'){const site=await refreshSite(task,store,vault,toolSignal);const result=await probeSite(site?.url||'',toolSignal);inspection.siteReady=true;return observe(input.tool,result);}
     if(input.tool==='inspect_execution'){

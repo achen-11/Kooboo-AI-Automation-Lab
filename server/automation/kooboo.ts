@@ -1,5 +1,6 @@
 import http from 'node:http';
 import https from 'node:https';
+import { createBrotliDecompress, createGunzip, createInflate } from 'node:zlib';
 import type {
   AutomationTask,
   GeneratedSite,
@@ -103,11 +104,30 @@ export async function probeKoobooSandboxCapabilities(
 export function httpRead(url:URL,options:{token?:string;body?:unknown;signal:AbortSignal;limit?:number}) {
   return new Promise<{status:number;body:string}>((resolve,reject)=>{
     const body=options.body===undefined?undefined:JSON.stringify(options.body);
+    const limit=options.limit||16*1024*1024;
+    let settled=false;
+    const finish=(fn:()=>void)=>{if(settled)return;settled=true;fn();};
     const request=(url.protocol==='https:'?https:http).request(url,{method:body?'POST':'GET',signal:options.signal,
-      headers:{Connection:'close',...(options.token?{Authorization:`Bearer ${options.token}`}:{ }),...(body?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)}:{})}},response=>{
-      let text='';response.setEncoding('utf8');response.on('data',chunk=>{text+=chunk;if(Buffer.byteLength(text)>(options.limit||16*1024*1024))request.destroy(new Error('响应超过读取预算'));});
-      response.on('end',()=>resolve({status:response.statusCode||0,body:text}));response.on('error',reject);
-    });request.on('error',reject);request.end(body);
+      headers:{Connection:'close','Accept-Encoding':'gzip, deflate, br',...(options.token?{Authorization:`Bearer ${options.token}`}:{ }),...(body?{'Content-Type':'application/json','Content-Length':Buffer.byteLength(body)}:{})}},response=>{
+      const status=response.statusCode||0;
+      if(status===204||status===304){response.resume();finish(()=>resolve({status,body:''}));return;}
+      const encoding=String(response.headers['content-encoding']||'').split(',')[0]!.trim().toLowerCase();
+      const decoder=encoding==='gzip'||encoding==='x-gzip'?createGunzip():encoding==='deflate'?createInflate():encoding==='br'?createBrotliDecompress():null;
+      const fail=(error:unknown)=>{const err=error instanceof Error?error:new Error(String(error));decoder?.destroy();request.destroy();finish(()=>reject(err));};
+      if(decoder){response.on('error',fail);response.pipe(decoder);}
+      const stream=decoder||response;
+      let text='',bytesRead=0;
+      stream.setEncoding('utf8');
+      stream.on('data',(chunk:string)=>{
+        bytesRead+=Buffer.byteLength(chunk);
+        if(bytesRead>limit){const err=new Error('响应超过读取预算');decoder?.destroy(err);request.destroy(err);finish(()=>reject(err));return;}
+        text+=chunk;
+      });
+      stream.on('end',()=>finish(()=>resolve({status,body:text})));
+      stream.on('error',fail);
+    });
+    request.on('error',error=>finish(()=>reject(error)));
+    request.end(body);
   });
 }
 

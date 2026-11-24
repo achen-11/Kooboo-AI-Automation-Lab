@@ -16,7 +16,9 @@ import {
   FOLLOWUP_EPOCH_MIGRATION_ID,
   FOLLOWUP_RUNTIME_EPOCH,
   KOOBOO_SUBDOMAIN_CONFLICT_MIGRATION_ID,
+  PREPARE_CLONE_FAILURE_MIGRATION_ID,
   hasKoobooSubdomainHyphenConflict,
+  hasPrepareCloneZeroPageConflict,
 } from '../server/automation/experience-store.js';
 import { selectExperience, adoptedGuidance, queueReflection, reflectExperience, PLATFORM_HARD_CONTRACTS } from '../server/automation/experience.js';
 import { localDecision } from '../server/automation/local-decision.js';
@@ -558,6 +560,92 @@ test('startup semantic migration disables AI experiences conflicting with Kooboo
     const es2 = new ExperienceStore(f.automationStore);
     assert.equal(es2.get(badAiId)!.revision, 2);
     assert.ok(f.automationStore.db.prepare('SELECT 1 FROM auto_experience_migrations WHERE id=?').get(KOOBOO_SUBDOMAIN_CONFLICT_MIGRATION_ID));
+  } finally {
+    await f.close();
+  }
+});
+
+test('startup semantic migration disables AI experiences distilled from prepare-stage 0-page clone interruptions, preserves human entries, and is idempotent', async () => {
+  const f = await fixture();
+  try {
+    new ExperienceStore(f.automationStore);
+    f.automationStore.db.prepare('DELETE FROM auto_experience_migrations WHERE id=?').run(PREPARE_CLONE_FAILURE_MIGRATION_ID);
+
+    const seed = (id: string, actor: 'ai' | 'human', title: string, conditions: string, guidance: string) => {
+      const now = Date.now();
+      const exp = {
+        id,
+        revision: 1,
+        title,
+        scenarios: ['upgrade' as const, 'materials' as const],
+        stages: ['followup' as const, 'generation' as const],
+        conditions,
+        exclusions: '',
+        guidance,
+        enabled: true,
+        manualDisabled: false,
+        evidence: 'unverified' as const,
+        createdAt: now,
+        updatedAt: now,
+        sourceTaskId: null,
+        sourceEvidence: [],
+        runtimeEpoch: FOLLOWUP_RUNTIME_EPOCH,
+      };
+      f.automationStore.db.prepare('INSERT INTO auto_experiences VALUES(?,?,?)').run(exp.id, 1, JSON.stringify(exp));
+      f.automationStore.db.prepare('INSERT INTO auto_experience_revisions VALUES(?,?,?)').run(exp.id, 1, JSON.stringify({ experience: exp, actor, reason: 'seed', time: now }));
+    };
+
+    const cloneNoiseAiId = randomUUID();
+    const cloneNoiseHumanId = randomUUID();
+    const validGenAiId = randomUUID();
+
+    seed(
+      cloneNoiseAiId,
+      'ai',
+      'prepare 阶段首页克隆持续 0 页时先止损并分流核验',
+      '升级或资料建站任务停留在 prepare，且准备事件已明确显示：首页克隆等待至少 30 秒仍为 0/1 页；平台随后仅执行一次 Transfer/Single 降级抓取；降级后仍为“导入 0 页”。',
+      '出现等待 30 秒仍 0/1 页 -> Transfer/Single 降级抓取一次 -> 仍导入 0 页 -> 中断后立即停止盲目 retry，再做一次受控分流核验并提交 source-access 中断。',
+    );
+    seed(
+      cloneNoiseHumanId,
+      'human',
+      '人工保留的克隆 0 页排查说明',
+      '内容站克隆等待结果为已导入 0 页且单页降级抓取失败。',
+      '按源站访问阻塞 source-access 处理。',
+    );
+    seed(
+      validGenAiId,
+      'ai',
+      '生成阶段保留参考站首屏布局层级',
+      '升级任务已进入 generation 且参考站截图可用',
+      '严格对齐参考站首屏 Hero 构图与导航间距。',
+    );
+
+    assert.equal(
+      hasPrepareCloneZeroPageConflict({
+        title: '生成阶段保留参考站首屏布局层级',
+        conditions: '升级任务已进入 generation',
+        guidance: '严格对齐参考站首屏 Hero 构图。',
+      }),
+      false,
+    );
+
+    const es = new ExperienceStore(f.automationStore);
+    assert.equal(es.get(cloneNoiseAiId)!.enabled, false);
+    assert.equal(es.get(cloneNoiseAiId)!.manualDisabled, false);
+    assert.equal(es.get(cloneNoiseAiId)!.revision, 2);
+    assert.equal(es.history(cloneNoiseAiId, 1, 10).items[0]!.actor, 'system');
+    assert.match(es.history(cloneNoiseAiId, 1, 10).items[0]!.reason, /源站克隆 0 页已由宿主直接终态拦截/);
+
+    assert.equal(es.get(cloneNoiseHumanId)!.enabled, true);
+    assert.equal(es.get(cloneNoiseHumanId)!.revision, 1);
+
+    assert.equal(es.get(validGenAiId)!.enabled, true);
+    assert.equal(es.get(validGenAiId)!.revision, 1);
+
+    const es2 = new ExperienceStore(f.automationStore);
+    assert.equal(es2.get(cloneNoiseAiId)!.revision, 2);
+    assert.ok(f.automationStore.db.prepare('SELECT 1 FROM auto_experience_migrations WHERE id=?').get(PREPARE_CLONE_FAILURE_MIGRATION_ID));
   } finally {
     await f.close();
   }

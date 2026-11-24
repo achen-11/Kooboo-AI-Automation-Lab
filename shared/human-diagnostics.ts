@@ -196,7 +196,7 @@ export function deriveHumanNotice(input: {
     };
   }
 
-  if (/pages\s*=\s*0|0\s*页|未确认有页面导入|Transfer\/|transferTaskId|sourceSandbox|无法抓取|抓取不到|反爬|验证码|登录墙|只读源站.*Sandbox|源站.*无法/i.test(combined)) {
+  if (/pages\s*=\s*0|0\s*页|未确认有页面导入|内容站克隆|克隆未返回任务标识|Transfer\/|transferTaskId|sourceSandbox|无法抓取|抓取不到|反爬|验证码|登录墙|只读源站.*Sandbox|源站.*无法/i.test(combined)) {
     const roleSwapHint = /源站.*Sandbox|sourceSandbox/i.test(combined)
       ? '目标站点上的 Kooboo 模板本身不受影响，但供 AI 读取内容的只读源站没有拉取到任何页面。'
       : '系统自动访问原网站进行页面克隆后，未获取到任何可用页面，可能是原网址有误、站点暂不可访问或触发了防抓取限制。';

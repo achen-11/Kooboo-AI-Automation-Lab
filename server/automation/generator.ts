@@ -409,11 +409,23 @@ export async function executeGeneration(
   if(task.scenario==='upgrade'&&directTemplate&&!task.generation.skipSourceTransfer&&!task.generation.sourceSandbox?.complete&&!task.generation.prepared){
     let sourceSandbox=task.generation.sourceSandbox;
     const hadSandboxTransfer=Boolean(sourceSandbox?.siteId&&sourceSandbox.transferTaskId);
+    const isValidSandbox=(sandbox:string,sandboxSiteId:string,transferTaskId:string)=>
+      Boolean(sandbox&&/^[a-f0-9-]{36}$/i.test(sandboxSiteId)&&!/^00000000-0000-0000-0000-000000000000$/i.test(sandboxSiteId)&&transferTaskId);
     if(!sourceSandbox?.siteId||!sourceSandbox.transferTaskId){
-      const transferred=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
-      const sandboxSiteId=siteIdentity(transferred),sandbox=String(transferred?.sandbox||'').trim(),transferTaskId=String(transferred?.taskId||'').trim(),previewUrl=String(transferred?.previewUrl||'').trim();
-      if(!sandbox||!/^[a-f0-9-]{36}$/i.test(sandboxSiteId)||/^00000000-0000-0000-0000-000000000000$/i.test(sandboxSiteId)||!transferTaskId)
-        throw new Pending('旧内容站克隆到只读源站 Sandbox 未返回有效标识，请检查实际 Sandbox 状态');
+      let transferred=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
+      let sandboxSiteId=siteIdentity(transferred),sandbox=String(transferred?.sandbox||'').trim(),transferTaskId=String(transferred?.taskId||'').trim(),previewUrl=String(transferred?.previewUrl||'').trim();
+      if(!isValidSandbox(sandbox,sandboxSiteId,transferTaskId)&&!task.generation.transferFallbackAttempted){
+        task.generation.transferFallbackAttempted=true;store.put(task);
+        store.event(task.id,'旧内容站克隆到只读源站 Sandbox 未返回有效标识，尝试重建 1 次只读源站抓取');
+        try{
+          transferred=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
+          sandboxSiteId=siteIdentity(transferred);sandbox=String(transferred?.sandbox||'').trim();transferTaskId=String(transferred?.taskId||'').trim();previewUrl=String(transferred?.previewUrl||'').trim();
+        }catch(err:any){store.event(task.id,`重建只读源站抓取失败：${err?.message||'请求异常'}`);}
+      }
+      if(!isValidSandbox(sandbox,sandboxSiteId,transferTaskId)){
+        task.generation.transferFallbackAttempted=true;store.put(task);
+        throw zeroPageTransferError(input.contentUrl,site.id,sandbox||'source-sandbox');
+      }
       sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
       task.generation.sourceSandbox=sourceSandbox;store.put(task);
       store.event(task.id,`已创建只读源站 Sandbox ${sandbox}（${sandboxSiteId}），正在同步旧内容站`);
@@ -425,7 +437,7 @@ export async function executeGeneration(
       try{
         const retried=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
         const sandboxSiteId=siteIdentity(retried),sandbox=String(retried?.sandbox||'').trim(),transferTaskId=String(retried?.taskId||'').trim(),previewUrl=String(retried?.previewUrl||'').trim();
-        if(sandbox&&/^[a-f0-9-]{36}$/i.test(sandboxSiteId)&&!/^00000000-0000-0000-0000-000000000000$/i.test(sandboxSiteId)&&transferTaskId){
+        if(isValidSandbox(sandbox,sandboxSiteId,transferTaskId)){
           sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
           task.generation.sourceSandbox=sourceSandbox;store.put(task);
           transfer=await waitForTransferPages({request,siteId:sandboxSiteId,transferTaskId,signal,allowInitialCheck:false,onProgress:transferProgress('正在同步旧内容站 Sandbox')});
@@ -446,9 +458,14 @@ export async function executeGeneration(
       if(!taskId){
         let existing=await request('Transfer/GetTaskStatus',undefined,siteId);
         let pages=Number(existing?.pages||0);
-        if(!pages&&task.generation.overrideContentUrl&&!task.generation.transferFallbackAttempted){
+        if(!pages&&input.contentUrl&&!task.generation.transferFallbackAttempted){
           task.generation.transferFallbackAttempted=true;store.put(task);
-          store.event(task.id,'内容站克隆未返回任务标识，尝试使用替换原网址通过 Transfer/Single 抓取首页 1 次');
+          store.event(
+            task.id,
+            task.generation.overrideContentUrl
+              ?'内容站克隆未返回任务标识，尝试使用替换原网址通过 Transfer/Single 抓取首页 1 次'
+              :'内容站克隆未返回任务标识且当前为 0 页，尝试通过 Transfer/Single 降级抓取首页 1 次',
+          );
           try{
             const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
             if(single?.taskId){
@@ -458,10 +475,12 @@ export async function executeGeneration(
               existing=await request('Transfer/GetTaskStatus',undefined,siteId);
               pages=Number(existing?.pages||0);
             }
-          }catch(err:any){store.event(task.id,`替换原网址单页抓取失败：${err?.message||'请求异常'}`);}
-          if(!pages)throw zeroPageTransferError(input.contentUrl,site.id);
+          }catch(err:any){store.event(task.id,`${task.generation.overrideContentUrl?'替换原网址单页':'单页降级'}抓取失败：${err?.message||'请求异常'}`);}
         }
-        if(!pages)throw new Pending('内容站克隆未返回任务标识，请检查实际克隆状态');
+        if(!pages){
+          task.generation.transferFallbackAttempted=true;store.put(task);
+          throw zeroPageTransferError(input.contentUrl,site.id);
+        }
         task.generation.transferComplete=true;store.put(task);
         store.event(task.id,'已确认目标站存在导入页面，继续准备参考站');
       }else{

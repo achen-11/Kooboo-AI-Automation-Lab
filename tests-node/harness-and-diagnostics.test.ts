@@ -15,6 +15,10 @@ import { builtInHarnessSop, buildHarnessCatalog, resolveHarnessSop } from '../se
 import { executeGeneration } from '../server/automation/generator.js';
 import { FollowupRuntimeError } from '../server/automation/errors.js';
 import { mergeTemplateReports, rawBatchReport } from '../server/automation/template-review.js';
+import { AutomationWorker, syncReflectionCandidates } from '../server/automation/worker.js';
+import { ExperienceStore } from '../server/automation/experience-store.js';
+import { validateFollowupAction } from '../server/automation/followup.js';
+import { isConfirmedCloneFailure } from '../server/automation/autonomy.js';
 
 async function listen(server: ReturnType<typeof createServer>) {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -449,12 +453,163 @@ test('generator stops infinite loop when transfer returns pages=0 (legacy Transf
       { preflightReference: async (url) => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }) },
     );
     assert.equal(recTask.generation?.transferComplete, true);
+
+    // Case D: adopted / missing transferTaskId upgrade with pages=0 tries Transfer/Single once without requiring overrideContentUrl, then throws FollowupRuntimeError (not Pending)
+    legacyMode = 'zero-all';
+    calls.length = 0;
+    const adoptedSiteId = (currentSiteId = randomUUID());
+    const adoptedSite = {
+      id: randomUUID(),
+      resourceId: legRes.id,
+      versionId: f.automationStore.versions(legRes.id)[0]!.id,
+      environmentId: f.envId,
+      siteId: adoptedSiteId,
+      name: 'adopted_upgrade_site',
+      url: '',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(adoptedSite);
+    const noTaskIdTask = f.automationStore.create(
+      {
+        resourceIds: [legRes.id],
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: f.envId,
+        generatedSiteId: adoptedSite.id,
+        requirements: '',
+      },
+      defaultAutomationSettings,
+    )[0];
+    noTaskIdTask.generation = { createAttempted: true };
+    noTaskIdTask.learningPolicy = { ...defaultLearningSettings, use: true, collect: true };
+    f.automationStore.put(noTaskIdTask);
+
+    await assert.rejects(
+      executeGeneration(noTaskIdTask, f.automationStore, f.vault, f.directory, AbortSignal.timeout(8000), undefined, {
+        preflightReference: async (url) => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }),
+      }),
+      (err: unknown) =>
+        err instanceof FollowupRuntimeError && err.userSummary?.category === 'source-access',
+    );
+    assert.equal(calls.filter((c) => c === '/_api/v2/Transfer/Single').length, 1);
+    assert.equal(noTaskIdTask.generation?.transferFallbackAttempted, true);
+    assert.equal(isConfirmedCloneFailure(noTaskIdTask, '内容站克隆完成但导入 0 页（https://blocked-legacy.example.test），已重试后仍无法获取源站页面'), true);
     void legSiteId;
     void recSiteId;
   } finally {
     await f.app.close();
     rmSync(f.directory, { recursive: true, force: true });
     await closeServer(server);
+  }
+});
+
+test('confirmed clone failure stops immediately with 0 followup and 0 experience reflection LLM calls', async () => {
+  const f = await createTestApp('https://shawnchen-de.kooboo.io');
+  try {
+    f.vault.updateAutomation({
+      ...f.vault.automation(),
+      enabled: true,
+      followup: { ...defaultAutomationSettings.followup, enabled: true },
+      learning: { ...defaultLearningSettings, use: true, collect: true },
+    });
+    const res = f.automationStore.saveResource({
+      name: 'De Friese Schaar',
+      scenario: 'upgrade',
+      description: 'Upgrade site',
+      contentUrl: 'http://www.defrieseschaar.nl',
+      referenceUrl: 'https://ref.example.test',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+    const task = f.automationStore.create(
+      { resourceIds: [res.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, requirements: '' },
+      f.vault.automation(),
+    )[0];
+
+    let followupCalls = 0;
+    let reflectCalls = 0;
+    const cloneError = new FollowupRuntimeError(
+      '内容站克隆完成但导入 0 页（http://www.defrieseschaar.nl），已重试后仍无法获取源站页面',
+      ['在浏览器打开 http://www.defrieseschaar.nl，确认原网站可公开访问且未被验证码或登录拦截。'],
+      deriveHumanNotice({
+        reason: 'pages=0 transferTaskId 内容站克隆完成但导入 0 页（http://www.defrieseschaar.nl），已重试后仍无法获取源站页面',
+        stage: 'prepare',
+      }),
+    );
+
+    const worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      f.directory,
+      {
+        generation: async (t, store) => {
+          t.stage = 'prepare';
+          t.generation = {
+            ...(t.generation || {}),
+            createAttempted: true,
+            transferTaskId: randomUUID(),
+            transferFallbackAttempted: true,
+          };
+          store.put(t);
+          throw cloneError;
+        },
+        evaluation: async () => {},
+      },
+      () => true,
+      async () => {
+        followupCalls++;
+        throw new Error('followup should never run on confirmed clone failure');
+      },
+      (async () => {
+        reflectCalls++;
+      }) as any,
+    );
+
+    await worker.tick();
+    await new Promise((r) => setTimeout(r, 40));
+    await worker.tick();
+
+    const updated = f.automationStore.task(task.id)!;
+    assert.equal(updated.status, 'interrupted');
+    assert.equal(updated.stopped, true);
+    assert.equal(updated.followup, undefined, 'Should not schedule followup after confirmed clone failure');
+    assert.equal(followupCalls, 0);
+    assert.equal(reflectCalls, 0, 'Should not invoke reflectExperience LLM call on confirmed clone failure');
+
+    const es = new ExperienceStore(f.automationStore);
+    syncReflectionCandidates(f.automationStore, es);
+    const learningRuns = es.runs(task.id, 1, 10).items;
+    assert.equal(learningRuns.length, 1);
+    assert.equal(learningRuns[0]!.status, 'completed');
+    assert.match(learningRuns[0]!.reason, /^跳过复盘：/);
+    assert.equal(es.claim(), undefined);
+
+    // Even if a task was previously queued in following-up with confirmed clone failure, worker short-circuits before calling followup or experience selection:
+    f.automationStore.scheduleFollowup(updated, f.vault.automation().followup);
+    updated.error = cloneError.message;
+    f.automationStore.put(updated);
+    await worker.tick();
+    await new Promise((r) => setTimeout(r, 40));
+    const afterFollowupTick = f.automationStore.task(task.id)!;
+    assert.equal(afterFollowupTick.status, 'interrupted');
+    assert.equal(followupCalls, 0);
+    assert.equal(reflectCalls, 0);
+
+    // And validateFollowupAction rejects action=retry on confirmed clone failure:
+    assert.throws(
+      () =>
+        validateFollowupAction(
+          { action: 'retry', reason: 'retry clone', evidence: ['obs-1'] },
+          afterFollowupTick,
+          {},
+          new Set(['obs-1']),
+        ),
+      /源站克隆已确认失败.*禁止继续自动 retry/,
+    );
+  } finally {
+    await f.app.close();
+    rmSync(f.directory, { recursive: true, force: true });
   }
 });
 

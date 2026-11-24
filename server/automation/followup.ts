@@ -18,7 +18,7 @@ import { optimizationEvidence, planningImageInput } from './optimization-evidenc
 import { adoptedGuidance, PLATFORM_HARD_CONTRACTS } from './experience.js';
 import { copyHarnessReferences } from './harness.js';
 import { migrationRepairContext } from './migration-verification.js';
-import { followupRequestPolicy, followupAccountState, retainStoppedFollowupReservations } from './autonomy.js';
+import { followupRequestPolicy, followupAccountState, isConfirmedCloneFailure, retainStoppedFollowupReservations } from './autonomy.js';
 import { collectionTargetRepairContext } from './collection/report.js';
 import { collectionSourceGaps, recollectionObjectiveSchema, validateRecollectionAction } from './collection/recollection.js';
 import { followupTaskContext, followupReportComparison, selectFollowupTaskEvents } from './followup-context.js';
@@ -34,7 +34,7 @@ const toolInput=z.object({tool:z.enum(['get_task','get_conversation','get_site',
 export interface RecoveryInspection { conversation?:Awaited<ReturnType<typeof readConversation>>; siteReady?:boolean; execution?:GenerationObservation; optimizationImages?:string[]; reportObservations?:NonNullable<AutomationTask['followup']>['reportObservations'] }
 
 const REFERENCE_TERM_PATTERN =
-  /参考站|参考网站|参考页|参考图|视觉参考|reference\s*(?:site|url|page|screenshot|image|design|workspace)/i;
+  /参考站|参考网站|参考页|参考图|视觉参考|内容站|源站|来源站|原站|原网站|reference\s*(?:site|url|page|screenshot|image|design|workspace)|source\s*(?:site|url|page)/i;
 const REFERENCE_FAILURE_PATTERN =
   /无法访问|无法获取|打不开|未拿到|拿不到|没有拿到|截图失败|取证失败|抓取失败|导入失败|空白页|空壳|反爬|拦截|403|404|5\d\d|timeout|超时|unavailable|failed|blocked|blank|captcha|challenge|login/i;
 const REFERENCE_DECISION_PATTERN =
@@ -82,6 +82,7 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
   }else if(['repair','collect'].includes(action.action))throw new Error('普通恢复不得自动改站提分或回采来源');
   if(action.action==='interrupt'&&!action.nextSteps?.length)throw new Error('中断必须给出下一步做法');
   if(['retry','continue','answer','evaluate'].includes(action.action)&&!task.followup?.executionStopped)throw new Error('尚未确认原执行停止，只能查证、等待或明确中断');
+  if(action.action==='retry'&&isConfirmedCloneFailure(task,task.error))throw new Error('源站克隆已确认失败（导入 0 页），禁止继续自动 retry；请使用 interrupt 交由人工核查源网址、手动导入页面或跳过原站克隆');
   if(action.action==='retry'&&inspection.execution?.running)throw new Error('已观察到原会话仍在执行，不能重试');
   if(action.action==='retry'&&task.kind==='generation'&&task.generation?.deliveryId){
     const state=inspection.execution;

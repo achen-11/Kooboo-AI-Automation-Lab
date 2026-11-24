@@ -9,6 +9,7 @@ import { Conflict } from '../lib/store.js';
 export const FOLLOWUP_RUNTIME_EPOCH = 1;
 export const FOLLOWUP_EPOCH_MIGRATION_ID = `followup-runtime-epoch-v${FOLLOWUP_RUNTIME_EPOCH}`;
 export const KOOBOO_SUBDOMAIN_CONFLICT_MIGRATION_ID = 'kooboo-subdomain-hyphen-conflict-v1';
+export const PREPARE_CLONE_FAILURE_MIGRATION_ID = 'prepare-clone-zero-page-conflict-v1';
 
 export function hasKoobooSubdomainHyphenConflict(input: Pick<ExperienceInput, 'title' | 'conditions' | 'guidance'>): boolean {
   const text = [input.title, input.conditions, input.guidance].join('\n');
@@ -19,6 +20,13 @@ export function hasKoobooSubdomainHyphenConflict(input: Pick<ExperienceInput, 't
     || /(?:改[为成用]|替换[为成]|换[为成])[^。\n，；,;下划线]{0,12}(?:连字符|短横线|中划线|\bhyphen)/i.test(text)
     || /下划线[^。\n，；,;]{0,16}(?:改[为成]|替换[为成]|换[为成])[^。\n，；,;]{0,12}(?:连字符|短横线|-)/i.test(text)
   );
+}
+
+export function hasPrepareCloneZeroPageConflict(input: Pick<ExperienceInput, 'title' | 'conditions' | 'guidance'>): boolean {
+  const text = [input.title, input.conditions, input.guidance].join('\n');
+  if (!/(?:内容站|首页|源站|prepare\s*阶段).{0,24}(?:克隆|导入)/i.test(text)) return false;
+  if (!/(?:0\s*页|0\/1\s*页|连续导入\s*0|导入页数为\s*0)/i.test(text)) return false;
+  return /Transfer\/Single|单页降级|source-access|源站访问阻塞|平台导入链路故障|受控分流核验/i.test(text);
 }
 
 export const learningSettingsSchema=z.object({use:z.boolean(),collect:z.boolean(),concurrency:z.number().int().min(1).max(3),maxTokens:z.number().int().min(1000).max(1000000000),maxMinutes:z.number().min(1).max(30),maxRequests:z.number().int().min(1).max(200),selectionSop:z.string().trim().min(1).max(50000),reflectionSop:z.string().trim().min(1).max(50000)});
@@ -37,8 +45,8 @@ export class ExperienceStore {
     return row?(JSON.parse(row.json) as ExperienceRevision).actor:undefined;
   }
   runStartupMigrations(){
-    const appliedCount=Number((this.store.db.prepare('SELECT COUNT(*) AS n FROM auto_experience_migrations WHERE id IN (?,?)').get(FOLLOWUP_EPOCH_MIGRATION_ID,KOOBOO_SUBDOMAIN_CONFLICT_MIGRATION_ID) as {n:number}).n);
-    if(appliedCount>=2)return;
+    const appliedCount=Number((this.store.db.prepare('SELECT COUNT(*) AS n FROM auto_experience_migrations WHERE id IN (?,?,?)').get(FOLLOWUP_EPOCH_MIGRATION_ID,KOOBOO_SUBDOMAIN_CONFLICT_MIGRATION_ID,PREPARE_CLONE_FAILURE_MIGRATION_ID) as {n:number}).n);
+    if(appliedCount>=3)return;
     const hasMigration=(id:string)=>Boolean(this.store.db.prepare('SELECT 1 FROM auto_experience_migrations WHERE id=?').get(id));
     const listEnabled=()=>this.store.db.prepare("SELECT json FROM auto_experiences WHERE json_extract(json,'$.enabled')=1").all().map(r=>JSON.parse(String(r.json)) as Experience);
     this.store.db.transaction(()=>{
@@ -72,6 +80,18 @@ export class ExperienceStore {
           }
         }
         this.store.db.prepare('INSERT INTO auto_experience_migrations VALUES(?,?)').run(KOOBOO_SUBDOMAIN_CONFLICT_MIGRATION_ID,Date.now());
+      }
+      if(!hasMigration(PREPARE_CLONE_FAILURE_MIGRATION_ID)){
+        for(const exp of listEnabled()){
+          if(this.latestActor(exp.id)==='human')continue;
+          if(hasPrepareCloneZeroPageConflict(exp)){
+            this.save({title:exp.title,scenarios:exp.scenarios,stages:exp.stages,conditions:exp.conditions,exclusions:exp.exclusions,guidance:exp.guidance},{
+              id:exp.id,revision:exp.revision,actor:'system',enabled:false,verdict:exp.evidence,runtimeEpoch:exp.runtimeEpoch,
+              reason:'[系统升级自检] 准备阶段源站克隆 0 页已由宿主直接终态拦截并跳过自动跟进与复盘，旧版从克隆失败中断沉淀的 AI 经验已自动停用以避免额外经验筛选 token 消耗；历史版本保留。',
+            });
+          }
+        }
+        this.store.db.prepare('INSERT INTO auto_experience_migrations VALUES(?,?)').run(PREPARE_CLONE_FAILURE_MIGRATION_ID,Date.now());
       }
     });
   }

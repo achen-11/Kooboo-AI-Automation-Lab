@@ -18,8 +18,53 @@ export function isModelBillingOrAuthError(error: unknown) {
   const text = error instanceof Error ? error.message : String(error ?? '');
   return /模型服务拒绝请求（HTTP 402）|模型服务返回 HTTP 40[123]\b|insufficient[_ ]quota|余额不足/i.test(text);
 }
+
+const CONFIRMED_CLONE_FAILURE_TEXT_PATTERN =
+  /内容站克隆完成但导入\s*0\s*页|旧内容站\s*Sandbox\s*克隆完成但导入\s*0\s*页|已重试后仍无法获取源站页面|内容站克隆未返回任务标识.*已重试|只读源站\s*Sandbox\s*未返回有效标识.*已重试/i;
+
+const PREPARE_CLONE_FAILURE_SIGNAL_PATTERN =
+  /内容站克隆|旧内容站.*Sandbox.*克隆|只读源站\s*Sandbox|Transfer\/(?:ByLevel|Single|GetStatus|GetTaskStatus)|AISandbox\/TransferByLevel|pages\s*=\s*0|导入\s*0\s*页|0\/1\s*页|无法从原网站抓取到页面/i;
+
+export function isConfirmedCloneFailure(
+  task?: Pick<AutomationTask, 'kind' | 'scenario' | 'stage' | 'error' | 'interruption' | 'generation'> | null,
+  reason?: unknown,
+): boolean {
+  const reasonText = reason instanceof Error ? reason.message : typeof reason === 'string' ? reason : '';
+  const combined = [
+    reasonText,
+    task?.error,
+    task?.interruption?.reason,
+    task?.interruption?.userSummary?.headline,
+    task?.interruption?.userSummary?.explanation,
+  ]
+    .filter(Boolean)
+    .join('\n');
+
+  if (CONFIRMED_CLONE_FAILURE_TEXT_PATTERN.test(combined)) return true;
+
+  if (!task || task.kind !== 'generation') return false;
+  const gen = task.generation;
+  const inPreGenerationPrepare =
+    !gen?.prepared &&
+    !gen?.deliveryId &&
+    !gen?.legacySubmitted &&
+    !gen?.transferComplete &&
+    !gen?.skipSourceTransfer &&
+    (task.stage === 'prepare' || !task.stage || task.interruption?.stage === 'prepare');
+
+  if (
+    inPreGenerationPrepare &&
+    gen?.transferFallbackAttempted &&
+    (task.interruption?.userSummary?.category === 'source-access' || PREPARE_CLONE_FAILURE_SIGNAL_PATTERN.test(combined))
+  ) {
+    return true;
+  }
+
+  return false;
+}
+
 export function isAutonomousRetry(error: unknown) {
-  if(error instanceof UnconfirmedStop||error instanceof FollowupRuntimeError||isModelBillingOrAuthError(error))return false;
+  if(error instanceof UnconfirmedStop||error instanceof FollowupRuntimeError||isModelBillingOrAuthError(error)||isConfirmedCloneFailure(undefined,error))return false;
   return error instanceof Pending||error instanceof ModelBudgetExceeded||error instanceof Error&&/timeout|timed out|ECONNRESET|ECONNREFUSED|ETIMEDOUT|EAI_AGAIN|ENOTFOUND|fetch failed|429|502|503|504|超时|连接失败|连接模型|模型上游|模型服务返回 HTTP|达到.*(?:时限|时间|预算)|耗尽累计活动时间|未提交.*(?:结果|行动)/i.test(error.message);
 }
 /** Records host-observed state before scheduling another paid action. Never erases history. */

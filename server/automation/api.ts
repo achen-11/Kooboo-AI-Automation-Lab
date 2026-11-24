@@ -241,7 +241,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       if(task.autonomy){delete task.autonomy.stopReason;delete task.autonomy.checkpoint.nextAt;}
       const preCreateCollection=Boolean(task.autonomy&&!task.generatedSiteId&&task.collectionId);
       const prePrepareTemplate=Boolean(task.templateWorkflow)&&task.scenario==='site-template'&&task.kind==='generation'&&task.stage==='prepare'&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted;
-      const preTransferUpgrade=Boolean(task.kind==='generation'&&task.scenario==='upgrade'&&!task.generation?.prepared&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!wasCancelled&&(task.generation?.transferFallbackAttempted||task.interruption?.userSummary?.category==='source-access'));
+      const preTransferUpgrade=Boolean(task.kind==='generation'&&task.scenario==='upgrade'&&!task.generation?.prepared&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!wasCancelled&&(!task.generation?.transferComplete||task.generation?.transferFallbackAttempted||task.interruption?.userSummary?.category==='source-access'));
       if(task.generation?.transferFallbackAttempted)delete task.generation.transferFallbackAttempted;
       const hadFailedRefPreflight=task.generation?.referencePreflight?.status==='failed';
       if(hadFailedRefPreflight)delete task.generation!.referencePreflight;

@@ -7,6 +7,7 @@ import type { ExperienceStage, LearningRun } from '../../shared/experience.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { ExperienceStore, experienceInput } from './experience-store.js';
+import { isConfirmedCloneFailure } from './autonomy.js';
 import { localDecision } from './local-decision.js';
 import { interruptionReflectionProgressKey, reflectionDataKey } from './task-index.js';
 import { TemplateWorkflowStore } from './template-workflow-store.js';
@@ -15,7 +16,8 @@ export const PLATFORM_HARD_CONTRACTS = [
   '平台硬契约（最高优先级事实，不可被历史经验覆盖）：',
   '1. Kooboo 站点命名规则（对齐 shared/kooboo-domains.ts）：siteName 与 subDomain 仅允许英文字母、数字和下划线（_），最长 63 字符，严禁使用连字符（-）。不得按通用 DNS 常识建议把下划线改成连字符。',
   '2. 建站前置状态判据：当 generatedSiteId=null 且 generation.createAttempted=false 时，表示平台尚未发起任何建站请求，不属于自动化桥接卡死，也无重复建站风险；“已转交内置 AI 跟进”仅表示宿主将控制权交由跟进流程，不是建站执行回执。',
-  '3. 冲突裁决规则：任何历史经验若与上述平台硬契约或工具返回的实时字段事实冲突，一律以平台硬契约和实时事实为准；筛选阶段必须跳过冲突经验，复盘阶段应将其判为 counterexample 或停用，不得继续强化错误经验。',
+  '3. 源站克隆失败止损契约：当准备阶段克隆内容站（Transfer/ByLevel、Transfer/Single 或 AISandbox/TransferByLevel）确认导入 0 页或已降级重试仍失败时，宿主直接以 source-access 终态中断，严禁继续自动 retry、转交 AI 跟进或发起经验复盘消耗 token；只有人工手动导入页面、更换有效源站地址或显式配置跳过原站克隆（skipSourceTransfer）后才可恢复。',
+  '4. 冲突裁决规则：任何历史经验若与上述平台硬契约或工具返回的实时字段事实冲突，一律以平台硬契约和实时事实为准；筛选阶段必须跳过冲突经验，复盘阶段应将其判为 counterexample 或停用，不得继续强化错误经验。',
 ].join('\n');
 
 const selection=z.object({reason:z.string().min(1).max(4000),selected:z.array(z.object({id:z.string(),revision:z.number().int(),reason:z.string().min(1).max(2000)}).strict()).max(5)}).strict();
@@ -55,6 +57,10 @@ export function queueReflection(task:AutomationTask,store:AutomationStore,manual
   if(!manual&&!task.report&&task.interruption&&!existing&&/模型服务拒绝请求（HTTP 402）|模型服务返回 HTTP 40[123]\b|insufficient[_ ]quota|余额不足|AI 跟进已达到配置的次数、时间或 token 预算|仍有模型请求执行中|同一预算仍有模型请求执行中|操作者强制中断/i.test(task.interruption.reason)){
     const run=experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
     run.status='completed';run.reason='跳过复盘：任务因模型账户额度/鉴权或预算保护中断，不自动发起消耗配额的复盘请求。';if(progressKey)run.progressKey=progressKey;experiences.put(run);return run;
+  }
+  if(!manual&&!task.report&&task.interruption&&!existing&&(isConfirmedCloneFailure(task,task.interruption.reason)||/参考站预检失败|目标 Kooboo 环境版本暂不支持模板 Sandbox 接口|建站根域名 .* 在当前 Kooboo 环境中已不可用|当前 Kooboo 环境未返回模板 .* 的有效 previewUrl/i.test(task.interruption.reason))){
+    const run=experiences.enqueue(task,task.kind==='evaluation'?'evaluation':'followup','reflection',key);
+    run.status='completed';run.reason='跳过复盘：任务在准备阶段已确认源站克隆失败或前置预检未通过，不自动发起消耗 token 的经验复盘。';if(progressKey)run.progressKey=progressKey;experiences.put(run);return run;
   }
   if(!manual&&progressKey&&!existing){
     const priorSameProgress=store.db.prepare("SELECT 1 FROM auto_learning_runs WHERE json_extract(json,'$.taskId')=? AND json_extract(json,'$.kind')='reflection' AND status!='failed' AND json_extract(json,'$.progressKey')=? LIMIT 1").get(task.id,progressKey);

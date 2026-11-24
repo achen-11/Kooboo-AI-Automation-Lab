@@ -18,7 +18,7 @@ import { queueReflection, reflectExperience, selectExperience } from './experien
 import { cleanupGenerationContext } from './generation-context.js';
 import { trimTaskGenerationBrowserCache } from './generation-cache.js';
 import { koobooClient } from './kooboo.js';
-import { autonomousActionStrategy, autonomousReady, autonomousWindowRemaining, canReplayGeneration, followupAccountState, isAutonomousRetry, isModelBillingOrAuthError, nextAutonomousWindow, recordAutonomousAttempt } from './autonomy.js';
+import { autonomousActionStrategy, autonomousReady, autonomousWindowRemaining, canReplayGeneration, followupAccountState, isAutonomousRetry, isConfirmedCloneFailure, isModelBillingOrAuthError, nextAutonomousWindow, recordAutonomousAttempt } from './autonomy.js';
 import { inMaintenance } from '../updates/maintenance.js';
 import { rememberSiteRetry, siteRetryBlocked } from './retry-guard.js';
 import { optimizationEvidence } from './optimization-evidence.js';
@@ -162,6 +162,14 @@ export class AutomationWorker{
       this.interrupt(task,task.error,['请检查模型账户余额、额度及服务配置，确认恢复后再点击“恢复任务”。']);
       return;
     }
+    if(isConfirmedCloneFailure(task,task.error)){
+      this.interrupt(task,task.error,[
+        '在浏览器打开源站地址，确认原网站可公开访问且未被验证码或登录拦截。',
+        '如原站开启了防抓取限制，可在 Kooboo 目标站手动导入页面，或通过「补充资料」勾选「跳过原站克隆」后恢复执行。',
+        '如果原网址无效或已更换，请调整输入中的源站地址或改用上传资料重新生成。',
+      ]);
+      return;
+    }
     const policy=task.followup?.policy||this.vault.automation().followup;
     if(policy.enabled)this.store.scheduleFollowup(task,policy);
     else this.interrupt(task,task.error,['在系统设置启用 AI 跟进，或补齐问题条件后点击“AI 接管 / 恢复”。']);
@@ -175,7 +183,7 @@ export class AutomationWorker{
     this.store.put(task);this.store.event(task.id,task.error);return true;
   }
   private autonomousRecovery(task:AutomationTask, reason:unknown, followup=false) {
-    if(!task.autonomy||this.stopping)return false;
+    if(!task.autonomy||this.stopping||isConfirmedCloneFailure(task,reason))return false;
     const detail=reason instanceof Error?reason.message:'本轮执行需要恢复';
     const collection=reason as {name?:string;safeToRetry?:boolean;nextAt?:number;waiting?:boolean;progressKey?:string;nextSteps?:string[]};
     if(collection.name==='CollectionBlocked'){this.interrupt(task,detail,collection.nextSteps||['补齐原站采集所需外部条件后恢复原任务。']);return true;}
@@ -288,6 +296,15 @@ export class AutomationWorker{
     }finally{finishTiming();clearTimeout(timer);delivery.stopped=!unconfirmed;delivery.updatedAt=Date.now();this.store.put(task);}
   }
   private async runFollowup(task:AutomationTask,controller:AbortController){
+    if(isConfirmedCloneFailure(task,task.error)){
+      task.stopped=task.followup?.executionStopped??task.stopped;
+      this.interrupt(task,task.error||'内容站克隆完成但导入 0 页，已停止自动跟进以避免产生额外 token 费用。',[
+        '在浏览器打开源站地址，确认原网站可公开访问且未被验证码或登录拦截。',
+        '如原站开启了防抓取限制，可在 Kooboo 目标站手动导入页面，或通过「补充资料」勾选「跳过原站克隆」后恢复执行。',
+        '如果原网址无效或已更换，请调整输入中的源站地址或改用上传资料重新生成。',
+      ]);
+      return;
+    }
     if(siteRetryBlocked(task,this.store)){task.stopped=task.followup?.executionStopped??task.stopped;this.interrupt(task,'同一生成执行的失败终态没有变化，已停止重复 retry。',['查看当前 run 的具体失败原因，补齐条件或使用有明确新消息的同站继续生成；原站、证据和用量均已保留。']);return;}
     const followup=task.followup!;const policy=followup.policy;
     if(task.scenario==='site-template'&&task.kind==='evaluation'&&!followup.executionStopped){

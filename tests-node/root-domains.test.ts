@@ -243,7 +243,7 @@ for (const scenario of ['materials', 'upgrade'] as const) test(`${scenario} crea
     const resource = await f.save(scenario);
     const task = f.automationStore.create({ resourceIds: [resource.id], kind: 'generation', scope: 'homepage', environmentId: f.environmentId, siteName: 'salon_internal', subDomain: 'salon_public', rootDomain: 'shawnchen-hk.kooboo.io', requirements: '' }, f.vault.automation())[0];
     task.generation = { ...task.generation, deliveryState: 'completed', transferComplete: true };
-    await executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000));
+    await executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000), undefined, { preflightReference: async (url) => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }) });
     const body = f.state.creates[0].body;
     assert.equal(body.SiteName || body.siteName, 'salon_internal');
     assert.equal(body.SubDomain || body.subDomain, 'salon_public');
@@ -389,7 +389,7 @@ test('native v2 availability supports generation and saves a dash root supplied 
     f.state.v2Booleans = true; f.state.occupiedNames = ['salon']; f.state.occupiedDomains = ['salon'];
     const task = (await f.create({ siteName: 'salon', subDomain: 'salon', rootDomain: '-shawnchen-hk.kooboo.io' })).json().items[0] as AutomationTask;
     task.generation = { ...task.generation, deliveryState: 'completed', transferComplete: true };
-    await executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000));
+    await executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000), undefined, { preflightReference: async (url) => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }) });
     assert.equal(f.state.creates.length, 1);
     assert.equal(f.state.creates[0].body.SiteName, 'salon_1');
     assert.equal(f.state.creates[0].body.SubDomain, 'salon_1');
@@ -458,7 +458,7 @@ for (const scenario of ['materials', 'upgrade'] as const) test(`${scenario} crea
     const task = f.automationStore.create({ resourceIds: [resource.id], kind: 'generation', scope: 'homepage', environmentId: f.environmentId, rootDomain: 'chosen.test', requirements: '' }, f.vault.automation())[0];
     task.generation = { ...task.generation, deliveryState: 'completed', transferComplete: true };
     const settings = f.vault.get(); settings.environments[0].defaultRootDomain = 'first.test'; f.vault.update(settings);
-    await executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000));
+    await executeGeneration(task, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000), undefined, { preflightReference: async (url) => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }) });
     assert.equal(f.state.creates.length, 1);
     const { path, body } = f.state.creates[0];
     assert.equal(path, scenario === 'upgrade' ? '/_api/v2/Transfer/ByLevel' : '/_api/v2/Site/Create');

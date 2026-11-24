@@ -116,7 +116,7 @@ export interface FollowupSettings { enabled: boolean; concurrency: number; maxAt
 export interface CollectionReportObservation { reportId:string; sourceGaps:string[] }
 export interface FollowupAction { /** Host-owned identity of the failed execution authorizing a fresh delivery. */ retryOf?: { deliveryId: string; runId: string }; action: 'retry' | 'continue' | 'answer' | 'evaluate' | 'wait' | 'interrupt' | 'repair' | 'collect'; reason: string; evidence: string[]; message?: string; imageEvidence?: string[]; progress?: OptimizationProgress; collectionObjective?:import('./collection.js').CollectionObjective; answer?: Record<string, unknown>; callId?: string; waitSeconds?: number; nextSteps?: string[]; userSummary?: import('./human-diagnostics.js').HumanNotice }
 export interface TaskInterruption { stage: AutomationStage; reason: string; evidence: string[]; attempted: string[]; nextSteps: string[]; resumeFrom: string; time: number; userSummary?: import('./human-diagnostics.js').HumanNotice }
-export interface GenerationCheckpoint { siteName?: string; subDomain?: string; rootDomain?: string; conversationHandoff?: { from: string; to: string }; repairBatch?: { planKey: string; completed: number; total: number; deliveryId?: string }; createAttempted?: boolean; transferTaskId?: string; transferComplete?: boolean; transferFallbackAttempted?: boolean; legacySubmitted?: boolean; prepared?: boolean; importedMaterials?: Record<string,string>; importedMedia?: Record<string, { sha256: string; id?: string; url: string }>; overrideContentUrl?: string; overrideReferenceUrl?: string; skipSourceTransfer?: boolean; supplementalFiles?: MaterialFile[]; supplementalNotes?: string[]; conversationId?: string; runId?: string; previousRunId?: string; deliveryId?: string; deliveryState?: 'sending' | 'accepted' | 'completed'; state?: string; observedAt?: number; ownerPid?: number; pending?: unknown; next?: FollowupAction; referenceTemplate?: { templateId: string; templateName: string; previewUrl: string; mode: TemplateUsageMode }; referenceTemplateSandbox?: { sandbox: string; siteId: string; previewUrl: string; templateId: string; templateName: string }; sourceSandbox?: { sandbox: string; siteId: string; previewUrl: string; transferTaskId?: string; complete?: boolean } }
+export interface GenerationCheckpoint { siteName?: string; subDomain?: string; rootDomain?: string; conversationHandoff?: { from: string; to: string }; repairBatch?: { planKey: string; completed: number; total: number; deliveryId?: string }; createAttempted?: boolean; transferTaskId?: string; transferComplete?: boolean; transferFallbackAttempted?: boolean; legacySubmitted?: boolean; prepared?: boolean; importedMaterials?: Record<string,string>; importedMedia?: Record<string, { sha256: string; id?: string; url: string }>; overrideContentUrl?: string; overrideReferenceUrl?: string; skipSourceTransfer?: boolean; skipReferencePreflight?: boolean; allowFreeDesignWithoutReference?: boolean; referencePreflight?: { url: string; status: 'passed' | 'failed'; reasonCode?: string; detail?: string; checkedAt: number }; supplementalFiles?: MaterialFile[]; supplementalNotes?: string[]; conversationId?: string; runId?: string; previousRunId?: string; deliveryId?: string; deliveryState?: 'sending' | 'accepted' | 'completed'; state?: string; observedAt?: number; ownerPid?: number; pending?: unknown; next?: FollowupAction; referenceTemplate?: { templateId: string; templateName: string; previewUrl: string; mode: TemplateUsageMode }; referenceTemplateSandbox?: { sandbox: string; siteId: string; previewUrl: string; templateId: string; templateName: string }; sourceSandbox?: { sandbox: string; siteId: string; previewUrl: string; transferTaskId?: string; complete?: boolean } }
 
 export function effectiveTemplateUsageMode(
   input?: Pick<ResourceInput, 'referenceTemplateId' | 'templateUsageMode'> | null,
@@ -130,8 +130,12 @@ export function effectiveTemplateUsageMode(
 
 export function effectiveReferenceUrl(
   input?: Pick<ResourceInput, 'referenceUrl' | 'referenceTemplateId'> | null,
-  ...tasks: Array<{ generation?: Pick<GenerationCheckpoint, 'referenceTemplate' | 'referenceTemplateSandbox'> } | null | undefined>
+  ...tasks: Array<{ generation?: Pick<GenerationCheckpoint, 'referenceTemplate' | 'referenceTemplateSandbox' | 'overrideReferenceUrl'> } | null | undefined>
 ): string {
+  for (const task of tasks) {
+    const override = task?.generation?.overrideReferenceUrl?.trim() || '';
+    if (override) return override;
+  }
   const explicit = input?.referenceUrl?.trim() || '';
   if (!input?.referenceTemplateId?.trim()) return explicit;
   for (const task of tasks) {
@@ -162,11 +166,11 @@ export const defaultFollowupSettings: FollowupSettings = {
 export const defaultAutomationSettings: AutomationSettings = {
   completeness:defaultCompletenessSettings, learning: defaultLearningSettings, optimization: defaultOptimizationPolicy, followup: defaultFollowupSettings,
   enabled: false, autoEvaluate: true, showExecutionBrowser: false, generationConcurrency: 3, evaluationConcurrency: 1, timeoutMinutes: 60,
-  evaluationModel: 'deepseek-flash-1017', evaluationEndpoint: '',
+  evaluationModel: 'deepseek-flash', evaluationEndpoint: 'https://api.deepseek.com/responses',
   prompts: {
     materials: '根据资料包从空白站点构建完整站点。优先使用 Kooboo 自带的 skill、reference 和 tools。',
     migration: '内容站同时作为视觉参考站。在 Sandbox 克隆内容站作为输入，从空白目标站完成迁移，保留内容与视觉设计。',
-    upgrade: '先克隆内容站并导入资料包，在 Sandbox 克隆参考站；以内容站和资料包提供事实内容，以参考站提供设计方向，从空白起点重建升级站点。',
+    upgrade: '先克隆内容站并导入资料包，在 Sandbox 克隆参考站；以内容站和资料包提供事实内容，以参考站作为视觉还原基准（严格对齐其页头、Hero 构图、色彩角色、字体层级与区块节奏，不得以图片尺寸偏小或品牌名偏长为由擅自改成无关通用版式；若无法获取有效参考站画面须立即停下向用户确认），从空白起点重建升级站点。',
     'site-template': '在 Sandbox 克隆来源站，理解内容、结构与视觉设计，从空白站点构建 AI Site 模板。不得复用来源站图片等资源，图片使用 imagePlaceholder。',
     'app-template': '根据业务需求从空白站点构建 AI App，重视信息层级、交互体验与业务正确性，使用 Kooboo 现有 skill、reference 和 tools。',
   },

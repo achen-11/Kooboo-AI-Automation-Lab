@@ -123,6 +123,8 @@ export function createSupplementBatch(params: {
   replacementContentUrl?: string;
   replacementReferenceUrl?: string;
   skipSourceTransfer?: boolean;
+  skipReferencePreflight?: boolean;
+  allowFreeDesignWithoutReference?: boolean;
   autoApply?: boolean;
   inputFiles?: MaterialFile[];
   files?: SupplementalFileRef[];
@@ -141,6 +143,10 @@ export function createSupplementBatch(params: {
     ...(params.replacementContentUrl ? { replacementContentUrl: params.replacementContentUrl } : {}),
     ...(params.replacementReferenceUrl ? { replacementReferenceUrl: params.replacementReferenceUrl } : {}),
     ...(params.skipSourceTransfer !== undefined ? { skipSourceTransfer: params.skipSourceTransfer } : {}),
+    ...(params.skipReferencePreflight !== undefined ? { skipReferencePreflight: params.skipReferencePreflight } : {}),
+    ...(params.allowFreeDesignWithoutReference !== undefined
+      ? { allowFreeDesignWithoutReference: params.allowFreeDesignWithoutReference }
+      : {}),
     ...(params.autoApply !== undefined ? { autoApply: params.autoApply } : {}),
     ...(params.inputFiles?.length ? { inputFiles: params.inputFiles } : {}),
     files: params.files || [],
@@ -164,6 +170,14 @@ export function buildSupplementContext(task: AutomationTask, store: AutomationSt
     canSupplement,
     hasTargetSite: Boolean(task.generatedSiteId),
     ...(task.interruption?.userSummary?.category ? { interruptionCategory: task.interruption.userSummary.category } : {}),
+    ...(task.generation?.referencePreflight?.status === 'failed'
+      ? {
+          referencePreflightFailed: true,
+          referencePreflightDetail: task.generation.referencePreflight.detail || '',
+        }
+      : {}),
+    ...(task.generation?.skipReferencePreflight ? { skipReferencePreflight: true } : {}),
+    ...(task.generation?.allowFreeDesignWithoutReference ? { allowFreeDesignWithoutReference: true } : {}),
   };
 }
 
@@ -178,6 +192,8 @@ export async function applySupplementBatch(params: {
   selectedFileIds?: string[];
   noteOverride?: string;
   skipSourceTransferOverride?: boolean;
+  skipReferencePreflightOverride?: boolean;
+  allowFreeDesignWithoutReferenceOverride?: boolean;
   replacementContentUrlOverride?: string;
   replacementReferenceUrlOverride?: string;
   fetcher?: typeof fetch;
@@ -207,12 +223,29 @@ export async function applySupplementBatch(params: {
       : (batch.replacementReferenceUrl || '').trim();
   const requestedSkipTransfer =
     params.skipSourceTransferOverride !== undefined ? params.skipSourceTransferOverride : batch.skipSourceTransfer;
+  const requestedSkipReferencePreflight =
+    params.skipReferencePreflightOverride !== undefined
+      ? params.skipReferencePreflightOverride
+      : batch.skipReferencePreflight;
+  const requestedAllowFreeDesign =
+    params.allowFreeDesignWithoutReferenceOverride !== undefined
+      ? params.allowFreeDesignWithoutReferenceOverride
+      : batch.allowFreeDesignWithoutReference;
 
-  if (!chosenFiles.length && !effectiveNote && !nextContentUrl && !nextReferenceUrl && !requestedSkipTransfer) {
-    throw new Conflict('请至少上传文件、填写补充说明或提供新的源站地址');
+  if (
+    !chosenFiles.length &&
+    !effectiveNote &&
+    !nextContentUrl &&
+    !nextReferenceUrl &&
+    !requestedSkipTransfer &&
+    !requestedSkipReferencePreflight &&
+    !requestedAllowFreeDesign
+  ) {
+    throw new Conflict('请至少上传文件、填写补充说明、提供新网址或选择明确的处理方式');
   }
 
   task.generation ??= {};
+  const wasReferencePreflightFailed = task.generation.referencePreflight?.status === 'failed';
   const existingSupp = task.generation.supplementalFiles || [];
   task.generation.supplementalFiles = mergeTaskMaterials(existingSupp, chosenFiles);
   if (effectiveNote) {
@@ -229,12 +262,37 @@ export async function applySupplementBatch(params: {
     delete task.generation.transferFallbackAttempted;
     delete task.generation.skipSourceTransfer;
   }
+  const currentReferenceUrl = task.generation.overrideReferenceUrl?.trim() || version?.referenceUrl || '';
   if (nextReferenceUrl) {
-    task.generation.overrideReferenceUrl = nextReferenceUrl;
+    if (nextReferenceUrl !== currentReferenceUrl) {
+      task.generation.overrideReferenceUrl = nextReferenceUrl;
+    }
+    delete task.generation.referencePreflight;
+    delete task.generation.skipReferencePreflight;
+    delete task.generation.allowFreeDesignWithoutReference;
+  }
+
+  const hasUploadedReferenceImages = chosenFiles.some(f => f.type.startsWith('image/'));
+  if (requestedAllowFreeDesign) {
+    task.generation.allowFreeDesignWithoutReference = true;
+    delete task.generation.skipReferencePreflight;
+    delete task.generation.referencePreflight;
+  } else if (
+    requestedSkipReferencePreflight ||
+    (wasReferencePreflightFailed && !nextReferenceUrl && hasUploadedReferenceImages)
+  ) {
+    task.generation.skipReferencePreflight = true;
+    delete task.generation.allowFreeDesignWithoutReference;
   }
 
   const isSourceAccess = task.interruption?.userSummary?.category === 'source-access';
-  if (requestedSkipTransfer || (!nextContentUrl && isSourceAccess && (chosenFiles.length > 0 || Boolean(effectiveNote)))) {
+  if (
+    requestedSkipTransfer ||
+    (!nextContentUrl &&
+      !wasReferencePreflightFailed &&
+      isSourceAccess &&
+      (chosenFiles.length > 0 || Boolean(effectiveNote)))
+  ) {
     task.generation.skipSourceTransfer = true;
     task.generation.transferComplete = true;
     if (task.generation.sourceSandbox) task.generation.sourceSandbox.complete = true;
@@ -284,7 +342,20 @@ export async function applySupplementBatch(params: {
       await syncMaterialManifestToSite({ task, siteId: site.siteId, allFiles, request });
     }
 
+    const referenceDecisionNote = task.generation.allowFreeDesignWithoutReference
+      ? '参考站决策：操作者已明确授权放弃不可达的参考站，改为结合内容站与资料包自由设计。'
+      : task.generation.skipReferencePreflight
+        ? '参考站决策：操作者已补充参考站截图并确认跳过外链预检，请严格以补充截图作为视觉还原基准。'
+        : '';
+
     if (pending) {
+      const choiceText = task.generation.allowFreeDesignWithoutReference
+        ? `放弃参考站，明确授权 AI 结合业务资料自由设计${effectiveNote ? `（${effectiveNote}）` : ''}`
+        : nextReferenceUrl
+          ? `已更换参考站地址为 ${nextReferenceUrl}${effectiveNote ? `（${effectiveNote}）` : ''}`
+          : task.generation.skipReferencePreflight || uploadedCount > 0
+            ? `已补充参考站截图/资料（共 ${uploadedCount} 个文件）并按补充截图还原${effectiveNote ? `（${effectiveNote}）` : ''}`
+            : effectiveNote || `已补充 ${uploadedCount} 份资料`;
       const value =
         pending.kind === 'upload'
           ? uploadResult.uploaded.map(u => ({
@@ -299,7 +370,8 @@ export async function applySupplementBatch(params: {
             }))
           : pending.kind === 'confirm'
             ? true
-            : effectiveNote || `已补充 ${uploadedCount} 份资料`;
+            : choiceText;
+      const answerFeedback = [effectiveNote, referenceDecisionNote].filter(Boolean).join('\n');
       task.generation.next = {
         action: 'answer',
         callId: pending.callId,
@@ -307,7 +379,7 @@ export async function applySupplementBatch(params: {
           confirmed: true,
           kind: pending.kind,
           value,
-          ...(effectiveNote ? { feedback: effectiveNote } : {}),
+          ...(answerFeedback ? { feedback: answerFeedback } : {}),
         },
         reason: '已通过 Automation Lab 补充资料/确认输入并回答挂起调用',
         evidence: [`human-supplement:${batch.id}`],
@@ -321,6 +393,7 @@ export async function applySupplementBatch(params: {
           ? ['新增/更新文件映射：', ...uploadedMappings.map(line => `- ${line}`)]
           : []),
         ...(nextReferenceUrl ? [`更新参考地址：${nextReferenceUrl}`] : []),
+        ...(referenceDecisionNote ? [referenceDecisionNote] : []),
       ];
       task.generation.next = {
         action: 'continue',
@@ -339,6 +412,12 @@ export async function applySupplementBatch(params: {
       ...(chosenFiles.length ? [`补充文件（共 ${chosenFiles.length} 个）：${chosenFiles.map(f => f.name).join('、')}`] : []),
       ...(nextContentUrl ? [`新源站地址：${nextContentUrl}`] : []),
       ...(nextReferenceUrl ? [`新参考地址：${nextReferenceUrl}`] : []),
+      ...(task.generation.skipReferencePreflight
+        ? ['参考站决策：已上传参考站截图并跳过外链预检，请优先查看补充截图并以此作为视觉还原基准。']
+        : []),
+      ...(task.generation.allowFreeDesignWithoutReference
+        ? ['参考站决策：操作者已明确授权放弃参考站，改为结合内容站与资料包自由设计。']
+        : []),
     ].join('\n');
     task.message = task.message ? `${task.message}\n\n${appendix}` : appendix;
   }

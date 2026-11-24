@@ -320,6 +320,7 @@ test('Manual supplement on source-access syncs kfile manifest, sets skipSourceTr
       f.directory,
       controller.signal,
       mockSessionFactory(updated, site.siteId, delivered),
+      { preflightReference: async url => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }) },
     );
 
     assert.equal(calls.some(c => c.path.includes('Transfer')), false);
@@ -558,6 +559,7 @@ test('URL overrides preserve frozen InputVersion and propagate to generator Tran
       f.directory,
       new AbortController().signal,
       mockSessionFactory(genTask, site.siteId, delivered),
+      { preflightReference: async url => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }) },
     );
     assert.equal(singleCalls.length, 1);
     assert.equal(JSON.parse(singleCalls[0].body).pageUrl, 'https://mirror.example.test/home');

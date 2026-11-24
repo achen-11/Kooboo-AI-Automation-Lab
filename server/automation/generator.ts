@@ -38,6 +38,11 @@ import { GenerationDeliveryStore, isPreSendBridgeRejection } from './generation-
 import { assertSiteNaming, availableSiteNames } from './site-naming.js';
 import { prepareReferenceMedia } from './generation-reference-media.js';
 import { deriveHumanNotice } from '../../shared/human-diagnostics.js';
+import {
+  checkReferenceUrlPreflight,
+  type ReferencePreflightFn,
+  type ReferencePreflightResult,
+} from './reference-preflight.js';
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
@@ -228,8 +233,50 @@ function unsupportedKoobooTemplateError(required: RequiredKoobooSandboxCapabilit
   return new FollowupRuntimeError(techReason, nextSteps, userSummary);
 }
 
+function referencePreflightError(
+  refUrl: string,
+  result: Extract<ReferencePreflightResult, { ok: false }>,
+  siteId?: string | null,
+) {
+  const reasonLabelMap: Record<typeof result.reasonCode, string> = {
+    invalid_url: '地址无效',
+    network_error: '网络连接失败',
+    timeout: '加载超时',
+    http_error: '返回错误状态',
+    challenge_or_waf: '防火墙/反爬拦截',
+    login_required: '需要登录访问',
+    blank_page: '空白页或空壳',
+  };
+  const reasonLabel = reasonLabelMap[result.reasonCode] || '无法访问';
+  const techReason = `参考站预检失败（${reasonLabel}，${refUrl}）：${result.detail}`;
+  const nextSteps = [
+    '点击「补充资料」，更换可公开访问的参考站 URL 后重新预检。',
+    '或在「补充资料」手动上传参考站截图，并勾选「跳过外链预检并按截图还原」。',
+    '如确认无需参考站，可在「补充资料」勾选「放弃参考站，授权 AI 自由设计」后恢复执行。',
+  ];
+  const userSummary = deriveHumanNotice({
+    userSummary: {
+      headline: '无法获取参考站页面，已暂停等待决策',
+      category: 'source-access',
+      explanation: `建站前预检参考站失败（${reasonLabel}：${result.detail}）。为避免 AI 在没有参考站的情况下自由发挥并浪费 Token，已在${siteId ? '发送生成委托前' : '创建站点前'}暂停，等待您决定处理方式。`,
+      userActions: nextSteps,
+    },
+    stage: 'prepare',
+    generatedSiteId: siteId,
+  });
+  return new FollowupRuntimeError(techReason, nextSteps, userSummary);
+}
+
 /** Existing Kooboo APIs + the existing frontend stream/function loop. No server generation API is introduced. */
-export async function executeGeneration(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,openSession:typeof generationSession=generationSession){
+export async function executeGeneration(
+  task: AutomationTask,
+  store: AutomationStore,
+  vault: Vault,
+  directory: string,
+  signal: AbortSignal,
+  openSession: typeof generationSession = generationSession,
+  options?: { preflightReference?: ReferencePreflightFn },
+) {
   const hadTransferTaskBeforeRun=Boolean(task.generation?.transferTaskId);
   const versionInput=store.version(task.versionId);
   if(versionInput?.referenceTemplateId)await resolveTaskReferenceTemplate(task,versionInput,store,vault,signal);
@@ -257,6 +304,36 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
   if(!task.generation&&task.generatedSiteId&&task.context)task.generation={legacySubmitted:true,prepared:true,conversationId:task.threadId||undefined};
   task.stage='prepare';task.generation??={};store.put(task);
   let site=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
+  const shouldPreflightReference =
+    ['upgrade', 'site-template'].includes(task.scenario) &&
+    !task.templateWorkflow &&
+    !input.referenceTemplateId?.trim() &&
+    !task.generation.deliveryId &&
+    !task.generation.legacySubmitted &&
+    !task.generation.allowFreeDesignWithoutReference &&
+    !task.generation.skipReferencePreflight;
+  if (shouldPreflightReference) {
+    const refUrl = (input.referenceUrl || (task.scenario === 'site-template' ? input.contentUrl : '') || '').trim();
+    const cached = task.generation.referencePreflight;
+    if (refUrl && !(cached?.url === refUrl && cached.status === 'passed')) {
+      const check = await (options?.preflightReference || checkReferenceUrlPreflight)(refUrl, signal);
+      task.generation.referencePreflight = {
+        url: refUrl,
+        status: check.ok ? 'passed' : 'failed',
+        ...(check.ok ? {} : { reasonCode: check.reasonCode, detail: check.detail }),
+        checkedAt: Date.now(),
+      };
+      store.put(task);
+      if (!check.ok) {
+        store.event(task.id, `参考站预检失败（${check.reasonCode}）：${refUrl} — ${check.detail}`);
+        throw referencePreflightError(refUrl, check, site?.id);
+      }
+      store.event(
+        task.id,
+        `参考站可达性预检通过（${check.method === 'browser' ? '浏览器渲染' : 'HTTP'} ${check.status}）：${refUrl}`,
+      );
+    }
+  }
   const precheckRef=task.generation.referenceTemplate;
   if(precheckRef){
     const requiredCap=requiredKoobooSandboxCapability(task.scenario,precheckRef.mode,task.generation.skipSourceTransfer);
@@ -500,7 +577,7 @@ export async function executeGeneration(task:AutomationTask,store:AutomationStor
         materials,
         ...(referenceImages?{referenceImages}:{}),
         ...(task.scenario==='site-template'?{sourceEvidence:task.templateWorkflow?templateGenerationSources(task,store,directory):generationSourceEvidence(manifest,store,directory)}:{}),
-      },Boolean(vault.automation().learning?.use));
+      },Boolean(vault.automation().learning?.use),{isInitialDelivery:initial});
       assertGenerationInput(prepared?.text,undefined,action?.action==='answer'?action.answer:undefined);
       if(prepared){store.event(task.id,`生成委托资料：${prepared.mode}；最终文本 ${Buffer.byteLength(prepared.text)} bytes，媒体库图片 ${referenceImages?.entries.length||0} 张；平台原件 ${prepared.packageId}`);}
       const id=randomUUID(),conversationId=task.generation.conversationId||state.conversationId;

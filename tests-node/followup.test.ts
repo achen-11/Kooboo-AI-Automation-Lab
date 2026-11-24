@@ -238,6 +238,47 @@ test('host validation rejects invented evidence, uncertain sends, wrong phases, 
     execution.pending={callId:'call',name:'ask_user_input',args:{kind:'upload',upload:{target:'mediaLibrary'}}} as any;
     assert.throws(()=>validate(decision('answer',{callId:'call',answer:{value:[]}}),{execution}),/kind=upload.*interrupt/);
     assert.equal(validate(decision('interrupt',{reason:'需用户手动上传参考站截图',nextSteps:['上传参考站截图至媒体库后恢复任务']}),{execution}).action,'interrupt');
+
+    // Reference-site failure / free-design decisions must NEVER be auto-answered regardless of kind (choice/confirm/text)
+    for (const kind of ['choice', 'confirm', 'text'] as const) {
+      execution.pending = {
+        callId: 'ref-call',
+        name: 'ask_user_input',
+        args: {
+          kind,
+          question: '无法获取参考站 https://artgallery-wbs.webflow.io/（403拦截），请选择：手动上传截图、更换URL或由AI自由设计？',
+          options: ['上传参考站截图', '更换参考 URL', '放弃参考站自由设计'],
+        },
+      } as any;
+      assert.throws(
+        () => validate(decision('answer', { callId: 'ref-call', answer: { kind, value: '放弃参考站自由设计' } }), { execution }),
+        /参考站.*严禁代答放行/,
+      );
+      assert.equal(
+        validate(
+          decision('interrupt', {
+            reason: '参考站无法访问，已停下等待用户选择处理方式',
+            nextSteps: ['上传参考截图、更换参考 URL 或授权自由设计后恢复执行'],
+          }),
+          { execution },
+        ).action,
+        'interrupt',
+      );
+    }
+
+    // Routine non-reference confirmation remains answerable
+    execution.pending = {
+      callId: 'browser-verify',
+      name: 'ask_user_input',
+      args: {
+        kind: 'confirm',
+        question: '首页已在站点根路径重建完成，是否授权在右侧预览中执行一次交互验证？',
+      },
+    } as any;
+    assert.equal(
+      validate(decision('answer', { callId: 'browser-verify', answer: { confirmed: true, kind: 'confirm', value: true } }), { execution }).action,
+      'answer',
+    );
     execution.pending={callId:'call',name:'ask_user_input',args:{}} as any;
     t.generation!.deliveryState='sending';assert.throws(()=>validate(decision('answer',{callId:'call',answer:{}}),{execution}),/不确定/);
     t.kind='evaluation';assert.throws(()=>validate(decision('continue',{message:'edit'}),{execution}),/不能直接改站/);assert.equal(validate(decision('retry')).action,'retry');
@@ -468,10 +509,11 @@ test('real generator handoff refreshes camel-case siteId and probes homepage wit
     await executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(1000));assert.equal(t.siteUrl,origin+'/home');assert.equal(t.stage,'handoff');assert.deepEqual(paths,['/_api/v2/Site/List','/home']);
     paths.length=0;
     t.generatedSiteId=null;t.generation={createAttempted:true};
-    await assert.rejects(()=>executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(1000)),/禁止重复创建/);
+    const passRefPreflight=async(url:string)=>({ok:true as const,url,finalUrl:url,status:200,method:'http' as const});
+    await assert.rejects(()=>executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(1000),undefined,{preflightReference:passRefPreflight}),/禁止重复创建/);
     assert.deepEqual(paths,['/_api/v2/Site/List']);
     t.generatedSiteId=site.id;t.scenario='upgrade';t.generation={createAttempted:true};
-    await assert.rejects(()=>executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(1000)),/克隆未返回任务标识/);
+    await assert.rejects(()=>executeGeneration(t,f.automationStore,f.vault,f.directory,AbortSignal.timeout(1000),undefined,{preflightReference:passRefPreflight}),/克隆未返回任务标识/);
   }finally{server.closeAllConnections();await new Promise<void>(r=>server.close(()=>r()));await f.close();}
 });
 

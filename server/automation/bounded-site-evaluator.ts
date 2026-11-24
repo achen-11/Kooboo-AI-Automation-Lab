@@ -746,7 +746,7 @@ export async function executeBoundedSiteEvaluation(params: {
   }
 
   const materialNotes = extractBoundedMaterialNotes(work, input.files || []);
-  const modelName = task.model?.name || 'deepseek-flash-1017';
+  const modelName = task.model?.name || 'deepseek-flash';
   const threadOptions = {
     model: modelName,
     workingDirectory: work,

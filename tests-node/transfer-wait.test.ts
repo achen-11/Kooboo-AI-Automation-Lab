@@ -282,6 +282,7 @@ test('executeGeneration records visible waiting and completion events for legacy
       directory,
       AbortSignal.timeout(10000),
       mockGenerationSession(task.id, () => siteId),
+      { preflightReference: async (url) => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }) },
     );
 
     const messages = f.automationStore.events(task.id).map((e) => e.message);

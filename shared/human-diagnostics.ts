@@ -129,7 +129,7 @@ export function deriveHumanNotice(input: {
     };
   }
 
-  if (/ask_user_input|待输入|kind=upload|上传.*截图|上传.*文件|视觉取证失败|等待人工决策|请上传/i.test(combined)) {
+  if (/ask_user_input|待输入|kind=upload|上传.*截图|上传.*文件|视觉取证失败|等待人工决策|请上传|放弃参考站|是否由\s*AI\s*自由设计|参考站取证失败/i.test(combined)) {
     const cleanNext = (input.nextSteps || input.lastAction?.nextSteps || [])
       .map(s => sanitizeHumanText(s, 150))
       .filter(s => s && !/^[0-9a-z_-]{16,}$/i.test(s));
@@ -179,6 +179,19 @@ export function deriveHumanNotice(input: {
       userActions: [
         '前往左侧「设置 → Kooboo 环境」，重新登录或更新该环境的授权凭据。',
         '确认当前账号对该环境有建站和编辑权限后，回到本任务点击「恢复执行」。',
+      ],
+    };
+  }
+
+  if (/无法获取参考站|参考站预检|参考站.*(?:反爬|拦截|白屏|超时|不可达)/i.test(combined)) {
+    return {
+      headline: '无法获取参考站页面，已暂停等待决策',
+      category: 'source-access',
+      explanation: `系统在建站前预检参考站时未能拿到有效可渲染画面（可能超时、返回错误状态、被防火墙拦截或为空壳页）。为避免在缺少参考站的情况下烧 token 自由发挥，已提前暂停等待您的决定。${keepSiteSentence}`,
+      userActions: [
+        '点击「补充资料」，更换可公开访问的参考站 URL 后重新预检。',
+        '或在「补充资料」手动上传参考站截图，并勾选「跳过外链预检并按截图还原」。',
+        '如确认无需参考站，可在「补充资料」勾选「放弃参考站，授权 AI 自由设计」后恢复执行。',
       ],
     };
   }

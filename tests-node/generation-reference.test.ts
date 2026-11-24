@@ -113,3 +113,50 @@ test('changed source bytes, conflicting owners and unsafe registered paths stop 
     assert.throws(() => generationSourceEvidence(f.manifest, f.store, f.directory), /归属或哈希/);
   } finally { await f.close(); }
 });
+
+test('upgrade scenario receives strict reference fidelity + hard-stop guidance without imagePlaceholder-only restriction, and honors supplement modes', async () => {
+  const f = await fixture('homepage');
+  try {
+    const upgResource = f.store.saveResource({
+      name: 'VelpUpgrade',
+      scenario: 'upgrade',
+      contentUrl: 'https://content.example.test/',
+      referenceUrl: 'https://artgallery.example.test/',
+      description: '',
+      files: [],
+      externalSource: '',
+      externalId: '',
+    });
+    const upgTask = f.store.create(
+      { resourceIds: [upgResource.id], kind: 'generation', scope: 'homepage', environmentId: randomUUID(), requirements: '' },
+      structuredClone(defaultAutomationSettings),
+    )[0];
+
+    const normalStudy = siteTemplateReferenceStudy(upgTask, f.store, f.siteId)!;
+    assert.match(normalStudy, /旧站升级执行路线：kooboo-site-redesign/);
+    assert.match(normalStudy, /严禁.*擅自改版|禁止因图片尺寸偏小或品牌名偏长/);
+    assert.match(normalStudy, /agentReady === true/);
+    assert.match(normalStudy, /ask_user_input/);
+    assert.doesNotMatch(normalStudy, /所有图片使用 imagePlaceholder，不复用来源图片/);
+
+    const screenshotStudy = siteTemplateReferenceStudy(
+      { ...upgTask, generation: { skipReferencePreflight: true } },
+      f.store,
+      f.siteId,
+    )!;
+    assert.match(screenshotStudy, /操作者已上传参考截图/);
+    assert.match(screenshotStudy, /read_image/);
+
+    const freeStudy = siteTemplateReferenceStudy(
+      { ...upgTask, generation: { allowFreeDesignWithoutReference: true } },
+      f.store,
+      f.siteId,
+    )!;
+    assert.match(freeStudy, /操作者已明确授权放弃原参考站/);
+    assert.match(freeStudy, /自由设计/);
+
+    assert.equal(siteTemplateReferenceStudy({ ...upgTask, scenario: 'migration' }, f.store, f.siteId), undefined);
+  } finally {
+    await f.close();
+  }
+});

@@ -50,6 +50,8 @@ const replacementContentUrl = ref('');
 const replacementReferenceUrl = ref('');
 const skipSourceTransfer = ref(false);
 const skipSourceTouched = ref(false);
+const skipReferencePreflight = ref(false);
+const allowFreeDesignWithoutReference = ref(false);
 
 const aiUploader = ref<InstanceType<typeof MaterialUploader>>();
 const aiUploaderBusy = ref(false);
@@ -122,19 +124,22 @@ function applyInitialDefaults(data: TaskSupplementContext, resetInputs: boolean)
     syncDraftControls(collectingOrReady);
   }
   if (!resetInputs) return;
+  const isRefFailed = Boolean(data.referencePreflightFailed);
   const isSourceAccess = data.interruptionCategory === 'source-access';
   skipSourceTouched.value = false;
-  skipSourceTransfer.value = isSourceAccess && !data.pendingUpload;
+  skipSourceTransfer.value = !isRefFailed && isSourceAccess && !data.pendingUpload;
+  skipReferencePreflight.value = Boolean(data.skipReferencePreflight);
+  allowFreeDesignWithoutReference.value = Boolean(data.allowFreeDesignWithoutReference);
   replacementContentUrl.value = '';
   replacementReferenceUrl.value = '';
   manualNote.value = '';
   manualFiles.value = [];
-  aiSourceUrl.value = isSourceAccess ? data.effectiveContentUrl || '' : '';
+  aiSourceUrl.value = !isRefFailed && isSourceAccess ? data.effectiveContentUrl || '' : '';
   aiNote.value = '';
   aiInputFiles.value = [];
-  aiSkipSourceTransfer.value = true;
+  aiSkipSourceTransfer.value = !isRefFailed;
   aiAutoApply.value = false;
-  if (isSourceAccess && !data.pendingUpload) {
+  if (!isRefFailed && isSourceAccess && !data.pendingUpload) {
     mode.value = 'ai-assisted';
   } else {
     mode.value = 'manual';
@@ -275,6 +280,26 @@ function onReplacementUrlInput() {
   }
 }
 
+function onReplacementReferenceUrlInput() {
+  if (replacementReferenceUrl.value.trim()) {
+    skipReferencePreflight.value = false;
+    allowFreeDesignWithoutReference.value = false;
+  }
+}
+
+function onSkipReferencePreflightChange() {
+  if (skipReferencePreflight.value) {
+    allowFreeDesignWithoutReference.value = false;
+  }
+}
+
+function onAllowFreeDesignChange() {
+  if (allowFreeDesignWithoutReference.value) {
+    skipReferencePreflight.value = false;
+    replacementReferenceUrl.value = '';
+  }
+}
+
 function toggleDraftFile(fileId: string) {
   if (selectedFileIds.value.includes(fileId)) {
     selectedFileIds.value = selectedFileIds.value.filter(id => id !== fileId);
@@ -308,8 +333,16 @@ async function submitManual() {
     const note = manualNote.value.trim();
     const contentUrl = replacementContentUrl.value.trim();
     const referenceUrl = replacementReferenceUrl.value.trim();
-    if (!hasFiles && !note && !contentUrl && !referenceUrl && !skipSourceTransfer.value) {
-      actionError.value = '请至少上传资料文件、填写补充说明或提供新的源站/参考站网址';
+    if (
+      !hasFiles &&
+      !note &&
+      !contentUrl &&
+      !referenceUrl &&
+      !skipSourceTransfer.value &&
+      !skipReferencePreflight.value &&
+      !allowFreeDesignWithoutReference.value
+    ) {
+      actionError.value = '请至少上传资料文件、填写补充说明、提供新网址或选择明确的处理方式';
       return;
     }
     await api<{ task: AutomationTask; batch: TaskSupplementBatch }>(
@@ -322,6 +355,8 @@ async function submitManual() {
           replacementContentUrl: contentUrl,
           replacementReferenceUrl: referenceUrl,
           skipSourceTransfer: skipSourceTransfer.value,
+          skipReferencePreflight: skipReferencePreflight.value,
+          allowFreeDesignWithoutReference: allowFreeDesignWithoutReference.value,
         }),
       },
     );
@@ -491,6 +526,19 @@ defineExpose({ open });
             <span v-if="context.pendingUpload.folder">建议目录：{{ context.pendingUpload.folder }} · </span>
             <span v-if="context.pendingUpload.accept?.length">支持类型：{{ context.pendingUpload.accept.join(', ') }} · </span>
             <span v-if="context.pendingUpload.maxFiles">最多 {{ context.pendingUpload.maxFiles }} 个</span>
+          </p>
+        </div>
+
+        <div v-else-if="context.referencePreflightFailed" class="supplement-context-card">
+          <div class="supplement-context-head">
+            <strong>无法获取参考站页面，已暂停等待您的决定</strong>
+            <span v-if="context.hasTargetSite" class="task-meta-tag">已保留目标站点</span>
+          </div>
+          <p v-if="context.referencePreflightDetail" class="task-prose">
+            {{ context.referencePreflightDetail }}
+          </p>
+          <p class="text-muted small-text">
+            为避免 AI 在没有参考站的情况下自由发挥消耗 Token，请选择以下任一方式后恢复执行：1）在下方填写新的可访问参考站网址；2）上传参考站截图并勾选「跳过外链预检并按截图还原」；3）勾选「放弃参考站，授权 AI 自由设计」。
           </p>
         </div>
 
@@ -751,8 +799,8 @@ defineExpose({ open });
             </label>
 
             <Disclosure
-              label="替换原内容站 / 参考站网址或跳过克隆（可选）"
-              :open="context.interruptionCategory === 'source-access' && !context.pendingUpload"
+              label="替换原内容站 / 参考站网址或决策参考站处理方式（可选）"
+              :open="Boolean(context.referencePreflightFailed) || (context.interruptionCategory === 'source-access' && !context.pendingUpload)"
             >
               <div class="supplement-disclosure-stack">
                 <div class="supplement-url-grid">
@@ -775,9 +823,28 @@ defineExpose({ open });
                       class="input"
                       :disabled="busy || !context.canSupplement"
                       :placeholder="context.effectiveReferenceUrl || 'https://...'"
+                      @input="onReplacementReferenceUrlInput"
                     />
                   </label>
                 </div>
+                <label class="check-label">
+                  <input
+                    v-model="skipReferencePreflight"
+                    type="checkbox"
+                    :disabled="busy || !context.canSupplement"
+                    @change="onSkipReferencePreflightChange"
+                  />
+                  我已上传参考站截图，跳过外链预检并按截图还原
+                </label>
+                <label class="check-label">
+                  <input
+                    v-model="allowFreeDesignWithoutReference"
+                    type="checkbox"
+                    :disabled="busy || !context.canSupplement"
+                    @change="onAllowFreeDesignChange"
+                  />
+                  放弃参考站，明确授权 AI 结合业务资料自由设计
+                </label>
                 <label class="check-label">
                   <input
                     v-model="skipSourceTransfer"
@@ -785,7 +852,7 @@ defineExpose({ open });
                     :disabled="busy || !context.canSupplement"
                     @change="onSkipToggle"
                   />
-                  跳过原站克隆，直接使用我上传的资料继续生成（推荐在原站无法访问或已手动提供素材时勾选）
+                  跳过原站克隆，直接使用我上传的资料继续生成（仅在原内容站无法访问或已手动提供素材时勾选）
                 </label>
               </div>
             </Disclosure>

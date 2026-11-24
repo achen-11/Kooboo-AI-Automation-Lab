@@ -115,9 +115,20 @@ export class Vault {
     const learning = { ...defaultAutomationSettings.learning!, ...saved?.learning };
     learning.selectionSop = resolveHarnessSop('learning.selectionSop', saved?.learning?.selectionSop).value;
     learning.reflectionSop = resolveHarnessSop('learning.reflectionSop', saved?.learning?.reflectionSop).value;
+    const rawEndpoint = saved?.evaluationEndpoint?.trim() || '';
+    const runtimeEndpoint = this.current.model.endpoint?.trim() || '';
+    const normalizedRuntimeEndpoint = runtimeEndpoint
+      ? runtimeEndpoint.replace(/\/chat\/completions\/?$/, '/responses')
+      : '';
+    const evaluationEndpoint = rawEndpoint
+      ? rawEndpoint.replace(/\/chat\/completions\/?$/, '/responses')
+      : normalizedRuntimeEndpoint || defaultAutomationSettings.evaluationEndpoint;
+    const evaluationModel = saved?.evaluationModel?.trim() || defaultAutomationSettings.evaluationModel;
     return structuredClone({
       ...defaultAutomationSettings,
       ...saved,
+      evaluationEndpoint,
+      evaluationModel,
       completeness,
       learning,
       optimization,

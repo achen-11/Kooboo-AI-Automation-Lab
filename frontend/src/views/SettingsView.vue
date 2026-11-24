@@ -132,7 +132,7 @@ async function copy(value: string): Promise<void> {
       <section class="panel settings-panel">
         <h2>视觉模型</h2>
         <div class="form-grid">
-          <label class="field full-width"><span>Chat Completions 接口</span><input v-model="form.model.endpoint" type="url" class="input" placeholder="https://服务地址/v1/chat/completions" /><p>填写支持图片输入与 JSON 输出的兼容接口完整地址</p></label>
+          <label class="field full-width"><span>Responses 接口</span><input v-model="form.model.endpoint" type="url" class="input" placeholder="https://api.deepseek.com/responses" /><p>填写支持图片输入与 JSON 输出的兼容接口完整地址</p></label>
           <label class="field"><span>模型名称</span><input v-model="form.model.name" class="input" placeholder="服务提供的视觉模型名称" /></label>
           <div class="field">
             <span>API Key <small>{{ form.model.hasApiKey ? '已保存，留空保留' : '填写服务访问密钥' }}</small></span>

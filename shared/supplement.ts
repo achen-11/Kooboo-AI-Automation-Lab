@@ -29,6 +29,8 @@ export interface TaskSupplementBatch {
   replacementContentUrl?: string;
   replacementReferenceUrl?: string;
   skipSourceTransfer?: boolean;
+  skipReferencePreflight?: boolean;
+  allowFreeDesignWithoutReference?: boolean;
   autoApply?: boolean;
   inputFiles?: MaterialFile[];
   files: SupplementalFileRef[];
@@ -63,4 +65,8 @@ export interface TaskSupplementContext {
   canSupplement: boolean;
   hasTargetSite: boolean;
   interruptionCategory?: import('./human-diagnostics.js').DiagnosticCategory;
+  referencePreflightFailed?: boolean;
+  referencePreflightDetail?: string;
+  skipReferencePreflight?: boolean;
+  allowFreeDesignWithoutReference?: boolean;
 }

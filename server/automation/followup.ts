@@ -33,6 +33,43 @@ export const followupActionSchema=z.object({action:z.enum(['retry','continue','a
 const toolInput=z.object({tool:z.enum(['get_task','get_conversation','get_site','probe_site','inspect_execution','get_report','act']),decision:followupActionSchema.optional()}).strict();
 export interface RecoveryInspection { conversation?:Awaited<ReturnType<typeof readConversation>>; siteReady?:boolean; execution?:GenerationObservation; optimizationImages?:string[]; reportObservations?:NonNullable<AutomationTask['followup']>['reportObservations'] }
 
+const REFERENCE_TERM_PATTERN =
+  /参考站|参考网站|参考页|参考图|视觉参考|reference\s*(?:site|url|page|screenshot|image|design|workspace)/i;
+const REFERENCE_FAILURE_PATTERN =
+  /无法访问|无法获取|打不开|未拿到|拿不到|没有拿到|截图失败|取证失败|抓取失败|导入失败|空白页|空壳|反爬|拦截|403|404|5\d\d|timeout|超时|unavailable|failed|blocked|blank|captcha|challenge|login/i;
+const REFERENCE_DECISION_PATTERN =
+  /自由发挥|自由设计|自行设计|另行设计|跳过参考|放弃参考|更换参考|上传参考|手动提供|free.?form|improvise|abandon.*reference|replace.*reference|upload.*reference|without.*reference/i;
+const EXPLICIT_ABANDON_REFERENCE_PATTERN =
+  /放弃参考站|无参考自由设计|没有拿到参考站|无法获取参考站|改为自由设计|改为自由发挥|abandon.*reference|without.*reference.*free/i;
+
+export function isReferenceDecisionAskUserInput(
+  pending: GenerationObservation['pending'],
+  answer?: Record<string, unknown>,
+): boolean {
+  if (!pending || pending.name !== 'ask_user_input') return false;
+  const args = pending.args && typeof pending.args === 'object' ? (pending.args as Record<string, unknown>) : {};
+  const upload = args.upload && typeof args.upload === 'object' ? (args.upload as Record<string, unknown>) : {};
+  const pendingText = [
+    args.question,
+    args.description,
+    upload.purpose,
+    args.options ? JSON.stringify(args.options) : '',
+    args.choices ? JSON.stringify(args.choices) : '',
+  ]
+    .filter(Boolean)
+    .join('\n');
+  const answerText = answer ? JSON.stringify(answer) : '';
+  if (EXPLICIT_ABANDON_REFERENCE_PATTERN.test(pendingText) || EXPLICIT_ABANDON_REFERENCE_PATTERN.test(answerText)) {
+    return true;
+  }
+  return (
+    REFERENCE_TERM_PATTERN.test(pendingText) &&
+    (REFERENCE_FAILURE_PATTERN.test(pendingText) ||
+      REFERENCE_DECISION_PATTERN.test(pendingText) ||
+      REFERENCE_DECISION_PATTERN.test(answerText))
+  );
+}
+
 /** Action requests are checked against host-owned observations, never against AI-written files. */
 export function validateFollowupAction(raw:unknown,task:AutomationTask,inspection:RecoveryInspection,observations:Set<string>):FollowupAction {
   const action=followupActionSchema.parse(raw);
@@ -67,6 +104,7 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
     if(action.action==='continue'&&(!action.message||state.pending))throw new Error('继续生成需要明确消息；有待输入调用时应使用 answer');
     if(action.action==='answer'&&(!action.answer||!state.pending||action.callId!==state.pending.callId))throw new Error('回答必须对应当前待输入调用及其参数');
     if(action.action==='answer'&&state.pending?.name==='ask_user_input'&&state.pending.args?.kind==='upload')throw new Error('待输入调用要求用户上传文件（kind=upload），自动跟进不能伪造上传结果，请改用 interrupt 说明原因与下一步');
+    if(action.action==='answer'&&isReferenceDecisionAskUserInput(state.pending,action.answer))throw new Error('待输入调用涉及参考站获取失败或是否放弃参考站改为 AI 自由设计的决策，自动跟进严禁代答放行，请改用 interrupt 交由用户决定（更换参考 URL、上传参考截图或明确授权自由设计）');
   }
   if(action.action==='evaluate') {
     if(task.generation?.next)throw new Error('仍有尚未发送的本轮委托，不能使用上一轮完成回执交接评测');

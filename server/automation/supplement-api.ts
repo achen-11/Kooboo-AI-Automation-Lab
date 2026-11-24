@@ -81,6 +81,8 @@ export function registerTaskSupplementApi(
         replacementContentUrl: optionalHttpUrl,
         replacementReferenceUrl: optionalHttpUrl,
         skipSourceTransfer: z.boolean().optional(),
+        skipReferencePreflight: z.boolean().optional(),
+        allowFreeDesignWithoutReference: z.boolean().optional(),
       })
       .parse(request.body || {});
 
@@ -94,6 +96,8 @@ export function registerTaskSupplementApi(
       replacementContentUrl: body.replacementContentUrl,
       replacementReferenceUrl: body.replacementReferenceUrl,
       skipSourceTransfer: body.skipSourceTransfer,
+      skipReferencePreflight: body.skipReferencePreflight,
+      allowFreeDesignWithoutReference: body.allowFreeDesignWithoutReference,
       files: body.files.map(f => ({ ...f, source: 'manual' })),
     });
     supplements.put(batch);
@@ -175,6 +179,8 @@ export function registerTaskSupplementApi(
         selectedFileIds: z.array(uuid).max(500).optional(),
         note: z.string().trim().max(20000).optional(),
         skipSourceTransfer: z.boolean().optional(),
+        skipReferencePreflight: z.boolean().optional(),
+        allowFreeDesignWithoutReference: z.boolean().optional(),
         replacementContentUrl: optionalHttpUrl.optional(),
         replacementReferenceUrl: optionalHttpUrl.optional(),
       })
@@ -191,6 +197,8 @@ export function registerTaskSupplementApi(
       selectedFileIds: body.selectedFileIds,
       noteOverride: body.note,
       skipSourceTransferOverride: body.skipSourceTransfer,
+      skipReferencePreflightOverride: body.skipReferencePreflight,
+      allowFreeDesignWithoutReferenceOverride: body.allowFreeDesignWithoutReference,
       replacementContentUrlOverride: body.replacementContentUrl,
       replacementReferenceUrlOverride: body.replacementReferenceUrl,
     });

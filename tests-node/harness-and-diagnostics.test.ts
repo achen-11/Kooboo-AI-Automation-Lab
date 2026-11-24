@@ -419,7 +419,9 @@ test('generator stops infinite loop when transfer returns pages=0 (legacy Transf
     f.automationStore.put(legTask);
 
     await assert.rejects(
-      executeGeneration(legTask, f.automationStore, f.vault, f.directory, AbortSignal.timeout(8000)),
+      executeGeneration(legTask, f.automationStore, f.vault, f.directory, AbortSignal.timeout(8000), undefined, {
+        preflightReference: async (url) => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }),
+      }),
       (err: unknown) =>
         err instanceof FollowupRuntimeError && err.userSummary?.category === 'source-access',
     );
@@ -444,6 +446,7 @@ test('generator stops infinite loop when transfer returns pages=0 (legacy Transf
       f.directory,
       AbortSignal.timeout(8000),
       mockGenerationSession(recTask.id, () => recSiteId),
+      { preflightReference: async (url) => ({ ok: true, url, finalUrl: url, status: 200, method: 'http' }) },
     );
     assert.equal(recTask.generation?.transferComplete, true);
     void legSiteId;

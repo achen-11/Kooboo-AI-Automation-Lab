@@ -446,3 +446,83 @@ test('automationMaterials exposes imageId and mediaLibrary storage while blockin
     await f.close();
   }
 });
+
+test('initial upgrade kfile context replaces reuse wording with rebuild instructions while continuations and direct-template keep reuse', async () => {
+  const f = await fixture();
+  try {
+    const upgResource = f.store.saveResource({
+      name: 'Upgrade Rebuild',
+      scenario: 'upgrade',
+      contentUrl: 'http://www.annekeboot.com/',
+      referenceUrl: 'https://reference.test/',
+      description: 'Upgrade gallery site',
+      files: [],
+      externalSource: '',
+      externalId: '',
+    });
+    const makeTask = () =>
+      f.store.create(
+        {
+          resourceIds: [upgResource.id],
+          kind: 'generation',
+          scope: 'homepage',
+          environmentId: randomUUID(),
+          requirements: '',
+        },
+        structuredClone(defaultAutomationSettings),
+      )[0];
+    const materials = [{ name: 'README.md', id: 'readme-1', destination: '/materials/README.md', type: 'text/markdown', size: 10, sha256: 'd'.repeat(64) }];
+
+    // Case 1: initial upgrade rebuild (kfile mode via materials)
+    const initialTask = makeTask();
+    const initialResult = await prepareGenerationContext(initialTask, f.store, f.request, f.siteId, { instructions: initialTask.message, materials });
+    assert.equal(initialResult.mode, 'kfile');
+    assert.match(initialResult.text, /首轮 upgrade 重构任务/);
+    assert.match(initialResult.text, /严禁沿用源站旧视觉样式/);
+    assert.match(initialResult.text, /launch\.kooboo\.nl\/banner\.js/);
+    assert.doesNotMatch(initialResult.text, /沿用已有内容与实现/);
+
+    // Case 2a: isInitialDelivery: false
+    const retryTask = makeTask();
+    const retryResult = await prepareGenerationContext(retryTask, f.store, f.request, f.siteId, { instructions: retryTask.message, materials }, true, { isInitialDelivery: false });
+    assert.match(retryResult.text, /沿用已有内容与实现/);
+    assert.doesNotMatch(retryResult.text, /首轮 upgrade 重构任务/);
+
+    // Case 2b: existing deliveryId
+    const deliveredTask = makeTask();
+    deliveredTask.generation = { deliveryId: randomUUID() };
+    const deliveredResult = await prepareGenerationContext(deliveredTask, f.store, f.request, f.siteId, { instructions: deliveredTask.message, materials });
+    assert.match(deliveredResult.text, /沿用已有内容与实现/);
+
+    // Case 2c: instructions indicate continuing on existing site
+    const contInstructionsTask = makeTask();
+    const contInstructionsResult = await prepareGenerationContext(contInstructionsTask, f.store, f.request, f.siteId, { instructions: '在已有目标站继续生成，修复首页。', materials });
+    assert.match(contInstructionsResult.text, /沿用已有内容与实现/);
+
+    // Case 2d: parentId or repairEvidence present
+    const parentTask = makeTask();
+    parentTask.parentId = randomUUID();
+    const parentResult = await prepareGenerationContext(parentTask, f.store, f.request, f.siteId, { instructions: parentTask.message, materials });
+    assert.match(parentResult.text, /沿用已有内容与实现/);
+
+    const repairTask = makeTask();
+    repairTask.repairEvidence = { reportId: randomUUID(), files: [] };
+    const repairResult = await prepareGenerationContext(repairTask, f.store, f.request, f.siteId, { instructions: repairTask.message, materials });
+    assert.match(repairResult.text, /沿用已有内容与实现/);
+
+    // Case 2e: upgrade with direct-template mode
+    const directTplTask = makeTask();
+    directTplTask.generation = {
+      referenceTemplate: {
+        templateId: 'tpl-1',
+        templateName: 'Direct Template',
+        previewUrl: 'https://tpl.test/',
+        mode: 'direct-template',
+      },
+    };
+    const directTplResult = await prepareGenerationContext(directTplTask, f.store, f.request, f.siteId, { instructions: directTplTask.message, materials });
+    assert.match(directTplResult.text, /沿用已有内容与实现/);
+  } finally {
+    await f.close();
+  }
+});

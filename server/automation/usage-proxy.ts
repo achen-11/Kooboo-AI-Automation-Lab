@@ -72,7 +72,8 @@ export async function usageCapture(taskId:string,stage:UsageStage,store:Automati
           }
         }
         streaming=Boolean(upstream.headers.get('content-type')?.includes('text/event-stream'));
-        if(!upstream.ok){const failure=new Error(upstream.status===402?'模型服务拒绝请求（HTTP 402）；请检查模型账户余额、额度及服务配置后恢复。':`模型服务返回 HTTP ${upstream.status}；请在模型服务恢复后重试。`);requestError??=failure;observation.note=failure.message;}
+        const baseHttpError=!upstream.ok?new Error(upstream.status===402?'模型服务拒绝请求（HTTP 402）；请检查模型账户余额、额度及服务配置后恢复。':`模型服务返回 HTTP ${upstream.status}；请在模型服务恢复后重试。`):undefined;
+        if(baseHttpError){requestError??=baseHttpError;observation.note=baseHttpError.message;}
         res.writeHead(upstream.status,{'content-type':upstream.headers.get('content-type')||'application/json','cache-control':'no-store'});
         if(upstream.body){const decoder=new TextDecoder(),bodyReader=reader||upstream.body.getReader();while(true){const next=first||await bodyReader.read();first=undefined;if(next.done)break;const chunk=next.value;
           if(!res.destroyed)res.write(chunk);
@@ -86,6 +87,18 @@ export async function usageCapture(taskId:string,stage:UsageStage,store:Automati
           // Do not turn that normal close into a sticky error for the next turn.
           if(responseCompleted){await bodyReader.cancel();break;}
         }pending+=decoder.decode();observe(pending);}
+        if(baseHttpError){
+          try{
+            const parsed=JSON.parse(pending) as {error?:{message?:unknown};message?:unknown};
+            const rawDetail=typeof parsed?.error?.message==='string'?parsed.error.message:typeof parsed?.message==='string'?parsed.message:'';
+            const cleanDetail=(runtime.model.apiKey?rawDetail.replaceAll(runtime.model.apiKey,'[已隐藏]'):rawDetail).replace(/Bearer\s+\S+/gi,'Bearer [已隐藏]').trim().slice(0,200);
+            if(cleanDetail){
+              const withDetail=`${baseHttpError.message}（${cleanDetail}）`;
+              baseHttpError.message=withDetail;
+              observation.note=withDetail;
+            }
+          }catch{}
+        }
         observation.status=upstream.ok&&observation.status!=='failed'?'completed':'failed';
       }catch(error){
         if(responseCompleted&&observation.status!=='failed'){

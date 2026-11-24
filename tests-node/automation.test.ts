@@ -200,6 +200,20 @@ test('Responses base URL conversion supports existing full Chat Completions endp
   assert.throws(()=>responsesBaseUrl('https://name:secret@provider.test/v1'));
 });
 
+test('default evaluation model and Responses endpoint normalize legacy chat/completions settings',async()=>{
+  assert.equal(defaultAutomationSettings.evaluationModel,'deepseek-flash');
+  assert.equal(defaultAutomationSettings.evaluationEndpoint,'https://api.deepseek.com/responses');
+  const f=await fixture();
+  try{
+    f.vault.update({
+      ...f.vault.get(),
+      model:{endpoint:'https://api.deepseek.com/chat/completions',name:'deepseek-flash',apiKey:'test-key'},
+    });
+    assert.equal(f.vault.automation().evaluationEndpoint,'https://api.deepseek.com/responses');
+    assert.equal(f.vault.automation().evaluationModel,'deepseek-flash');
+  }finally{await f.close();}
+});
+
 test('failed cancellation cleanup creates a clear interruption and keeps the slot until stop can be confirmed',async()=>{
   const f=await fixture();let worker:AutomationWorker|undefined;try{
     const r=await f.save();const settings={...defaultAutomationSettings,enabled:true,generationConcurrency:1};f.vault.updateAutomation(settings);

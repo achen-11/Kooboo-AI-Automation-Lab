@@ -44,15 +44,21 @@ async function loadHarnessBindings() {
   } catch { /* non-blocking if backend has not reloaded */ }
 }
 
+function normalizeResponsesEndpoint(raw: string) {
+  const trimmed = raw.trim().replace(/\/+$/, '');
+  if (!trimmed) return 'https://api.deepseek.com/responses';
+  return trimmed.replace(/\/chat\/completions$/, '/responses');
+}
+
 async function load() {
   await refresh();
   if (workspace.error) throw new Error(workspace.error);
   form.value = JSON.parse(JSON.stringify(workspace.settings));form.value.showExecutionBrowser??=false;form.value.optimization={...defaultOptimizationPolicy,...form.value.optimization};
   saved.value = JSON.stringify(form.value);
-  const endpoint = form.value.evaluationEndpoint || platform.settings?.model.endpoint || '';
+  const endpoint = form.value.evaluationEndpoint || platform.settings?.model.endpoint || 'https://api.deepseek.com/responses';
   evaluationModel.value = {
-    name: form.value.evaluationModel,
-    endpoint: endpoint.replace(/\/(?:chat\/completions|responses)\/?$/, '').replace(/\/$/, ''),
+    name: form.value.evaluationModel || 'deepseek-flash',
+    endpoint: normalizeResponsesEndpoint(endpoint),
     apiKey: '',
   };
   savedModel.value = JSON.stringify(modelFields());
@@ -94,21 +100,26 @@ async function resetSop(key: Exclude<HarnessSopKey, 'delivery.sop'>) {
 
 async function saveModel() {
   busy.value = true; error.value = '';
-  const input = { ...evaluationModel.value };
+  const input = {
+    name: evaluationModel.value.name.trim() || 'deepseek-flash',
+    endpoint: normalizeResponsesEndpoint(evaluationModel.value.endpoint),
+    apiKey: evaluationModel.value.apiKey,
+  };
   let keySaved = false;
   try {
-    if (input.apiKey) {
+    const legacyModelEndpoint = !platform.settings?.model.endpoint || /\/chat\/completions\/?$/.test(platform.settings.model.endpoint);
+    if (input.apiKey || legacyModelEndpoint) {
       const current = await api<PublicSettings>('/settings');
       platform.settings = await api<PublicSettings>('/settings', {
         method: 'PUT',
         body: JSON.stringify({
           threshold: current.threshold, paused: current.paused, execution: current.execution,
-          model: { endpoint: current.model.endpoint, name: current.model.name, apiKey: input.apiKey },
+          model: { endpoint: input.endpoint, name: input.name, apiKey: input.apiKey || '' },
           environments: current.environments.map(env => ({ ...env, token: '' })),
         }),
       });
       evaluationModel.value.apiKey = '';
-      keySaved = true;
+      if (input.apiKey) keySaved = true;
     }
     const current = await api<AutomationSettings>('/automation/settings');
     const result = await api<AutomationSettings>('/automation/settings', {
@@ -118,6 +129,8 @@ async function saveModel() {
     workspace.settings = result;
     form.value.evaluationModel = result.evaluationModel;
     form.value.evaluationEndpoint = result.evaluationEndpoint;
+    evaluationModel.value.name = result.evaluationModel;
+    evaluationModel.value.endpoint = normalizeResponsesEndpoint(result.evaluationEndpoint);
     const baseline = JSON.parse(saved.value) as AutomationSettings;
     baseline.evaluationModel = result.evaluationModel;
     baseline.evaluationEndpoint = result.evaluationEndpoint;
@@ -156,7 +169,7 @@ async function copy(text: string) {
   <h2>评测模型</h2>
   <div class="form-grid">
     <label class="field"><span>模型名称</span><input v-model="evaluationModel.name" class="input" required :disabled="busy||modelTesting||!saved" /></label>
-    <label class="field"><span>API 地址</span><input v-model="evaluationModel.endpoint" class="input" type="url" placeholder="供应商 API 基础地址" required :disabled="busy||modelTesting||!saved" /></label>
+    <label class="field"><span>API 地址</span><input v-model="evaluationModel.endpoint" class="input" type="url" placeholder="https://api.deepseek.com/responses" required :disabled="busy||modelTesting||!saved" /></label>
   </div>
   <label class="field"><span>API Key <small>{{platform.settings?.model.hasApiKey?'已保存，留空保留':'尚未配置'}}</small></span><input v-model="evaluationModel.apiKey" class="input" type="password" autocomplete="new-password" :disabled="busy||modelTesting||!saved" /></label>
   <div class="model-actions">

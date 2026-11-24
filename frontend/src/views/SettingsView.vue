@@ -18,7 +18,7 @@ function initialForm() {
   return { threshold: settings.threshold as number, paused: settings.paused as boolean,
     execution: { timeoutSeconds: (settings.execution?.timeoutSeconds ?? 300) as number, captureAttempts: (settings.execution?.captureAttempts ?? 2) as number },
     model: { endpoint: settings.model.endpoint as string, name: settings.model.name as string, apiKey: '', clearKey: false, hasApiKey: settings.model.hasApiKey as boolean },
-    environments: (settings.environments as PublicSettings['environments']).map((env) => ({ ...env, defaultRootDomain: env.defaultRootDomain || '', token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,...env.delivery,hasToken:env.delivery?.hasToken||false,token:'',clearToken:false} })),
+    environments: (settings.environments as PublicSettings['environments']).map((env) => ({ ...env, defaultRootDomain: env.defaultRootDomain || '', cloneFallbackEnvironmentId: env.cloneFallbackEnvironmentId || '', token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,...env.delivery,hasToken:env.delivery?.hasToken||false,token:'',clearToken:false} })),
   };
 }
 const form = ref(initialForm());
@@ -40,7 +40,22 @@ async function save(): Promise<void> {
   catch (reason) { error.value = message(reason); }
   finally { saving.value = false; }
 }
-function addEnvironment(): void { form.value.environments.push({ id: crypto.randomUUID(), name: '', origin: '', apiOrigin: '', hasToken: false, defaultRootDomain: '', token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,hasToken:false,token:'',clearToken:false} }); }
+function addEnvironment(): void { form.value.environments.push({ id: crypto.randomUUID(), name: '', origin: '', apiOrigin: '', hasToken: false, defaultRootDomain: '', cloneFallbackEnvironmentId: '', token: '', clearToken: false,delivery:{...defaultDeliveryPolicy,hasToken:false,token:'',clearToken:false} }); }
+function removeEnvironment(index: number): void {
+  const [removed] = form.value.environments.splice(index, 1);
+  if (!removed) return;
+  for (const item of form.value.environments) {
+    if (item.cloneFallbackEnvironmentId === removed.id) item.cloneFallbackEnvironmentId = '';
+  }
+}
+function fallbackEnvironmentOptions(currentId: string) {
+  return [
+    { value: '', label: '不启用（原站克隆失败后直接中断）' },
+    ...form.value.environments
+      .filter((other) => other.id !== currentId)
+      .map((other) => ({ value: other.id, label: other.name.trim() || other.origin || other.id })),
+  ];
+}
 function domainConnectionChanged(env: ReturnType<typeof initialForm>['environments'][number]): boolean {
   const saved = platform.settings?.environments.find(item => item.id === env.id);
   return !saved || saved.origin !== env.origin || saved.apiOrigin !== env.apiOrigin || !!env.token || env.clearToken;
@@ -57,7 +72,7 @@ function loginConnected(result: Extract<KoobooLoginResult, { status: 'connected'
   const baselineForm = JSON.parse(baseline.value) as ReturnType<typeof initialForm>;
   let previous = baselineForm.environments.find(env => env.id === saved.id);
   if (!previous) {
-    previous = { ...saved, defaultRootDomain: saved.defaultRootDomain || '', token: '', clearToken: false, delivery: { ...defaultDeliveryPolicy, ...saved.delivery, hasToken: saved.delivery?.hasToken || false, token: '', clearToken: false } };
+    previous = { ...saved, defaultRootDomain: saved.defaultRootDomain || '', cloneFallbackEnvironmentId: saved.cloneFallbackEnvironmentId || '', token: '', clearToken: false, delivery: { ...defaultDeliveryPolicy, ...saved.delivery, hasToken: saved.delivery?.hasToken || false, token: '', clearToken: false } };
     baselineForm.environments.push(previous);
   }
   const connected = { name: saved.name, origin: saved.origin, apiOrigin: saved.apiOrigin, hasToken: saved.hasToken, token: '', clearToken: false };
@@ -100,7 +115,7 @@ async function copy(value: string): Promise<void> {
     <template v-if="props.environmentsOnly">
       <section v-if="!form.environments.length" class="panel empty-state"><span class="empty-icon"><Cable :size="30" :stroke-width="1.4" /></span><h2>添加第一个 Kooboo 环境</h2><p>插件提交站点身份后，平台通过这里的配置读取站点地址和资料</p><button type="button" class="button primary" @click="addEnvironment()"><Plus :size="17" />添加环境</button></section>
       <section v-for="(env, index) in form.environments" :key="env.id" class="panel settings-panel">
-        <div class="section-heading"><h2>{{ env.name || `Kooboo 环境 ${index + 1}` }}</h2><button type="button" class="icon-button danger-icon" aria-label="移除此环境" @click="form.environments.splice(index, 1)"><Trash2 :size="18" /></button></div>
+        <div class="section-heading"><h2>{{ env.name || `Kooboo 环境 ${index + 1}` }}</h2><button type="button" class="icon-button danger-icon" aria-label="移除此环境" @click="removeEnvironment(index)"><Trash2 :size="18" /></button></div>
         <div class="form-grid three-columns">
           <label class="field"><span>环境名称</span><input v-model="env.name" class="input" placeholder="例如：本机 Kooboo" required maxlength="100" /></label>
           <label class="field"><span>Kooboo 环境地址</span><input :value="env.origin" type="url" class="input" placeholder="http://localhost:3000" required @input="updateOrigin(index, ($event.target as HTMLInputElement).value)" /></label>
@@ -108,6 +123,11 @@ async function copy(value: string): Promise<void> {
         </div>
         <div class="connection-login"><button type="button" class="button secondary" :disabled="saving || !env.name.trim() || !env.origin || !env.apiOrigin" @click="loginDialog?.open(env)"><LogIn :size="17" />{{ env.hasToken ? '重新登录' : '登录连接' }}</button><span v-if="env.hasToken" class="text-muted small-text">访问凭据已保存</span></div>
         <label class="field"><span>默认建站根域名</span><KoobooRootDomainSelect v-model="env.defaultRootDomain" :environment-id="env.id" :disabled="domainConnectionChanged(env)" /></label>
+        <label class="field">
+          <span>克隆失败自动回退环境</span>
+          <BaseSelect v-model="env.cloneFallbackEnvironmentId" :options="fallbackEnvironmentOptions(env.id)" />
+          <p class="text-muted small-text">旧站升级在准备阶段克隆原站导入 0 页时，自动清理当前空站并切换至所选环境重新建站、克隆与执行（需目标环境已登录连接）。</p>
+        </label>
         <Disclosure label="手动填写访问令牌"><label class="field credential-field"><span>访问令牌 <small>{{ env.hasToken ? '已保存，留空保留' : 'Bearer Token' }}</small></span><div class="input-with-action"><input v-model="env.token" :type="reveal[env.id] ? 'text' : 'password'" autocomplete="new-password" :placeholder="env.hasToken ? '输入新令牌可替换当前令牌' : '填写 Kooboo 访问令牌'" /><button type="button" class="icon-button" :aria-label="reveal[env.id] ? '隐藏令牌' : '显示令牌'" @click="reveal[env.id] = !reveal[env.id]"><EyeOff v-if="reveal[env.id]" :size="18" /><Eye v-else :size="18" /></button></div></label></Disclosure>
         <label class="check-label"><input v-model="env.delivery.enabled" type="checkbox"/>启用跨环境交付</label>
         <div v-if="env.delivery.enabled" class="delivery-config"><label class="field"><span>迁移接口</span><input v-model="env.delivery.endpoint" type="url" class="input" required/></label><label class="field credential-field"><span>迁移服务令牌 <small>{{env.delivery.hasToken?'已保存，留空保留':'独立于 Kooboo 访问令牌'}}</small></span><input v-model="env.delivery.token" class="input" type="password" autocomplete="new-password"/></label><div class="form-grid"><label class="field"><span>默认交付偏好</span><BaseSelect :model-value="env.delivery.auto?'auto':'manual'" @update:model-value="v=>env.delivery.auto=v==='auto'" :options="[{ value: 'manual', label: '默认关闭（评测后按需手动发起）' }, { value: 'auto', label: '默认开启（任务完成后自动交付）' }]" /></label><label class="field"><span>迁移接口超时（秒）</span><input v-model.number="env.delivery.timeoutSeconds" class="input" type="number" min="30" max="900" required/></label></div><label class="check-label"><input v-model="env.delivery.requirePassed" type="checkbox"/>源站评测通过后才允许交付</label><p class="text-muted small-text">创建任务时可按单次任务覆盖此偏好。交付去向由迁移服务决定，返回目标站后核验两端站点。保留源站；结果不确定时先核查回执。</p></div>

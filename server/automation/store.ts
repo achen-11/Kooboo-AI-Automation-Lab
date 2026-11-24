@@ -141,6 +141,18 @@ export class AutomationStore {
     const {disposition:_ignored,deliveredUrl:_ignoredDelivered,hasDelivery:_ignoredHasDelivery,...stored}=site;
     this.db.prepare('INSERT INTO auto_sites VALUES(?,?,?) ON CONFLICT(id) DO UPDATE SET json=excluded.json').run(site.id,site.resourceId,JSON.stringify(stored));
   }
+  switchTaskEnvironmentOnCloneFallback(task: AutomationTask, abandonedLocalSiteId?: string | null): boolean {
+    return this.db.transaction(() => {
+      if (abandonedLocalSiteId) {
+        const shared = this.siteTasks(abandonedLocalSiteId).some(t => t.id !== task.id);
+        if (shared) return false;
+        this.db.prepare('DELETE FROM auto_sites WHERE id=?').run(abandonedLocalSiteId);
+        this.db.prepare('DELETE FROM auto_site_state WHERE site_id=?').run(abandonedLocalSiteId);
+      }
+      this.put(task);
+      return true;
+    });
+  }
   rules() { return this.all<AutomationRule>('auto_rules').sort((a,b)=>a.createdAt-b.createdAt); }
   publish(input: Omit<AutomationRule,'id'|'createdAt'|'hash'>): AutomationRule {
     const rule = { ...input, id: randomUUID(), createdAt: Date.now(), hash: createHash('sha256').update(JSON.stringify(input)).digest('hex') };
@@ -250,7 +262,7 @@ export class AutomationStore {
   }
   event(id: string, message: string) { this.db.prepare('INSERT INTO auto_events(task_id,time,message) VALUES(?,?,?)').run(id,Date.now(),this.redact(message).slice(0,16000)); }
   events(id: string) { return this.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq').all(id); }
-  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; siteName?: string; subDomain?: string; rootDomain?: string; defaultRootDomain?: string; defaultAutoDelivery?: boolean; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule; optimization?: Partial<OptimizationPolicy>; optimizationRootId?: string; optimizationRound?: number; autoDelivery?: boolean }, settings: AutomationSettings) {
+  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; siteName?: string; subDomain?: string; rootDomain?: string; defaultRootDomain?: string; defaultAutoDelivery?: boolean; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule; optimization?: Partial<OptimizationPolicy>; optimizationRootId?: string; optimizationRound?: number; autoDelivery?: boolean; skipSourceTransfer?: boolean; fallbackToMaterialsOnCloneFailure?: boolean }, settings: AutomationSettings) {
     return this.db.transaction(() => input.resourceIds.map(id => {
       const resource = this.resource(id); if (!resource) throw new Conflict('资源不存在');
       const version = input.versionId ? this.version(input.versionId) : this.versions(id)[0];
@@ -267,21 +279,28 @@ export class AutomationStore {
       if (input.kind==='evaluation' && !rule) throw new Conflict('没有适用于当前场景的已发布规则');
       if (input.autoDelivery === true && input.kind === 'generation' && !rule) throw new Conflict('开启自动跨环境交付需要适用的已发布评测规则');
       const templateMode = effectiveTemplateUsageMode(version, Boolean(site));
+      const effectiveSkipSourceTransfer = input.kind === 'generation' && version.scenario === 'upgrade' && Boolean(input.skipSourceTransfer);
+      const effectiveFallbackToMaterials = input.kind === 'generation' && version.scenario === 'upgrade' && !effectiveSkipSourceTransfer && Boolean(input.fallbackToMaterialsOnCloneFailure);
       const templateOpening =
         site && input.kind === 'generation'
           ? '在已有目标站继续生成，不新建站点。'
           : templateMode === 'direct-template'
             ? version.scenario === 'upgrade'
-              ? '本任务基于所选 Kooboo 原生模板直接建站并升级旧内容站：目标站直接从 Kooboo 模板创建，旧内容站将克隆到只读源站 Sandbox。保留原生模板框架与视觉体系，只做内容、字段与结构迁移替换，严禁把旧站模板/CSS 全盘搬入目标站，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
+              ? effectiveSkipSourceTransfer
+                ? '本任务基于所选 Kooboo 原生模板直接建站并升级旧内容站（已配置跳过原站克隆）：目标站直接从 Kooboo 模板创建，不克隆原内容站 Sandbox，请直接以已导入的资料包作为业务事实来源，保留原生模板框架与视觉体系完成内容与结构替换，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
+                : '本任务基于所选 Kooboo 原生模板直接建站并升级旧内容站：目标站直接从 Kooboo 模板创建，旧内容站将克隆到只读源站 Sandbox。保留原生模板框架与视觉体系，只做内容、字段与结构迁移替换，严禁把旧站模板/CSS 全盘搬入目标站，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
               : '本任务基于所选 Kooboo 原生模板建站：目标站直接从 Kooboo 模板创建。遵循 kooboo-coding 与 kooboo-site-redesign 的模板原位适配规范，保留原生模板语法、布局结构与资源组织，在原位完成内容替换、品牌重设与动态数据结构对齐，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
             : templateMode === 'reference-sandbox'
               ? `${settings.prompts[version.scenario]}\n\n参考模板已预先导入隔离研究 Sandbox（tpl-*），请优先复用该 Sandbox 中的原生 Kooboo 对象与结构研究，不要再对参考站运行 transfer_page。`
               : settings.prompts[version.scenario];
+      const skipCloneLine = effectiveSkipSourceTransfer
+        ? '\n已显式配置跳过原站克隆：本次不从原内容站抓取页面，请直接以已导入的资料包作为业务事实来源，结合参考站视觉设计完成构建，不要对原内容站运行 transfer_page。'
+        : '';
       const templateLine = version.referenceTemplateId
         ? `\nKooboo 参考模板：${version.referenceTemplateName || version.referenceTemplateId}（${version.referenceTemplateId}）；使用方式：${templateMode === 'reference-sandbox' ? '克隆到参考 Sandbox 供参考' : '直接作为目标站基础模板并原位适配'}`
         : '';
       const resolvedRef = effectiveReferenceUrl(version) || version.contentUrl || '未提供';
-      const message = [templateOpening, `本次范围：${input.scope==='homepage'?'仅首页，其他页面不属于本次交付范围。':'全站，按资料和用户目标完成全部范围。'}`, `内容站：${version.contentUrl||'未提供'}\n参考站：${resolvedRef}${templateLine}`, '资料说明（作为业务内容）：\n'+version.description, version.files.length?'资料清单：\n'+version.files.map(f=>f.name).join('\n'):'', input.requirements?'补充要求：\n'+input.requirements:'', '尽量一次自主完成，不反复询问。确实阻塞时说明已完成工作和需要的输入。'].filter(Boolean).join('\n\n');
+      const message = [templateOpening, `本次范围：${input.scope==='homepage'?'仅首页，其他页面不属于本次交付范围。':'全站，按资料和用户目标完成全部范围。'}`, `内容站：${version.contentUrl||'未提供'}\n参考站：${resolvedRef}${templateLine}${skipCloneLine}`, '资料说明（作为业务内容）：\n'+version.description, version.files.length?'资料清单：\n'+version.files.map(f=>f.name).join('\n'):'', input.requirements?'补充要求：\n'+input.requirements:'', '尽量一次自主完成，不反复询问。确实阻塞时说明已完成工作和需要的输入。'].filter(Boolean).join('\n\n');
       const now = Date.now();
       const task: AutomationTask = { id:randomUUID(),kind:input.kind,resourceId:id,versionId:version.id,resourceName:version.name,scenario:version.scenario,scope:input.scope,environmentId:site?.environmentId||input.environmentId,generatedSiteId:site?.id||null,parentId:input.parentId||null,message,status:'queued',stopped:true,createdAt:now,updatedAt:now,error:'',context:'',threadId:'',rule:rule||null,stage:input.kind==='generation'?'prepare':'evaluation',report:null,siteUrl:site?.url||'',model:null };
       task.optimizationRootId=input.optimizationRootId;task.optimizationRound=input.optimizationRound;
@@ -291,7 +310,21 @@ export class AutomationStore {
           if(value!==undefined){const error=siteNamingError(value,label);if(error)throw new Conflict(`${resource.name}：${error}`);}
         }
         const rootDomain=input.rootDomain||version.rootDomain||input.defaultRootDomain;
-        if(siteName||subDomain||rootDomain)task.generation={...(siteName?{siteName}:{}),...(subDomain?{subDomain}:{}),...(rootDomain?{rootDomain}:{})};
+        if(siteName||subDomain||rootDomain||effectiveSkipSourceTransfer||effectiveFallbackToMaterials){
+          task.generation={
+            ...(siteName?{siteName}:{}),
+            ...(subDomain?{subDomain}:{}),
+            ...(rootDomain?{rootDomain}:{}),
+            ...(effectiveSkipSourceTransfer?{skipSourceTransfer:true}:{}),
+            ...(effectiveFallbackToMaterials?{fallbackToMaterialsOnCloneFailure:true}:{}),
+          };
+        }
+      }else if(site&&input.kind==='generation'&&(effectiveSkipSourceTransfer||effectiveFallbackToMaterials)){
+        task.generation={
+          ...(task.generation||{}),
+          ...(effectiveSkipSourceTransfer?{skipSourceTransfer:true}:{}),
+          ...(effectiveFallbackToMaterials?{fallbackToMaterialsOnCloneFailure:true}:{}),
+        };
       }
       const parent=input.parentId?this.task(input.parentId):undefined;
       if (input.autoDelivery !== undefined) task.autoDelivery = input.autoDelivery;

@@ -97,6 +97,7 @@ export const settingsSchema = z
       .array(
         environmentConnectionSchema.extend({
           defaultRootDomain: z.union([z.literal(''), rootDomainSchema]).optional(),
+          cloneFallbackEnvironmentId: z.union([z.literal(''), z.string().uuid()]).optional(),
           token: z.string().max(10000).optional(),
           clearToken: z.boolean().optional(),
           delivery:z.object({enabled:z.boolean(),endpoint:webUrl,auto:z.boolean(),requirePassed:z.boolean(),timeoutSeconds:z.number().int().min(30).max(900),token:z.string().max(10000).optional(),clearToken:z.boolean().optional()}).optional(),
@@ -111,6 +112,36 @@ export const settingsSchema = z
       new Set(settings.environments.map((env) => env.id)).size !== settings.environments.length
     ) {
       context.addIssue({ code: 'custom', message: '环境地址和标识不能重复' });
+    }
+    const envIds = new Set(settings.environments.map((env) => env.id));
+    const fallbackMap = new Map<string, string>();
+    for (const env of settings.environments) {
+      const targetId = env.cloneFallbackEnvironmentId;
+      if (!targetId) continue;
+      if (targetId === env.id) {
+        context.addIssue({ code: 'custom', message: '克隆失败回退环境不能指向当前环境自身' });
+      } else if (!envIds.has(targetId)) {
+        context.addIssue({ code: 'custom', message: '所选克隆失败回退环境不存在' });
+      } else {
+        fallbackMap.set(env.id, targetId);
+      }
+    }
+    for (const startId of fallbackMap.keys()) {
+      const visited = new Set<string>([startId]);
+      let cur = fallbackMap.get(startId);
+      let hasCycle = false;
+      while (cur) {
+        if (visited.has(cur)) {
+          hasCycle = true;
+          break;
+        }
+        visited.add(cur);
+        cur = fallbackMap.get(cur);
+      }
+      if (hasCycle) {
+        context.addIssue({ code: 'custom', message: '克隆失败回退环境配置存在循环引用' });
+        break;
+      }
     }
     if (
       settings.model.endpoint &&

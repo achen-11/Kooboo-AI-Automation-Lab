@@ -57,7 +57,7 @@ export class Vault {
     const input = settingsSchema.parse(settings);
     if (!credentials || ![credentials.ingestToken, credentials.readToken].every(token => typeof token === 'string' && token.length >= 32 && token.length < 201)) throw new Error('迁移令牌不合法');
     if (this.current.model.endpoint || this.current.environments.length) throw new Error('目标已有配置，不能覆盖');
-    this.current = { ...input, model: { endpoint: input.model.endpoint, name: input.model.name, apiKey: input.model.apiKey || '' }, environments: input.environments.map(env => ({ id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin, token: env.token || '',defaultRootDomain:env.defaultRootDomain,...(env.delivery?{delivery:{...env.delivery,token:env.delivery.token||''}}:{}) })) };
+    this.current = { ...input, model: { endpoint: input.model.endpoint, name: input.model.name, apiKey: input.model.apiKey || '' }, environments: input.environments.map(env => ({ id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin, token: env.token || '',defaultRootDomain:env.defaultRootDomain,...(env.cloneFallbackEnvironmentId?{cloneFallbackEnvironmentId:env.cloneFallbackEnvironmentId}:{}),...(env.delivery?{delivery:{...env.delivery,token:env.delivery.token||''}}:{}) })) };
     Object.assign(this.credentials, credentials);
     this.persist();
   }
@@ -69,12 +69,19 @@ export class Vault {
       updateSource: this.current.updateSource,
       threshold: input.threshold, paused: input.paused, execution: input.execution,
       model: { endpoint: input.model.endpoint.replace(/\/$/, ''), name: input.model.name, apiKey: input.model.clearKey ? '' : input.model.apiKey || this.current.model.apiKey },
-      environments: input.environments.map((env) => ({
-        id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin,
-        defaultRootDomain: env.defaultRootDomain ?? this.current.environments.find(old => old.id === env.id)?.defaultRootDomain,
-        ...(env.delivery?{delivery:{enabled:env.delivery.enabled,endpoint:env.delivery.endpoint,auto:env.delivery.auto,requirePassed:env.delivery.requirePassed,timeoutSeconds:env.delivery.timeoutSeconds,token:env.delivery.clearToken?'':env.delivery.token||this.current.environments.find(old=>old.id===env.id)?.delivery?.token||''}}:(this.current.environments.find(old=>old.id===env.id)?.delivery?{delivery:this.current.environments.find(old=>old.id===env.id)!.delivery}:{})),
-        token: env.clearToken ? '' : env.token || this.current.environments.find((old) => old.id === env.id)?.token || '',
-      })),
+      environments: input.environments.map((env) => {
+        const prev = this.current.environments.find(old => old.id === env.id);
+        const nextFallback = env.cloneFallbackEnvironmentId === undefined
+          ? prev?.cloneFallbackEnvironmentId
+          : (env.cloneFallbackEnvironmentId || undefined);
+        return {
+          id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin,
+          defaultRootDomain: env.defaultRootDomain ?? prev?.defaultRootDomain,
+          ...(nextFallback ? { cloneFallbackEnvironmentId: nextFallback } : {}),
+          ...(env.delivery?{delivery:{enabled:env.delivery.enabled,endpoint:env.delivery.endpoint,auto:env.delivery.auto,requirePassed:env.delivery.requirePassed,timeoutSeconds:env.delivery.timeoutSeconds,token:env.delivery.clearToken?'':env.delivery.token||prev?.delivery?.token||''}}:(prev?.delivery?{delivery:prev.delivery}:{})),
+          token: env.clearToken ? '' : env.token || prev?.token || '',
+        };
+      }),
     };
     this.persist();
     return this.public();

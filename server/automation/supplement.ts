@@ -260,6 +260,8 @@ export async function applySupplementBatch(params: {
     delete task.generation.transferTaskId;
     delete task.generation.transferComplete;
     delete task.generation.transferFallbackAttempted;
+    delete task.generation.attemptedEnvironmentIds;
+    delete task.generation.cloneEnvironmentFallback;
     delete task.generation.skipSourceTransfer;
   }
   const currentReferenceUrl = task.generation.overrideReferenceUrl?.trim() || version?.referenceUrl || '';

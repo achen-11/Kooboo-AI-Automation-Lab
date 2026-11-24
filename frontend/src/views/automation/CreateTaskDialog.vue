@@ -18,6 +18,7 @@ const requestId=ref(crypto.randomUUID());
 const rootDomain=ref(''),rootDomainReady=ref(false);
 const siteName=ref(''),subDomain=ref('');
 const autoDelivery=ref(false),savingDeliveryPref=ref(false);
+const skipSourceTransfer=ref(false),fallbackToMaterialsOnCloneFailure=ref(false);
 const dialogOpen=ref(false),capabilities=ref<KoobooSandboxCapabilities|null>(null),capabilitiesLoading=ref(false);
 let capRevision=0;
 const resourceRoots=computed(()=>props.resources.some(resource=>!!resource.rootDomain));
@@ -29,6 +30,10 @@ function initialAutoDelivery(id:string){
 }
 const targetEnvId=computed(()=>props.site?.environmentId||environmentId.value);
 const selectedEnvironment=computed(()=>platform.settings?.environments.find(env=>env.id===targetEnvId.value));
+const cloneFallbackEnvironment=computed(()=>{
+  const fallbackId=selectedEnvironment.value?.cloneFallbackEnvironmentId;
+  return fallbackId?platform.settings?.environments.find(env=>env.id===fallbackId):undefined;
+});
 const envDelivery=computed(()=>selectedEnvironment.value?.delivery);
 const siteAlreadyDelivered=computed(()=>Boolean(props.site?.hasDelivery));
 const canAutoDeliver=computed(()=>Boolean(envDelivery.value?.enabled&&envDelivery.value?.hasToken&&!siteAlreadyDelivered.value));
@@ -38,6 +43,8 @@ const completionFirst=computed(()=>!props.site&&scope.value==='site'&&props.reso
 watch(completionFirst,value=>{if(value)maxRounds.value='';else if(maxRounds.value==='')maxRounds.value=workspace.settings.optimization?.maxRounds||3;});
 const canOptimize=computed(()=>kind.value==='generation'&&props.resources.length>0&&props.resources.every(r=>supportsAutomaticOptimization(r.scenario)));
 const kind=computed(()=>props.kind||'generation');
+const hasUpgradeResources=computed(()=>kind.value==='generation'&&!props.site&&props.resources.some(r=>r.scenario==='upgrade'));
+const upgradeResourcesHaveFiles=computed(()=>props.resources.filter(r=>r.scenario==='upgrade').some(r=>(r.files?.length||0)>0));
 const templateResources=computed(()=>kind.value==='generation'?props.resources.filter(r=>Boolean(r.referenceTemplateId?.trim())):[]);
 async function loadCapabilities(force=false){
   const envId=targetEnvId.value;
@@ -62,9 +69,9 @@ const templateBlockers=computed(()=>{
       continue;
     }
     const mode=effectiveTemplateUsageMode(r,false);
-    const req=requiredKoobooSandboxCapability(r.scenario,mode);
+    const req=requiredKoobooSandboxCapability(r.scenario,mode,skipSourceTransfer.value);
     if(req&&cap[req.key]==='unsupported'){
-      blockers.push(`${r.name}：所选模板模式需要「${req.label}」，但当前 Kooboo 环境暂未升级该接口，建站会被拦截。请将资源参考来源改为外部参考站 URL，或切换已升级环境。`);
+      blockers.push(`${r.name}：所选模板模式需要「${req.label}」，但当前 Kooboo 环境暂未升级该接口，建站会被拦截。请将资源参考来源改为外部参考站 URL，或切换已升级环境，或勾选「跳过原站克隆」。`);
     }
   }
   return blockers;
@@ -82,7 +89,7 @@ const namingErrors=computed(()=>kind.value!=='generation'||props.site?[]:props.r
   });
 }));
 const kindRules=computed(()=>rules.value.filter(r=>r.kind===(props.resources[0]?.scenario==='app-template'?'app':'site')&&(!r.scenarios||r.scenarios.includes(props.resources[0]!.scenario))&&r.criteria.some(c=>c.scopes.includes(scope.value))));
-async function open(options?:{scope?:Scope}){optimize.value=canOptimize.value?'yes':'no';targetScore.value=workspace.settings.optimization?.targetScore||85;maxRounds.value=workspace.settings.optimization?.maxRounds||3;maxCostCny.value=workspace.settings.optimization?.maxCostCny??'';requestId.value=crypto.randomUUID();error.value='';preview.value=false;capabilities.value=null;scope.value=options?.scope??(props.resources[0]?.scenario.includes('template')?'site':'homepage');if(completionFirst.value)maxRounds.value='';requirements.value='';environmentId.value=props.site?.environmentId||platform.settings?.environments[0]?.id||'';rootDomain.value=initialRoot(environmentId.value);rootDomainReady.value=false;autoDelivery.value=initialAutoDelivery(environmentId.value);siteName.value=props.resources.length===1?props.resources[0]?.siteName||'':'';subDomain.value=props.resources.length===1?props.resources[0]?.subDomain||'':'';ruleId.value='';dialogOpen.value=true;dialog.value?.showModal();try{rules.value=(await api<{items:AutomationRule[]}>('/automation/rules')).items;}catch(e){error.value=message(e);}}
+async function open(options?:{scope?:Scope}){optimize.value=canOptimize.value?'yes':'no';targetScore.value=workspace.settings.optimization?.targetScore||85;maxRounds.value=workspace.settings.optimization?.maxRounds||3;maxCostCny.value=workspace.settings.optimization?.maxCostCny??'';requestId.value=crypto.randomUUID();error.value='';preview.value=false;capabilities.value=null;scope.value=options?.scope??(props.resources[0]?.scenario.includes('template')?'site':'homepage');if(completionFirst.value)maxRounds.value='';requirements.value='';environmentId.value=props.site?.environmentId||platform.settings?.environments[0]?.id||'';rootDomain.value=initialRoot(environmentId.value);rootDomainReady.value=false;autoDelivery.value=initialAutoDelivery(environmentId.value);skipSourceTransfer.value=false;fallbackToMaterialsOnCloneFailure.value=false;siteName.value=props.resources.length===1?props.resources[0]?.siteName||'':'';subDomain.value=props.resources.length===1?props.resources[0]?.subDomain||'':'';ruleId.value='';dialogOpen.value=true;dialog.value?.showModal();try{rules.value=(await api<{items:AutomationRule[]}>('/automation/rules')).items;}catch(e){error.value=message(e);}}
 async function saveDeliveryPreference(){
   const env=selectedEnvironment.value;
   if(!env||savingDeliveryPref.value||busy.value)return;
@@ -92,7 +99,7 @@ async function saveDeliveryPreference(){
     notify.success(autoDelivery.value?'已设为该环境默认开启自动交付':'已设为该环境默认关闭自动交付');
   }catch(e){error.value=message(e);}finally{savingDeliveryPref.value=false;}
 }
-async function submit(){busy.value=true;error.value='';try{if(namingErrors.value.length)throw new Error(namingErrors.value[0]!.message);if(templateBlockers.value.length)throw new Error(templateBlockers.value[0]!);if(kind.value==='generation'&&!props.site&&!rootDomainReady.value)throw new Error('请先选择可用的建站根域名');const newSite=kind.value==='generation'&&!props.site;const result=await api<{items:{id:string}[]}>('/automation/tasks',{method:'POST',headers:{'Idempotency-Key':requestId.value},body:JSON.stringify({resourceIds:props.resources.map(r=>r.id),kind:kind.value,scope:scope.value,environmentId:environmentId.value,rootDomain:newSite?rootDomain.value||undefined:undefined,siteName:newSite&&props.resources.length===1?siteName.value.trim()||undefined:undefined,subDomain:newSite&&props.resources.length===1?subDomain.value.trim()||undefined:undefined,requirements:requirements.value,generatedSiteId:props.site?.id,ruleId:ruleId.value||undefined,autoDelivery:envDelivery.value?.enabled&&!siteAlreadyDelivered.value?(canAutoDeliver.value?autoDelivery.value:false):undefined,optimization:canOptimize.value&&optimize.value==='yes'?{targetScore:targetScore.value,maxRounds:maxRounds.value===''?undefined:Number(maxRounds.value),maxCostCny:maxCostCny.value===''?null:Number(maxCostCny.value)}:undefined})});dialog.value?.close();await refresh();emit('created');go(result.items.length===1?`/tasks/${result.items[0].id}`:'/tasks');}catch(e){error.value=message(e);}finally{busy.value=false;}}
+async function submit(){busy.value=true;error.value='';try{if(namingErrors.value.length)throw new Error(namingErrors.value[0]!.message);if(templateBlockers.value.length)throw new Error(templateBlockers.value[0]!);if(kind.value==='generation'&&!props.site&&!rootDomainReady.value)throw new Error('请先选择可用的建站根域名');const newSite=kind.value==='generation'&&!props.site;const result=await api<{items:{id:string}[]}>('/automation/tasks',{method:'POST',headers:{'Idempotency-Key':requestId.value},body:JSON.stringify({resourceIds:props.resources.map(r=>r.id),kind:kind.value,scope:scope.value,environmentId:environmentId.value,rootDomain:newSite?rootDomain.value||undefined:undefined,siteName:newSite&&props.resources.length===1?siteName.value.trim()||undefined:undefined,subDomain:newSite&&props.resources.length===1?subDomain.value.trim()||undefined:undefined,requirements:requirements.value,generatedSiteId:props.site?.id,ruleId:ruleId.value||undefined,autoDelivery:envDelivery.value?.enabled&&!siteAlreadyDelivered.value?(canAutoDeliver.value?autoDelivery.value:false):undefined,skipSourceTransfer:hasUpgradeResources.value&&skipSourceTransfer.value?true:undefined,fallbackToMaterialsOnCloneFailure:hasUpgradeResources.value&&!skipSourceTransfer.value&&fallbackToMaterialsOnCloneFailure.value?true:undefined,optimization:canOptimize.value&&optimize.value==='yes'?{targetScore:targetScore.value,maxRounds:maxRounds.value===''?undefined:Number(maxRounds.value),maxCostCny:maxCostCny.value===''?null:Number(maxCostCny.value)}:undefined})});dialog.value?.close();await refresh();emit('created');go(result.items.length===1?`/tasks/${result.items[0].id}`:'/tasks');}catch(e){error.value=message(e);}finally{busy.value=false;}}
 const messages=computed(()=>props.resources.map(resource=>({name:resource.name,text:[props.site?'在已有目标站继续生成，不新建站点。':workspace.settings.prompts[resource.scenario],`本次范围：${scope.value==='homepage'?'仅首页，其他页面不属于本次交付范围。':'全站，按资料和用户目标完成全部范围。'}`,`内容站：${resource.contentUrl||'未提供'}\n参考站：${resource.referenceUrl||resource.contentUrl||'未提供'}`,'资料说明（作为业务内容）：\n'+resource.description,requirements.value?'补充要求：\n'+requirements.value:'','尽量一次自主完成，不反复询问。确实阻塞时说明已完成工作和需要的输入。'].filter(Boolean).join('\n\n')})));
 defineExpose({open});
 </script>
@@ -104,6 +111,16 @@ defineExpose({open});
 <label class="field"><span>{{kind==='evaluation'?'评测':'生成'}}范围</span><BaseSelect v-model="scope" :options="[{ value: 'homepage', label: '仅首页' }, { value: 'site', label: '全站' }]" /></label>
 <template v-if="canOptimize"><label class="field"><span>执行目标</span><BaseSelect v-model="optimize" :options="[{value:'no',label:'生成并评测'},{value:'yes',label:'自动优化到目标'}]" /></label><div v-if="optimize==='yes'" class="form-grid three-columns"><label class="field"><span>双端目标分数</span><input v-model.number="targetScore" class="input" type="number" min="1" max="100" required /></label><label class="field"><span>最多修复轮数{{completionFirst?'（可选）':''}}</span><input v-model.number="maxRounds" class="input" type="number" min="1" max="10" :required="!completionFirst" :placeholder="completionFirst?'持续至质量达标':''" /></label><label class="field"><span>费用上限（元，可选）</span><input v-model.number="maxCostCny" class="input" type="number" min="0.0001" step="any" placeholder="不设置" /></label></div></template>
 <label v-if="kind==='evaluation'||optimize==='yes'&&canOptimize" class="field"><span>评测规则</span><BaseSelect v-model="ruleId" :options="[{ value: '', label: '最近发布的适用规则' }, ...kindRules.map((rule) => ({ value: rule.id, label: (rule.name) + ' · ' + (rule.hash.slice(0,8)) }))]" /></label>
+<div v-if="hasUpgradeResources" class="delivery-option-card">
+  <label class="check-label"><input v-model="skipSourceTransfer" type="checkbox" :disabled="busy" />跳过原站克隆（直接用资料包建站）</label>
+  <p v-if="skipSourceTransfer" class="text-muted small-text">已显式跳过原站克隆：不抓取原内容站页面，也不触发跨环境回退路由；直接在所选环境建站并导入资料包生成。</p>
+  <p v-else-if="cloneFallbackEnvironment" class="text-muted small-text">默认优先在「{{ selectedEnvironment?.name || '当前环境' }}」克隆原站；若导入 0 页将自动路由至回退环境「{{ cloneFallbackEnvironment.name }}」重试克隆。</p>
+  <p v-else class="text-muted small-text">默认优先在当前环境克隆原内容站（含 1 次单页降级重试）。</p>
+  <template v-if="!skipSourceTransfer && upgradeResourcesHaveFiles">
+    <label class="check-label"><input v-model="fallbackToMaterialsOnCloneFailure" type="checkbox" :disabled="busy" />克隆失败（0 页）时自动降级为跳过原站克隆并用资料包继续</label>
+    <p class="text-muted small-text">开启后，若原环境{{ cloneFallbackEnvironment ? `及回退环境「${cloneFallbackEnvironment.name}」` : '' }}均无法抓到原站页面（0 页），不中断停机，自动改用随附资料包继续生成。</p>
+  </template>
+</div>
 <div v-if="envDelivery?.enabled" class="delivery-option-card">
   <template v-if="siteAlreadyDelivered">
     <div class="delivery-option-row">

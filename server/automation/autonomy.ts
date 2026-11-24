@@ -20,7 +20,7 @@ export function isModelBillingOrAuthError(error: unknown) {
 }
 
 const CONFIRMED_CLONE_FAILURE_TEXT_PATTERN =
-  /内容站克隆完成但导入\s*0\s*页|旧内容站\s*Sandbox\s*克隆完成但导入\s*0\s*页|已重试后仍无法获取源站页面|内容站克隆未返回任务标识.*已重试|只读源站\s*Sandbox\s*未返回有效标识.*已重试/i;
+  /内容站克隆完成但导入\s*0\s*页|旧内容站\s*Sandbox\s*克隆完成但导入\s*0\s*页|(?:原环境与回退环境|已)重试后仍无法获取源站页面|内容站克隆未返回任务标识.*已重试|只读源站\s*Sandbox\s*未返回有效标识.*已重试/i;
 
 const PREPARE_CLONE_FAILURE_SIGNAL_PATTERN =
   /内容站克隆|旧内容站.*Sandbox.*克隆|只读源站\s*Sandbox|Transfer\/(?:ByLevel|Single|GetStatus|GetTaskStatus)|AISandbox\/TransferByLevel|pages\s*=\s*0|导入\s*0\s*页|0\/1\s*页|无法从原网站抓取到页面/i;

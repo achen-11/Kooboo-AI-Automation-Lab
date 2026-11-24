@@ -33,6 +33,7 @@ import { registerCollectionApi } from './collection/api.js';
 import { CollectionStore } from './collection/store.js';
 import { ManifestStore, manifestInput } from './completeness.js';
 import { preflightCollectionTarget } from './collection/target-verification.js';
+import { resolveCloneFallbackEnvironment } from './generator.js';
 import { registerResourceFolderApi } from './resource-folders.js';
 import { registerDispositionApi } from './dispositions.js';
 import { registerCheckerChecksApi } from './checker-checks.js';
@@ -79,9 +80,10 @@ const prompt=z.string().min(1).max(30000);
 const followupInput=z.object({enabled:z.boolean(),concurrency:z.number().int().min(1).max(3),maxAttempts:z.number().int().min(1).max(20),maxMinutes:z.number().int().min(1).max(120),maxTokens:z.number().int().min(1000).max(1000000000),maxRequests:z.number().int().min(1).max(1000).optional(),sop:z.string().trim().min(1).max(50000)});
 const optimizationInput=z.object({targetScore:z.number().min(1).max(100),maxRounds:z.number().int().min(1).max(10),maxCostCny:z.number().positive().max(1000000).nullable()});
 const settingsInput=z.object({showExecutionBrowser:z.boolean().optional(),completeness:completenessSettingsSchema.optional(),learning:learningSettingsSchema.optional(),optimization:optimizationInput.extend({sop:z.string().trim().min(1).max(50000)}).optional(),followup:followupInput.default(defaultFollowupSettings),enabled:z.boolean(),autoEvaluate:z.boolean().default(true),generationConcurrency:z.number().int().min(1).max(10),evaluationConcurrency:z.number().int().min(1).max(5),timeoutMinutes:z.number().int().min(1).max(240),evaluationModel:z.string().trim().min(1).max(100),evaluationEndpoint:url,prompts:z.object({materials:prompt,migration:prompt,upgrade:prompt,'site-template':prompt,'app-template':prompt})});
-const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional(),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),autoDelivery:z.boolean().optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
+const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional(),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),autoDelivery:z.boolean().optional(),skipSourceTransfer:z.boolean().optional(),fallbackToMaterialsOnCloneFailure:z.boolean().optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
   if(input.rootDomain&&(input.kind!=='generation'||input.generatedSiteId))ctx.addIssue({code:'custom',message:'根域名仅用于新建生成站，已有站点沿用原域名',path:['rootDomain']});
   if((input.siteName||input.subDomain)&&(input.kind!=='generation'||input.generatedSiteId||input.resourceIds.length!==1))ctx.addIssue({code:'custom',message:'自定义站点名和子域名仅用于单资源新建生成站；批量任务请在各资源中分别指定',path:['subDomain']});
+  if((input.skipSourceTransfer||input.fallbackToMaterialsOnCloneFailure)&&input.kind!=='generation')ctx.addIssue({code:'custom',message:'跳过原站克隆配置仅适用于生成任务',path:['skipSourceTransfer']});
   if(input.collectionManifestId&&!input.collectionSnapshotId)ctx.addIssue({code:'custom',message:'选择来源清单必须同时指定冻结采集快照'});
   if(input.collectionSnapshotId&&(input.kind!=='generation'||input.scope!=='site'||input.resourceIds.length!==1||input.generatedSiteId||input.parentId))ctx.addIssue({code:'custom',message:'冻结快照复用仅支持单资源全站的新建生成任务，不可关联已有站点或父任务'});
 });
@@ -242,7 +244,10 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const preCreateCollection=Boolean(task.autonomy&&!task.generatedSiteId&&task.collectionId);
       const prePrepareTemplate=Boolean(task.templateWorkflow)&&task.scenario==='site-template'&&task.kind==='generation'&&task.stage==='prepare'&&!task.generatedSiteId&&!task.generation?.createAttempted&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted;
       const preTransferUpgrade=Boolean(task.kind==='generation'&&task.scenario==='upgrade'&&!task.generation?.prepared&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!wasCancelled&&(!task.generation?.transferComplete||task.generation?.transferFallbackAttempted||task.interruption?.userSummary?.category==='source-access'));
-      if(task.generation?.transferFallbackAttempted)delete task.generation.transferFallbackAttempted;
+      const exclusiveSiteOwner=!task.generatedSiteId||store.siteTasks(task.generatedSiteId).every(t=>t.id===task.id);
+      const fallbackCandidate=preTransferUpgrade&&exclusiveSiteOwner?resolveCloneFallbackEnvironment(task,vault).fallbackEnv:undefined;
+      const preserveTransferFallbackForEnvSwitch=Boolean(preTransferUpgrade&&fallbackCandidate&&task.generation?.transferFallbackAttempted&&(task.generation?.transferTaskId||task.generation?.sourceSandbox?.transferTaskId));
+      if(task.generation?.transferFallbackAttempted&&!preserveTransferFallbackForEnvSwitch)delete task.generation.transferFallbackAttempted;
       const hadFailedRefPreflight=task.generation?.referencePreflight?.status==='failed';
       if(hadFailedRefPreflight)delete task.generation!.referencePreflight;
       const preReferencePreflight=Boolean(hadFailedRefPreflight&&task.kind==='generation'&&!task.generation?.deliveryId&&!task.generation?.legacySubmitted&&!wasCancelled);
@@ -267,7 +272,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
           delete task.followup.manualResume;
         }
         clearSiteRetry(task,store);
-        store.put(task);store.event(id,hadFailedRefPreflight?'已清理参考站预检失败标记，按原输入重新排队并执行参考站可达性预检。':preTransferUpgrade?'已清理源站克隆失败标记，按当前站点/Sandbox 状态重新检查并恢复执行。':prePrepareTemplate?'按原固定输入与已采集证据直接恢复模板分析准备；保留累计用量。':neverStartedGeneration?'重新启动已取消的未建站任务，按原固定输入与规则排队执行。':'尚未尝试建站，按原固定输入与规则直接重新排队准备建站。');return task;
+        store.put(task);store.event(id,hadFailedRefPreflight?'已清理参考站预检失败标记，按原输入重新排队并执行参考站可达性预检。':preTransferUpgrade?(preserveTransferFallbackForEnvSwitch?`已恢复任务；将先核对当前站点是否已手动导入页面，若仍为 0 页将自动切换至回退环境「${fallbackCandidate!.name}」重新克隆。`:'已清理源站克隆失败标记，按当前站点/Sandbox 状态重新检查并恢复执行。'):prePrepareTemplate?'按原固定输入与已采集证据直接恢复模板分析准备；保留累计用量。':neverStartedGeneration?'重新启动已取消的未建站任务，按原固定输入与规则排队执行。':'尚未尝试建站，按原固定输入与规则直接重新排队准备建站。');return task;
       }
       // The user explicitly resumed a stopped evaluation. No AI decision is
       // needed to decide whether to retry, nor another spent followup window.

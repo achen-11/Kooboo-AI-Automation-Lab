@@ -46,10 +46,11 @@ import {
 
 async function delay(ms:number,signal:AbortSignal){await new Promise<void>((r,j)=>{signal.throwIfAborted();const done=()=>{signal.removeEventListener('abort',abort);r();};const timer=setTimeout(done,ms);const abort=()=>{clearTimeout(timer);signal.removeEventListener('abort',abort);j(signal.reason);};signal.addEventListener('abort',abort,{once:true});});}
 
-function zeroPageTransferError(contentUrl:string,siteId:string,sandboxName?:string){
+function zeroPageTransferError(contentUrl:string,siteId:string|null|undefined,sandboxName?:string,fallbackAttempted?:boolean){
+  const retryScope=fallbackAttempted?'原环境与回退环境重试后仍无法获取源站页面':'已重试后仍无法获取源站页面';
   const techReason=sandboxName
-    ?`旧内容站 Sandbox 克隆完成但导入 0 页（${contentUrl} -> ${sandboxName}），已重试后仍无法获取源站页面`
-    :`内容站克隆完成但导入 0 页（${contentUrl}），已重试后仍无法获取源站页面`;
+    ?`旧内容站 Sandbox 克隆完成但导入 0 页（${contentUrl} -> ${sandboxName}），${retryScope}`
+    :`内容站克隆完成但导入 0 页（${contentUrl}），${retryScope}`;
   const nextSteps=[
     `在浏览器打开 ${contentUrl}，确认原网站可公开访问且未被验证码或登录拦截。`,
     `如原站开启了防抓取限制，可在 Kooboo ${sandboxName?'源站 Sandbox':'目标站'}手动导入页面后，回到此处点击「恢复执行」。`,
@@ -63,6 +64,56 @@ function zeroPageTransferError(contentUrl:string,siteId:string,sandboxName?:stri
     nextSteps,
   });
   return new FollowupRuntimeError(techReason,nextSteps,userSummary);
+}
+
+async function resolveSingleTransferResult(params:{
+  single:any;
+  request:(path:string,body?:unknown,siteId?:string)=>Promise<any>;
+  siteId:string;
+  signal:AbortSignal;
+  onProgress?:(info:{completedPages:number;totalPages:number;elapsedMs:number})=>void;
+}):Promise<TransferWaitResult>{
+  const {single,request,siteId,signal,onProgress}=params;
+  const finished=(single?.finish??single?.Finish)===true;
+  const succeeded=(single?.success??single?.Success)===true;
+  const failed=(single?.success??single?.Success)===false;
+  if(finished&&failed){
+    const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
+    return {pages:Number(summary?.pages||0),done:true};
+  }
+  if(finished&&succeeded){
+    const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
+    const pages=Number(summary?.pages||0);
+    if(pages>0)return {pages,done:true};
+  }
+  const taskId=String(single?.taskId??single?.TaskId??'').trim();
+  if(taskId){
+    return await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:false,onProgress});
+  }
+  const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
+  return {pages:Number(summary?.pages||0),done:summary?.done!==false};
+}
+
+export interface CloneFallbackCandidate{
+  currentEnv?:ReturnType<Vault['get']>['environments'][number];
+  fallbackEnv?:ReturnType<Vault['get']>['environments'][number];
+  unavailableReason?:string;
+}
+
+export function resolveCloneFallbackEnvironment(
+  task:Pick<AutomationTask,'environmentId'|'generation'>,
+  vault:Vault,
+):CloneFallbackCandidate{
+  const environments=vault.get().environments;
+  const currentEnv=environments.find(env=>env.id===task.environmentId);
+  const fallbackId=currentEnv?.cloneFallbackEnvironmentId?.trim();
+  if(!fallbackId||fallbackId===task.environmentId)return {currentEnv};
+  const attempted=new Set(task.generation?.attemptedEnvironmentIds||[task.environmentId]);
+  if(attempted.has(fallbackId))return {currentEnv};
+  const fallbackEnv=environments.find(env=>env.id===fallbackId);
+  if(!fallbackEnv)return {currentEnv,unavailableReason:'配置的克隆失败回退环境已不存在'};
+  if(!fallbackEnv.token)return {currentEnv,unavailableReason:`回退环境「${fallbackEnv.name}」缺少访问令牌，请先登录连接`};
+  return {currentEnv,fallbackEnv};
 }
 
 export interface TransferWaitResult{
@@ -277,7 +328,7 @@ export async function executeGeneration(
   openSession: typeof generationSession = generationSession,
   options?: { preflightReference?: ReferencePreflightFn },
 ) {
-  const hadTransferTaskBeforeRun=Boolean(task.generation?.transferTaskId);
+  let hadTransferTaskBeforeRun=Boolean(task.generation?.transferTaskId);
   const versionInput=store.version(task.versionId);
   if(versionInput?.referenceTemplateId)await resolveTaskReferenceTemplate(task,versionInput,store,vault,signal);
   const templateBaseline=await ensureTemplateAnalysis(task,store,vault,directory,signal);
@@ -298,217 +349,340 @@ export async function executeGeneration(
       throw new GenerationInputError(`原站迁移新建站点需要冻结的来源视觉基线 ${sourceVisualMaterial}，资料版本 ${task.collectionVersionId} 不含该基线。先对来源发起A段修订补采视觉基线，再新建站点；继续生成已有站点不受影响。`);
   }
   const acceptedAssetGuidance=frozenCollectionAssetGapGuidance(task,store,directory);
-  const {environment,origin,request}=koobooClient(task,vault,signal);const apiOrigin=new URL(environment.apiOrigin||origin).origin;
-  // Older executions already submitted a prompt without durable delivery receipts.
-  // Retain their conversation and require explicit AI evidence before another message.
-  if(!task.generation&&task.generatedSiteId&&task.context)task.generation={legacySubmitted:true,prepared:true,conversationId:task.threadId||undefined};
-  task.stage='prepare';task.generation??={};store.put(task);
-  let site=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
-  const shouldPreflightReference =
-    ['upgrade', 'site-template'].includes(task.scenario) &&
-    !task.templateWorkflow &&
-    !input.referenceTemplateId?.trim() &&
-    !task.generation.deliveryId &&
-    !task.generation.legacySubmitted &&
-    !task.generation.allowFreeDesignWithoutReference &&
-    !task.generation.skipReferencePreflight;
-  if (shouldPreflightReference) {
-    const refUrl = (input.referenceUrl || (task.scenario === 'site-template' ? input.contentUrl : '') || '').trim();
-    const cached = task.generation.referencePreflight;
-    if (refUrl && !(cached?.url === refUrl && cached.status === 'passed')) {
-      const check = await (options?.preflightReference || checkReferenceUrlPreflight)(refUrl, signal);
-      task.generation.referencePreflight = {
-        url: refUrl,
-        status: check.ok ? 'passed' : 'failed',
-        ...(check.ok ? {} : { reasonCode: check.reasonCode, detail: check.detail }),
-        checkedAt: Date.now(),
-      };
+  let environment!:ReturnType<typeof koobooClient>['environment'];
+  let origin!:string;
+  let apiOrigin!:string;
+  let request!:ReturnType<typeof koobooClient>['request'];
+  let site:ReturnType<AutomationStore['site']>;
+  let templateRef:NonNullable<AutomationTask['generation']>['referenceTemplate'];
+  while(true){
+    if(versionInput?.referenceTemplateId)await resolveTaskReferenceTemplate(task,versionInput,store,vault,signal);
+    const client=koobooClient(task,vault,signal);
+    environment=client.environment;origin=client.origin;request=client.request;
+    apiOrigin=new URL(environment.apiOrigin||origin).origin;
+    // Older executions already submitted a prompt without durable delivery receipts.
+    // Retain their conversation and require explicit AI evidence before another message.
+    if(!task.generation&&task.generatedSiteId&&task.context)task.generation={legacySubmitted:true,prepared:true,conversationId:task.threadId||undefined};
+    task.stage='prepare';task.generation??={};store.put(task);
+    site=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
+    const shouldPreflightReference =
+      ['upgrade', 'site-template'].includes(task.scenario) &&
+      !task.templateWorkflow &&
+      !input.referenceTemplateId?.trim() &&
+      !task.generation.deliveryId &&
+      !task.generation.legacySubmitted &&
+      !task.generation.allowFreeDesignWithoutReference &&
+      !task.generation.skipReferencePreflight;
+    if (shouldPreflightReference) {
+      const refUrl = (input.referenceUrl || (task.scenario === 'site-template' ? input.contentUrl : '') || '').trim();
+      const cached = task.generation.referencePreflight;
+      if (refUrl && !(cached?.url === refUrl && cached.status === 'passed')) {
+        const check = await (options?.preflightReference || checkReferenceUrlPreflight)(refUrl, signal);
+        task.generation.referencePreflight = {
+          url: refUrl,
+          status: check.ok ? 'passed' : 'failed',
+          ...(check.ok ? {} : { reasonCode: check.reasonCode, detail: check.detail }),
+          checkedAt: Date.now(),
+        };
+        store.put(task);
+        if (!check.ok) {
+          store.event(task.id, `参考站预检失败（${check.reasonCode}）：${refUrl} — ${check.detail}`);
+          throw referencePreflightError(refUrl, check, site?.id);
+        }
+        store.event(
+          task.id,
+          `参考站可达性预检通过（${check.method === 'browser' ? '浏览器渲染' : 'HTTP'} ${check.status}）：${refUrl}`,
+        );
+      }
+    }
+    const precheckRef=task.generation.referenceTemplate;
+    if(precheckRef){
+      const requiredCap=requiredKoobooSandboxCapability(task.scenario,precheckRef.mode,task.generation.skipSourceTransfer);
+      const needsSandboxStep=requiredCap&&(
+        requiredCap.key==='transferByLevel'
+          ?(!task.generation.sourceSandbox?.complete&&!task.generation.prepared)
+          :(!task.generation.referenceTemplateSandbox||task.generation.referenceTemplateSandbox.templateId!==precheckRef.templateId)
+      );
+      if(requiredCap&&needsSandboxStep){
+        const support=await probeKoobooApiMethod({apiOrigin,token:environment.token,path:requiredCap.method,signal});
+        if(support==='unsupported')throw unsupportedKoobooTemplateError(requiredCap,site?.id);
+      }
+    }
+    if(!site){
+      // A pre-upgrade uncertain create must still reconcile the exact old name.
+      let slug=task.generation.siteName||(task.generation.createAttempted?`auto-${task.id.slice(0,12)}`:generatedSiteName(task.id));
+      if(task.generation.createAttempted){
+        const list=await request('Site/List');const matches=(Array.isArray(list)?list:[]).filter((s:any)=>(s.siteName||s.SiteName)===slug);
+        if(matches.length!==1)throw new Pending(`站点 ${slug} 创建结果尚未唯一确认，禁止重复创建；请检查 Kooboo 环境。`);
+        const adopted={id:randomUUID(),resourceId:task.resourceId,versionId:task.versionId,environmentId:task.environmentId,siteId:siteIdentity(matches[0]),name:slug,url:'',createdAt:Date.now()};
+        store.saveSite(adopted);task.generatedSiteId=adopted.id;store.put(task);throw new Pending('已找到并绑定先前创建的站点，将在下一次执行中继续准备；未重复建站。');
+      }
+      const domains=parseRootDomains(await request('Domain/Available'));
+      // Legacy tasks without a choice freeze it before the first creation attempt.
+      const selected=normalizeRootDomain(task.generation.rootDomain||environment.defaultRootDomain||domains[0]?.domainName||'');
+      const rootOption=findRootDomain(domains,selected),root=rootOption?.domainName||selected;
+      if(!root)throw new Error('Kooboo 未返回可用根域名，请核对连接环境');
+      task.generation.rootDomain=rootOption?rootDomainValue(rootOption):root;store.put(task);
+      if(!rootOption)throw new FollowupRuntimeError(`建站根域名 ${root} 在当前 Kooboo 环境中已不可用，请核对环境域名后重试；不会自动改用其他域名。`,['在原 Kooboo 环境恢复所选根域名后重试；或停止本任务，选择可用根域名新建任务。']);
+      let subDomain=task.generation.subDomain||slug;
+      assertSiteNaming(slug,subDomain,rootOption);
+      if(task.generation.subDomain||task.generation.siteName){
+        const selected=await availableSiteNames(slug,subDomain,rootOption,request);
+        if(selected.siteName!==slug||selected.subDomain!==subDomain)
+          store.event(task.id,`名称已占用，自动调整：站点名称 ${slug} → ${selected.siteName}；子域名 ${subDomain} → ${selected.subDomain}`);
+        slug=selected.siteName;subDomain=selected.subDomain;
+      }
+      store.event(task.id,`准备新站 ${slug}；根域名 ${root}；创建结果不确定时停止，不自动重发创建请求`);
+      let created:any;task.generation.siteName=slug;task.generation.subDomain=subDomain;task.generation.createAttempted=true;store.put(task);
+      const currentTemplateRef=task.generation.referenceTemplate;
+      const directTemplate=currentTemplateRef?.mode==='direct-template';
+      try{
+        created=directTemplate
+          ?await request('Template/Use',{SiteName:slug,RootDomain:root,SubDomain:subDomain,id:currentTemplateRef!.templateId})
+          :task.scenario==='upgrade'&&!task.generation.skipSourceTransfer
+            ?await request('Transfer/ByLevel',{siteName:slug,subDomain,rootDomain:root,url:input.contentUrl,headless:false,convertToRoot:false,TotalPages:20,Depth:2})
+            :await request('Site/Create',{SiteName:slug,SubDomain:subDomain,RootDomain:root,SiteType:'p'});
+      }catch(err:any){
+        const detail=err instanceof Error?err.message:String(err||'请求异常');
+        store.event(task.id,`建站请求异常（${slug}）：${detail}`);
+        throw new Pending(`新站 ${slug} 创建结果未确认（${detail}），请在 Kooboo 检查后将实际站点关联到此资源，禁止自动重复建站。`);
+      }
+      const siteId=siteIdentity(created);
+      if(!/^[a-f0-9-]{36}$/i.test(siteId)||/^00000000-0000-0000-0000-000000000000$/i.test(siteId))throw new Pending(`新站 ${slug} 未返回有效身份，请检查 Kooboo 实际站点。`);
+      site={id:randomUUID(),resourceId:task.resourceId,versionId:task.versionId,environmentId:task.environmentId,siteId,name:slug,url:'',createdAt:Date.now()};
+      if(task.scenario==='upgrade'&&!directTemplate&&!task.generation.skipSourceTransfer)task.generation.transferTaskId=created.taskId;
+      store.saveSite(site);task.generatedSiteId=site.id;store.put(task);
+      store.event(task.id,directTemplate?`已通过模板 ${currentTemplateRef!.templateName} 创建生成站 ${siteId}`:`已绑定生成站 ${siteId}`);
+    }
+    if(!site)throw new Error('没有可执行的生成站');
+    store.beginSiteChange(task);
+    templateRef=task.generation.referenceTemplate;
+    const directTemplate=templateRef?.mode==='direct-template';
+    if(task.generation.skipSourceTransfer){
+      if(!task.generation.transferComplete||(task.generation.sourceSandbox&&!task.generation.sourceSandbox.complete)){
+        task.generation.transferComplete=true;
+        if(task.generation.sourceSandbox)task.generation.sourceSandbox.complete=true;
+        store.put(task);
+        store.event(task.id,'已配置跳过原站克隆，改用补充资料继续生成');
+      }
+    }
+    const transferProgress=(label:string)=>({completedPages,totalPages,elapsedMs}:{completedPages:number;totalPages:number;elapsedMs:number})=>{
+      const seconds=Math.max(1,Math.round(elapsedMs/1000));
+      store.event(task.id,`${label}：已完成 ${completedPages}/${totalPages} 页（已等待 ${seconds} 秒）`);
       store.put(task);
-      if (!check.ok) {
-        store.event(task.id, `参考站预检失败（${check.reasonCode}）：${refUrl} — ${check.detail}`);
-        throw referencePreflightError(refUrl, check, site?.id);
+    };
+    const tryDegradeToMaterialsOnCloneFailure=():boolean=>{
+      const currentGen=task.generation!;
+      if(!currentGen.fallbackToMaterialsOnCloneFailure)return false;
+      const availableMaterials=mergeTaskMaterials(input.files,currentGen.supplementalFiles);
+      if(!availableMaterials.length)return false;
+      currentGen.skipSourceTransfer=true;
+      currentGen.transferComplete=true;
+      if(currentGen.sourceSandbox)currentGen.sourceSandbox.complete=true;
+      const degradeMarker='原站克隆已自动降级为跳过：请直接以已导入的资料包作为业务事实来源，不要依赖原站克隆页面。';
+      if(!task.message.includes(degradeMarker)){
+        task.message+=(task.message?'\n':'')+degradeMarker;
+      }
+      store.put(task);
+      store.event(
+        task.id,
+        `原站克隆（${currentGen.cloneEnvironmentFallback?'含回退环境重试':'含单页降级重试'}）仍为 0 页，已按配置自动转为跳过原站克隆，改用随附资料包（${availableMaterials.length} 份文件）继续生成`,
+      );
+      return true;
+    };
+    const tryFallbackEnvironment=async(sandboxName?:string):Promise<boolean>=>{
+      const currentGen=task.generation!;
+      const canSwitchEnv=task.kind==='generation'&&task.scenario==='upgrade'
+        &&!currentGen.skipSourceTransfer&&!currentGen.prepared&&!currentGen.deliveryId
+        &&!currentGen.legacySubmitted&&!currentGen.conversationId
+        &&(!site||(site.id===task.generatedSiteId&&store.siteTasks(site.id).every(t=>t.id===task.id)));
+      if(!canSwitchEnv)return false;
+      const candidate=resolveCloneFallbackEnvironment(task,vault);
+      if(!candidate.fallbackEnv){
+        if(candidate.unavailableReason)store.event(task.id,`无法自动切换到克隆回退环境：${candidate.unavailableReason}`);
+        return false;
+      }
+      const fallbackEnv=candidate.fallbackEnv;
+      const fallbackClient=koobooClient({environmentId:fallbackEnv.id},vault,signal);
+      const fallbackApiOrigin=new URL(fallbackClient.environment.apiOrigin||fallbackClient.origin).origin;
+      try{
+        const fallbackDomains=parseRootDomains(await fallbackClient.request('Domain/Available'));
+        if(!fallbackDomains.length)throw new Error('回退环境未返回可用建站根域名');
+        if(versionInput?.referenceTemplateId){
+          const mode=effectiveTemplateUsageMode(versionInput,false)!;
+          const requiredCap=requiredKoobooSandboxCapability(task.scenario,mode,false);
+          if(requiredCap){
+            const support=await probeKoobooApiMethod({apiOrigin:fallbackApiOrigin,token:fallbackEnv.token,path:requiredCap.method,signal});
+            if(support==='unsupported')throw new Error(`回退环境暂不支持模板 Sandbox 接口（${requiredCap.method}）`);
+          }
+          const detail=await fetchKoobooTemplateDetail(fallbackClient.request,versionInput.referenceTemplateId,fallbackClient.origin);
+          if(!detail.previewUrl||!isValidHttpUrl(detail.previewUrl))throw new Error(`回退环境未返回模板 ${versionInput.referenceTemplateId} 的有效 previewUrl`);
+        }
+      }catch(err:any){
+        store.event(task.id,`无法自动切换到克隆回退环境「${fallbackEnv.name}」：${err?.message||'预检失败'}`);
+        return false;
+      }
+      let remoteDeleted=false;
+      if(site?.siteId){
+        try{
+          await request('Site/Delete',{SiteId:site.siteId},site.siteId);
+          remoteDeleted=true;
+        }catch(err:any){
+          store.event(task.id,`原环境空站 ${site.siteId} 自动清理失败（不影响切换回退环境）：${err?.message||'请求异常'}`);
+        }
+      }
+      if(directTemplate&&currentGen.sourceSandbox?.siteId&&currentGen.sourceSandbox.siteId!==site?.siteId){
+        try{await request('Site/Delete',{SiteId:currentGen.sourceSandbox.siteId},currentGen.sourceSandbox.siteId);}catch{}
+      }
+      const abandonedLocalSiteId=site?.id;
+      const abandonedRemoteSiteId=site?.siteId;
+      const oldEnvName=environment.name;
+      const attempted=[...new Set([...(currentGen.attemptedEnvironmentIds||[task.environmentId]),task.environmentId,fallbackEnv.id])];
+      task.environmentId=fallbackEnv.id;
+      task.generatedSiteId=null;
+      task.siteUrl='';
+      delete task.siteRevision;
+      delete currentGen.rootDomain;
+      delete currentGen.createAttempted;
+      delete currentGen.transferTaskId;
+      delete currentGen.transferComplete;
+      delete currentGen.transferFallbackAttempted;
+      delete currentGen.sourceSandbox;
+      delete currentGen.referenceTemplate;
+      delete currentGen.referenceTemplateSandbox;
+      delete currentGen.importedMaterials;
+      delete currentGen.importedMedia;
+      currentGen.attemptedEnvironmentIds=attempted;
+      currentGen.cloneEnvironmentFallback={
+        fromEnvironmentId:environment.id,
+        toEnvironmentId:fallbackEnv.id,
+        reason:`源站克隆导入 0 页（${input.contentUrl}）`,
+        ...(abandonedRemoteSiteId?{abandonedSiteId:abandonedRemoteSiteId,abandonedRemoteDeleted:remoteDeleted}:{}),
+        switchedAt:Date.now(),
+      };
+      if(!store.switchTaskEnvironmentOnCloneFallback(task,abandonedLocalSiteId)){
+        throw zeroPageTransferError(input.contentUrl,abandonedLocalSiteId,sandboxName,true);
       }
       store.event(
         task.id,
-        `参考站可达性预检通过（${check.method === 'browser' ? '浏览器渲染' : 'HTTP'} ${check.status}）：${refUrl}`,
+        `原环境「${oldEnvName}」克隆源站导入 0 页，已自动切换至回退环境「${fallbackEnv.name}」重新建站与克隆（${
+          abandonedRemoteSiteId
+            ?remoteDeleted
+              ?'已自动清理原环境 0 页空站'
+              :'原环境空站未能自动删除，已解除本地绑定'
+            :'未产生残留站点'
+        }）。`,
       );
-    }
-  }
-  const precheckRef=task.generation.referenceTemplate;
-  if(precheckRef){
-    const requiredCap=requiredKoobooSandboxCapability(task.scenario,precheckRef.mode,task.generation.skipSourceTransfer);
-    const needsSandboxStep=requiredCap&&(
-      requiredCap.key==='transferByLevel'
-        ?(!task.generation.sourceSandbox?.complete&&!task.generation.prepared)
-        :(!task.generation.referenceTemplateSandbox||task.generation.referenceTemplateSandbox.templateId!==precheckRef.templateId)
-    );
-    if(requiredCap&&needsSandboxStep){
-      const support=await probeKoobooApiMethod({apiOrigin,token:environment.token,path:requiredCap.method,signal});
-      if(support==='unsupported')throw unsupportedKoobooTemplateError(requiredCap,site?.id);
-    }
-  }
-  if(!site){
-    // A pre-upgrade uncertain create must still reconcile the exact old name.
-    let slug=task.generation.siteName||(task.generation.createAttempted?`auto-${task.id.slice(0,12)}`:generatedSiteName(task.id));
-    if(task.generation.createAttempted){
-      const list=await request('Site/List');const matches=(Array.isArray(list)?list:[]).filter((s:any)=>(s.siteName||s.SiteName)===slug);
-      if(matches.length!==1)throw new Pending(`站点 ${slug} 创建结果尚未唯一确认，禁止重复创建；请检查 Kooboo 环境。`);
-      const adopted={id:randomUUID(),resourceId:task.resourceId,versionId:task.versionId,environmentId:task.environmentId,siteId:siteIdentity(matches[0]),name:slug,url:'',createdAt:Date.now()};
-      store.saveSite(adopted);task.generatedSiteId=adopted.id;store.put(task);throw new Pending('已找到并绑定先前创建的站点，将在下一次执行中继续准备；未重复建站。');
-    }
-    const domains=parseRootDomains(await request('Domain/Available'));
-    // Legacy tasks without a choice freeze it before the first creation attempt.
-    const selected=normalizeRootDomain(task.generation.rootDomain||environment.defaultRootDomain||domains[0]?.domainName||'');
-    const rootOption=findRootDomain(domains,selected),root=rootOption?.domainName||selected;
-    if(!root)throw new Error('Kooboo 未返回可用根域名，请核对连接环境');
-    task.generation.rootDomain=rootOption?rootDomainValue(rootOption):root;store.put(task);
-    if(!rootOption)throw new FollowupRuntimeError(`建站根域名 ${root} 在当前 Kooboo 环境中已不可用，请核对环境域名后重试；不会自动改用其他域名。`,['在原 Kooboo 环境恢复所选根域名后重试；或停止本任务，选择可用根域名新建任务。']);
-    let subDomain=task.generation.subDomain||slug;
-    assertSiteNaming(slug,subDomain,rootOption);
-    if(task.generation.subDomain||task.generation.siteName){
-      const selected=await availableSiteNames(slug,subDomain,rootOption,request);
-      if(selected.siteName!==slug||selected.subDomain!==subDomain)
-        store.event(task.id,`名称已占用，自动调整：站点名称 ${slug} → ${selected.siteName}；子域名 ${subDomain} → ${selected.subDomain}`);
-      slug=selected.siteName;subDomain=selected.subDomain;
-    }
-    store.event(task.id,`准备新站 ${slug}；根域名 ${root}；创建结果不确定时停止，不自动重发创建请求`);
-    let created:any;task.generation.siteName=slug;task.generation.subDomain=subDomain;task.generation.createAttempted=true;store.put(task);
-    const templateRef=task.generation.referenceTemplate;
-    const directTemplate=templateRef?.mode==='direct-template';
-    try{
-      created=directTemplate
-        ?await request('Template/Use',{SiteName:slug,RootDomain:root,SubDomain:subDomain,id:templateRef!.templateId})
-        :task.scenario==='upgrade'
-          ?await request('Transfer/ByLevel',{siteName:slug,subDomain,rootDomain:root,url:input.contentUrl,headless:false,convertToRoot:false,TotalPages:20,Depth:2})
-          :await request('Site/Create',{SiteName:slug,SubDomain:subDomain,RootDomain:root,SiteType:'p'});
-    }catch{throw new Pending(`新站 ${slug} 创建结果未确认，请在 Kooboo 检查后将实际站点关联到此资源，禁止自动重复建站。`);}
-    const siteId=siteIdentity(created);
-    if(!/^[a-f0-9-]{36}$/i.test(siteId)||/^00000000-0000-0000-0000-000000000000$/i.test(siteId))throw new Pending(`新站 ${slug} 未返回有效身份，请检查 Kooboo 实际站点。`);
-    site={id:randomUUID(),resourceId:task.resourceId,versionId:task.versionId,environmentId:task.environmentId,siteId,name:slug,url:'',createdAt:Date.now()};
-    if(task.scenario==='upgrade'&&!directTemplate)task.generation.transferTaskId=created.taskId;
-    store.saveSite(site);task.generatedSiteId=site.id;store.put(task);
-    store.event(task.id,directTemplate?`已通过模板 ${templateRef!.templateName} 创建生成站 ${siteId}`:`已绑定生成站 ${siteId}`);
-  }
-  if(!site)throw new Error('没有可执行的生成站');
-  store.beginSiteChange(task);
-  const templateRef=task.generation.referenceTemplate;
-  const directTemplate=templateRef?.mode==='direct-template';
-  if(task.generation.skipSourceTransfer){
-    if(!task.generation.transferComplete||(task.generation.sourceSandbox&&!task.generation.sourceSandbox.complete)){
-      task.generation.transferComplete=true;
-      if(task.generation.sourceSandbox)task.generation.sourceSandbox.complete=true;
-      store.put(task);
-      store.event(task.id,'已配置跳过原站克隆，改用补充资料继续生成');
-    }
-  }
-  const transferProgress=(label:string)=>({completedPages,totalPages,elapsedMs}:{completedPages:number;totalPages:number;elapsedMs:number})=>{
-    const seconds=Math.max(1,Math.round(elapsedMs/1000));
-    store.event(task.id,`${label}：已完成 ${completedPages}/${totalPages} 页（已等待 ${seconds} 秒）`);
-    store.put(task);
-  };
-  if(task.scenario==='upgrade'&&directTemplate&&!task.generation.skipSourceTransfer&&!task.generation.sourceSandbox?.complete&&!task.generation.prepared){
-    let sourceSandbox=task.generation.sourceSandbox;
-    const hadSandboxTransfer=Boolean(sourceSandbox?.siteId&&sourceSandbox.transferTaskId);
-    const isValidSandbox=(sandbox:string,sandboxSiteId:string,transferTaskId:string)=>
-      Boolean(sandbox&&/^[a-f0-9-]{36}$/i.test(sandboxSiteId)&&!/^00000000-0000-0000-0000-000000000000$/i.test(sandboxSiteId)&&transferTaskId);
-    if(!sourceSandbox?.siteId||!sourceSandbox.transferTaskId){
-      let transferred=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
-      let sandboxSiteId=siteIdentity(transferred),sandbox=String(transferred?.sandbox||'').trim(),transferTaskId=String(transferred?.taskId||'').trim(),previewUrl=String(transferred?.previewUrl||'').trim();
-      if(!isValidSandbox(sandbox,sandboxSiteId,transferTaskId)&&!task.generation.transferFallbackAttempted){
+      hadTransferTaskBeforeRun=false;
+      return true;
+    };
+    if(task.scenario==='upgrade'&&directTemplate&&!task.generation.skipSourceTransfer&&!task.generation.sourceSandbox?.complete&&!task.generation.prepared){
+      let sourceSandbox=task.generation.sourceSandbox;
+      const hadSandboxTransfer=Boolean(sourceSandbox?.siteId&&sourceSandbox.transferTaskId);
+      const isValidSandbox=(sandbox:string,sandboxSiteId:string,transferTaskId:string)=>
+        Boolean(sandbox&&/^[a-f0-9-]{36}$/i.test(sandboxSiteId)&&!/^00000000-0000-0000-0000-000000000000$/i.test(sandboxSiteId)&&transferTaskId);
+      if(!sourceSandbox?.siteId||!sourceSandbox.transferTaskId){
+        let transferred=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
+        let sandboxSiteId=siteIdentity(transferred),sandbox=String(transferred?.sandbox||'').trim(),transferTaskId=String(transferred?.taskId||'').trim(),previewUrl=String(transferred?.previewUrl||'').trim();
+        if(!isValidSandbox(sandbox,sandboxSiteId,transferTaskId)&&!task.generation.transferFallbackAttempted){
+          task.generation.transferFallbackAttempted=true;store.put(task);
+          store.event(task.id,'旧内容站克隆到只读源站 Sandbox 未返回有效标识，尝试重建 1 次只读源站抓取');
+          try{
+            transferred=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
+            sandboxSiteId=siteIdentity(transferred);sandbox=String(transferred?.sandbox||'').trim();transferTaskId=String(transferred?.taskId||'').trim();previewUrl=String(transferred?.previewUrl||'').trim();
+          }catch(err:any){store.event(task.id,`重建只读源站抓取失败：${err?.message||'请求异常'}`);}
+        }
+        if(!isValidSandbox(sandbox,sandboxSiteId,transferTaskId)){
+          task.generation.transferFallbackAttempted=true;store.put(task);
+          if(await tryFallbackEnvironment(sandbox||undefined))continue;
+          if(tryDegradeToMaterialsOnCloneFailure())break;
+          throw zeroPageTransferError(input.contentUrl,site.id,sandbox||'source-sandbox',Boolean(task.generation.cloneEnvironmentFallback));
+        }
+        sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
+        task.generation.sourceSandbox=sourceSandbox;store.put(task);
+        store.event(task.id,`已创建只读源站 Sandbox ${sandbox}（${sandboxSiteId}），正在同步旧内容站`);
+      }
+      let transfer=await waitForTransferPages({request,siteId:sourceSandbox.siteId,transferTaskId:sourceSandbox.transferTaskId!,signal,allowInitialCheck:hadSandboxTransfer,onProgress:transferProgress('正在同步旧内容站 Sandbox')});
+      if(!transfer.pages&&!task.generation.transferFallbackAttempted){
         task.generation.transferFallbackAttempted=true;store.put(task);
-        store.event(task.id,'旧内容站克隆到只读源站 Sandbox 未返回有效标识，尝试重建 1 次只读源站抓取');
+        store.event(task.id,'旧内容站 Sandbox 克隆完成但导入 0 页，尝试重建 1 次只读源站抓取');
         try{
-          transferred=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
-          sandboxSiteId=siteIdentity(transferred);sandbox=String(transferred?.sandbox||'').trim();transferTaskId=String(transferred?.taskId||'').trim();previewUrl=String(transferred?.previewUrl||'').trim();
+          const retried=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
+          const sandboxSiteId=siteIdentity(retried),sandbox=String(retried?.sandbox||'').trim(),transferTaskId=String(retried?.taskId||'').trim(),previewUrl=String(retried?.previewUrl||'').trim();
+          if(isValidSandbox(sandbox,sandboxSiteId,transferTaskId)){
+            sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
+            task.generation.sourceSandbox=sourceSandbox;store.put(task);
+            transfer=await waitForTransferPages({request,siteId:sandboxSiteId,transferTaskId,signal,allowInitialCheck:false,onProgress:transferProgress('正在同步旧内容站 Sandbox')});
+          }
         }catch(err:any){store.event(task.id,`重建只读源站抓取失败：${err?.message||'请求异常'}`);}
       }
-      if(!isValidSandbox(sandbox,sandboxSiteId,transferTaskId)){
-        task.generation.transferFallbackAttempted=true;store.put(task);
-        throw zeroPageTransferError(input.contentUrl,site.id,sandbox||'source-sandbox');
+      if(!transfer.pages){
+        if(await tryFallbackEnvironment(sourceSandbox.sandbox))continue;
+        if(tryDegradeToMaterialsOnCloneFailure())break;
+        throw zeroPageTransferError(input.contentUrl,site.id,sourceSandbox.sandbox,Boolean(task.generation.cloneEnvironmentFallback));
       }
-      sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
-      task.generation.sourceSandbox=sourceSandbox;store.put(task);
-      store.event(task.id,`已创建只读源站 Sandbox ${sandbox}（${sandboxSiteId}），正在同步旧内容站`);
-    }
-    let transfer=await waitForTransferPages({request,siteId:sourceSandbox.siteId,transferTaskId:sourceSandbox.transferTaskId!,signal,allowInitialCheck:hadSandboxTransfer,onProgress:transferProgress('正在同步旧内容站 Sandbox')});
-    if(!transfer.pages&&!task.generation.transferFallbackAttempted){
-      task.generation.transferFallbackAttempted=true;store.put(task);
-      store.event(task.id,'旧内容站 Sandbox 克隆完成但导入 0 页，尝试重建 1 次只读源站抓取');
-      try{
-        const retried=await request('AISandbox/TransferByLevel',{url:input.contentUrl,totalPages:20,depth:2},site.siteId);
-        const sandboxSiteId=siteIdentity(retried),sandbox=String(retried?.sandbox||'').trim(),transferTaskId=String(retried?.taskId||'').trim(),previewUrl=String(retried?.previewUrl||'').trim();
-        if(isValidSandbox(sandbox,sandboxSiteId,transferTaskId)){
-          sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
-          task.generation.sourceSandbox=sourceSandbox;store.put(task);
-          transfer=await waitForTransferPages({request,siteId:sandboxSiteId,transferTaskId,signal,allowInitialCheck:false,onProgress:transferProgress('正在同步旧内容站 Sandbox')});
-        }
-      }catch(err:any){store.event(task.id,`重建只读源站抓取失败：${err?.message||'请求异常'}`);}
-    }
-    if(!transfer.pages)throw zeroPageTransferError(input.contentUrl,site.id,sourceSandbox.sandbox);
-    sourceSandbox.complete=true;task.generation.sourceSandbox=sourceSandbox;task.generation.transferComplete=true;store.put(task);
-    store.event(
-      task.id,
-      transfer.stalled||transfer.timedOut
-        ?`旧内容站 Sandbox 克隆部分完成（已导入 ${transfer.pages} 页，进度 ${transfer.completedPages??transfer.pages}/${transfer.totalPages??transfer.pages} 页，其余页面超时未完成），保留已导入页面并继续后续流程`
-        :`旧内容站已克隆至源站 Sandbox ${sourceSandbox.sandbox}（目标站保留原生 Kooboo 模板）`,
-    );
-  }else if(task.scenario==='upgrade'&&!directTemplate&&!task.generation.transferComplete&&!task.generation.prepared){
-      const siteId=site.siteId;
-      const taskId=task.generation.transferTaskId;
-      if(!taskId){
-        let existing=await request('Transfer/GetTaskStatus',undefined,siteId);
-        let pages=Number(existing?.pages||0);
-        if(!pages&&input.contentUrl&&!task.generation.transferFallbackAttempted){
-          task.generation.transferFallbackAttempted=true;store.put(task);
+      sourceSandbox.complete=true;task.generation.sourceSandbox=sourceSandbox;task.generation.transferComplete=true;store.put(task);
+      store.event(
+        task.id,
+        transfer.stalled||transfer.timedOut
+          ?`旧内容站 Sandbox 克隆部分完成（已导入 ${transfer.pages} 页，进度 ${transfer.completedPages??transfer.pages}/${transfer.totalPages??transfer.pages} 页，其余页面超时未完成），保留已导入页面并继续后续流程`
+          :`旧内容站已克隆至源站 Sandbox ${sourceSandbox.sandbox}（目标站保留原生 Kooboo 模板）`,
+      );
+    }else if(task.scenario==='upgrade'&&!directTemplate&&!task.generation.transferComplete&&!task.generation.prepared){
+        const siteId=site.siteId;
+        const taskId=task.generation.transferTaskId;
+        if(!taskId){
+          let existing=await request('Transfer/GetTaskStatus',undefined,siteId);
+          let pages=Number(existing?.pages||0);
+          if(!pages&&input.contentUrl&&!task.generation.transferFallbackAttempted){
+            task.generation.transferFallbackAttempted=true;store.put(task);
+            store.event(
+              task.id,
+              task.generation.overrideContentUrl
+                ?'内容站克隆未返回任务标识，尝试使用替换原网址通过 Transfer/Single 抓取首页 1 次'
+                :'内容站克隆未返回任务标识且当前为 0 页，尝试通过 Transfer/Single 降级抓取首页 1 次',
+            );
+            try{
+              const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
+              const transfer=await resolveSingleTransferResult({single,request,siteId,signal,onProgress:transferProgress('正在等待内容站克隆')});
+              pages=transfer.pages;
+            }catch(err:any){store.event(task.id,`${task.generation.overrideContentUrl?'替换原网址单页':'单页降级'}抓取失败：${err?.message||'请求异常'}`);}
+          }
+          if(!pages){
+            task.generation.transferFallbackAttempted=true;store.put(task);
+            if(await tryFallbackEnvironment())continue;
+            if(tryDegradeToMaterialsOnCloneFailure())break;
+            throw zeroPageTransferError(input.contentUrl,site.id,undefined,Boolean(task.generation.cloneEnvironmentFallback));
+          }
+          task.generation.transferComplete=true;store.put(task);
+          store.event(task.id,'已确认目标站存在导入页面，继续准备参考站');
+        }else{
+          store.event(task.id,`正在等待内容站克隆完成：${input.contentUrl}`);
+          store.put(task);
+          let transfer=await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:hadTransferTaskBeforeRun,onProgress:transferProgress('正在等待内容站克隆')});
+          if(!transfer.pages&&!task.generation.transferFallbackAttempted){
+            task.generation.transferFallbackAttempted=true;store.put(task);
+            store.event(task.id,'内容站克隆完成但导入 0 页，尝试通过 Transfer/Single 降级抓取首页 1 次');
+            try{
+              const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
+              transfer=await resolveSingleTransferResult({single,request,siteId,signal,onProgress:transferProgress('正在等待内容站克隆')});
+            }catch(err:any){store.event(task.id,`单页降级抓取失败：${err?.message||'请求异常'}`);}
+          }
+          if(!transfer.pages){
+            if(await tryFallbackEnvironment())continue;
+            if(tryDegradeToMaterialsOnCloneFailure())break;
+            throw zeroPageTransferError(input.contentUrl,site.id,undefined,Boolean(task.generation.cloneEnvironmentFallback));
+          }
+          task.generation.transferComplete=true;store.put(task);
           store.event(
             task.id,
-            task.generation.overrideContentUrl
-              ?'内容站克隆未返回任务标识，尝试使用替换原网址通过 Transfer/Single 抓取首页 1 次'
-              :'内容站克隆未返回任务标识且当前为 0 页，尝试通过 Transfer/Single 降级抓取首页 1 次',
+            transfer.stalled||transfer.timedOut
+              ?`内容站克隆部分完成（已导入 ${transfer.pages} 页，进度 ${transfer.completedPages??transfer.pages}/${transfer.totalPages??transfer.pages} 页，其余页面超时未完成），保留已导入页面并继续后续流程`
+              :'内容站克隆完成；参考站由 Kooboo AI 使用 Sandbox tools 准备',
           );
-          try{
-            const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
-            if(single?.taskId){
-              const transfer=await waitForTransferPages({request,siteId,transferTaskId:String(single.taskId),signal,allowInitialCheck:false,onProgress:transferProgress('正在等待内容站克隆')});
-              pages=transfer.pages;
-            }else{
-              existing=await request('Transfer/GetTaskStatus',undefined,siteId);
-              pages=Number(existing?.pages||0);
-            }
-          }catch(err:any){store.event(task.id,`${task.generation.overrideContentUrl?'替换原网址单页':'单页降级'}抓取失败：${err?.message||'请求异常'}`);}
         }
-        if(!pages){
-          task.generation.transferFallbackAttempted=true;store.put(task);
-          throw zeroPageTransferError(input.contentUrl,site.id);
-        }
-        task.generation.transferComplete=true;store.put(task);
-        store.event(task.id,'已确认目标站存在导入页面，继续准备参考站');
-      }else{
-        store.event(task.id,`正在等待内容站克隆完成：${input.contentUrl}`);
-        store.put(task);
-        let transfer=await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:hadTransferTaskBeforeRun,onProgress:transferProgress('正在等待内容站克隆')});
-        if(!transfer.pages&&!task.generation.transferFallbackAttempted){
-          task.generation.transferFallbackAttempted=true;store.put(task);
-          store.event(task.id,'内容站克隆完成但导入 0 页，尝试通过 Transfer/Single 降级抓取首页 1 次');
-          try{
-            const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
-            if(single?.taskId){
-              transfer=await waitForTransferPages({request,siteId,transferTaskId:String(single.taskId),signal,allowInitialCheck:false,onProgress:transferProgress('正在等待内容站克隆')});
-            }else{
-              const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
-              transfer={pages:Number(summary?.pages||0),done:summary?.done!==false};
-            }
-          }catch(err:any){store.event(task.id,`单页降级抓取失败：${err?.message||'请求异常'}`);}
-        }
-        if(!transfer.pages)throw zeroPageTransferError(input.contentUrl,site.id);
-        task.generation.transferComplete=true;store.put(task);
-        store.event(
-          task.id,
-          transfer.stalled||transfer.timedOut
-            ?`内容站克隆部分完成（已导入 ${transfer.pages} 页，进度 ${transfer.completedPages??transfer.pages}/${transfer.totalPages??transfer.pages} 页，其余页面超时未完成），保留已导入页面并继续后续流程`
-            :'内容站克隆完成；参考站由 Kooboo AI 使用 Sandbox tools 准备',
-        );
-      }
+    }
+    break;
   }
   if(templateRef?.mode==='reference-sandbox'&&(!task.generation.referenceTemplateSandbox||task.generation.referenceTemplateSandbox.templateId!==templateRef.templateId)){
     const imported=await request('AISandbox/ImportFromTemplate',{templateId:templateRef.templateId,templateName:templateRef.templateName||templateRef.templateId},site.siteId);

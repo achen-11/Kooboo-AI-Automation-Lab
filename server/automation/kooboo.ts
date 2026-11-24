@@ -12,6 +12,29 @@ import type {
 import type { Vault } from '../lib/vault.js';
 import type { AutomationStore } from './store.js';
 
+export function extractKoobooErrorDetail(body: string): string {
+  const trimmed = String(body || '').trim();
+  if (!trimmed || /^<(?:!doctype|html)\b/i.test(trimmed)) return '';
+  let text = '';
+  try {
+    const parsed = JSON.parse(trimmed);
+    if (Array.isArray(parsed)) {
+      text = parsed.filter((entry): entry is string => typeof entry === 'string' && Boolean(entry.trim())).join('；');
+    } else if (typeof parsed === 'string') {
+      text = parsed;
+    } else if (parsed && typeof parsed === 'object') {
+      const obj = parsed as { message?: unknown; error?: unknown };
+      if (typeof obj.message === 'string') text = obj.message;
+      else if (typeof obj.error === 'string') text = obj.error;
+    }
+  } catch {
+    text = trimmed;
+  }
+  const normalized = (text || trimmed).replace(/\s+/g, ' ').trim();
+  if (!normalized) return '';
+  return normalized.length > 240 ? `${normalized.slice(0, 239)}…` : normalized;
+}
+
 export function isKoobooApiMethodNotFound(status: number, body: string): boolean {
   if (status === 404) return true;
   if (status !== 400) return false;
@@ -195,7 +218,8 @@ export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vau
       if(isKoobooApiMethodNotFound(result.status,result.body)){
         throw new Error(`Kooboo ${cleanPath} 接口不存在（目标 Kooboo 环境版本过低，HTTP ${result.status}）`);
       }
-      throw new Error(`Kooboo ${cleanPath} 请求失败（${result.status}）`);
+      const detail=extractKoobooErrorDetail(result.body);
+      throw new Error(detail?`Kooboo ${cleanPath} 请求失败（${result.status}）：${detail}`:`Kooboo ${cleanPath} 请求失败（${result.status}）`);
     }
     const value=JSON.parse(result.body);
     return availability&&result.status===200&&value===null?true:value;

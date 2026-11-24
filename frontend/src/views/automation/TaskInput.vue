@@ -37,6 +37,8 @@ const { data, loading, error, load } = useTaskSection<{
   subDomain?: string;
   rootDomain?: string;
   autoDelivery?: boolean;
+  skipSourceTransfer?: boolean;
+  fallbackToMaterialsOnCloneFailure?: boolean;
   model: { name: string; endpoint: string } | null;
   optimization?: { policy: OptimizationPolicy };
 }>(() => `/automation/tasks/${props.taskId}/sections/input`, () => props.revision);
@@ -91,6 +93,7 @@ const hasDistinctInputRootDomain = computed(() =>
           </template>
           <div v-else><dt>建站根域名</dt><dd>{{ resolvedRootDomain || '尚未确定' }}</dd></div>
           <div v-if="data.autoDelivery !== undefined"><dt>跨环境交付</dt><dd>{{ data.autoDelivery ? '完成后自动交付' : '评测后按需手动交付' }}</dd></div>
+          <div v-if="data.version?.scenario === 'upgrade' && kind === 'generation'"><dt>原站克隆策略</dt><dd>{{ data.skipSourceTransfer ? (data.fallbackToMaterialsOnCloneFailure ? '全链克隆 0 页后已自动降级为资料包生成' : '显式跳过原站克隆（直接用资料包）') : (data.fallbackToMaterialsOnCloneFailure ? '优先链式路由克隆，全败后自动用资料包兜底' : '优先链式路由克隆') }}</dd></div>
           <div v-if="data.version?.externalSource"><dt>资料来源</dt><dd>{{ data.version.externalSource }}</dd></div>
           <div v-if="data.version?.externalId"><dt>外部 ID</dt><dd>{{ data.version.externalId }}</dd></div>
           <div v-if="data.version?.contentUrl"><dt>内容站</dt><dd><a :href="data.version.contentUrl" target="_blank" rel="noopener noreferrer">{{ data.version.contentUrl }}</a></dd></div>

@@ -959,16 +959,57 @@ test('POST /api/automation/tasks enforces priority: explicit skipSourceTransfer 
           { id: deEnvId, name: '德国 kooboo', origin: deOrigin, apiOrigin: deOrigin, token: 'de-tok', defaultRootDomain: 'de.kooboo.io' },
         ],
       });
-      const res2 = f.automationStore.saveResource({
-        name: 'Fallback Then Materials Upgrade',
-        scenario: 'upgrade',
-        description: 'Upgrade with materials fallback',
-        contentUrl: 'http://www.defrieseschaar.nl',
-        referenceUrl: 'https://ref.test/',
-        externalSource: '',
-        externalId: '',
-        files: [uploadedFile],
+      const importRes = await f.app.inject({
+        method: 'POST',
+        url: '/api/v1/resources/import',
+        headers: { authorization: `Bearer ${f.vault.credentials.ingestToken}` },
+        payload: [
+          {
+            name: 'Fallback Then Materials Upgrade',
+            scenario: 'upgrade',
+            description: 'Upgrade with materials fallback (default when skipSourceTransfer omitted)',
+            contentUrl: 'http://www.defrieseschaar.nl',
+            referenceUrl: 'https://ref.test/',
+            externalSource: 'admin-test',
+            externalId: 'rec-default-fallback',
+            files: [uploadedFile],
+          },
+          {
+            name: 'Imported Explicit Skip Upgrade',
+            scenario: 'upgrade',
+            description: 'Imported with skipSourceTransfer=true',
+            contentUrl: 'http://www.defrieseschaar.nl',
+            referenceUrl: 'https://ref.test/',
+            externalSource: 'admin-test',
+            externalId: 'rec-explicit-skip',
+            skipSourceTransfer: true,
+            files: [uploadedFile],
+          },
+        ],
       });
+      assert.equal(importRes.statusCode, 200, importRes.body);
+      const importedItems = importRes.json().items as Array<{ id: string; skipSourceTransfer?: boolean }>;
+      const res2 = importedItems[0]!;
+      const resExplicitSkip = importedItems[1]!;
+      assert.equal(resExplicitSkip.skipSourceTransfer, true);
+
+      // Creating a task from a resource imported with skipSourceTransfer=true inherits skipSourceTransfer automatically
+      const inheritedSkipTaskRes = await f.app.inject({
+        method: 'POST',
+        url: '/api/automation/tasks',
+        headers: { ...headers, 'Idempotency-Key': randomUUID() },
+        payload: {
+          resourceIds: [resExplicitSkip.id],
+          kind: 'generation',
+          scope: 'homepage',
+          environmentId: hkEnvId,
+        },
+      });
+      assert.equal(inheritedSkipTaskRes.statusCode, 201, inheritedSkipTaskRes.body);
+      const inheritedSkipTask = f.automationStore.task(inheritedSkipTaskRes.json().items[0].id as string)!;
+      assert.equal(inheritedSkipTask.generation?.skipSourceTransfer, true, 'task should inherit skipSourceTransfer=true from imported resource');
+
+      // Creating a task without passing skipSourceTransfer or fallbackToMaterialsOnCloneFailure defaults fallbackToMaterialsOnCloneFailure=true when files are attached
       const createDegradeRes = await f.app.inject({
         method: 'POST',
         url: '/api/automation/tasks',
@@ -978,13 +1019,12 @@ test('POST /api/automation/tasks enforces priority: explicit skipSourceTransfer 
           kind: 'generation',
           scope: 'homepage',
           environmentId: hk2EnvId,
-          fallbackToMaterialsOnCloneFailure: true,
         },
       });
       assert.equal(createDegradeRes.statusCode, 201, createDegradeRes.body);
       const degradeTaskId = createDegradeRes.json().items[0].id as string;
       const degradeTask = f.automationStore.task(degradeTaskId)!;
-      assert.equal(degradeTask.generation?.fallbackToMaterialsOnCloneFailure, true);
+      assert.equal(degradeTask.generation?.fallbackToMaterialsOnCloneFailure, true, 'should default fallbackToMaterialsOnCloneFailure=true when files exist and skipSourceTransfer is omitted');
       assert.equal(degradeTask.generation?.skipSourceTransfer, undefined);
       delete degradeTask.autonomy;
       degradeTask.requirementsEnabled = false;

@@ -35,7 +35,7 @@ const modelTesting = ref(false);
 
 const apiExample = `GET ${window.location.origin}/api/v1/automation/reports?externalSource=your-admin&externalId=your-record\nAuthorization: Bearer <报告读取令牌>`;
 const importRequestExample = `POST ${window.location.origin}/api/v1/resources/import\nAuthorization: Bearer <资源导入令牌>\nContent-Type: application/json`;
-const importExample = JSON.stringify([{ name: '资源名称', scenario: 'migration', description: '资料说明', contentUrl: 'https://example.com', referenceUrl: '', externalSource: 'your-admin', externalId: 'record-001', siteName: 'salon', subDomain: 'salon_public', rootDomain: '-shawnchen-hk.kooboo.io', files: [] }], null, 2);
+const importExample = JSON.stringify([{ name: '资源名称', scenario: 'upgrade', description: '资料说明', contentUrl: 'https://example.com', referenceUrl: 'https://ref.example.com', externalSource: 'your-admin', externalId: 'record-001', siteName: 'salon', subDomain: 'salon_public', rootDomain: '-shawnchen-hk.kooboo.io', skipSourceTransfer: false, files: [] }], null, 2);
 
 async function loadHarnessBindings() {
   try {
@@ -189,6 +189,8 @@ async function copy(text: string) {
       <tr><td><code>siteName</code></td><td>站点名称。字母、数字或下划线，最多 63 个字符，保存为小写。</td></tr>
       <tr><td><code>subDomain</code></td><td>站点子域名。格式同站点名称，不能包含连字符（-）；仅指定名称或子域名时，另一项沿用它。</td></tr>
       <tr><td><code>rootDomain</code></td><td>建站根域名，不含协议、端口或路径。香港示例为 <code>-shawnchen-hk.kooboo.io</code>，也兼容省略前导 <code>-</code> 的写法。</td></tr>
+      <tr><td><code>skipSourceTransfer</code></td><td>是否直接跳过原站克隆（布尔值，仅 <code>upgrade</code> 升级场景生效）。设为 <code>true</code> 时不抓取原站也不触发跨环境回退，直接用资料包建站；<strong>不传或设为 <code>false</code> 时</strong>，优先在当前环境及回退环境链（如 <code>DE → HK → XM</code>）尝试克隆，当链上所有环境均克隆失败（0 页）且附带资料包（<code>files</code> 非空）时，<strong>默认自动触发兜底</strong>（跳过原站克隆并改用资料包继续生成）。</td></tr>
+      <tr><td><code>fallbackToMaterialsOnCloneFailure</code></td><td>所有环境克隆均返回 0 页时是否自动改用资料包继续生成（布尔值，仅 <code>upgrade</code> 场景且有附件时生效）。<strong>不传时只要 <code>files</code> 非空即默认开启（<code>true</code>）</strong>；仅在显式传 <code>false</code> 时关闭自动兜底并在全链克隆失败后停机止损。</td></tr>
     </tbody></table></div>
     <p class="text-muted">未指定时请省略字段，不传空字符串。根域名依次取创建任务时的选择、资源导入值、环境默认值；实际建站时检查所选环境是否支持。</p>
     <p class="text-muted">导入仅保存资源。资源详情和版本历史显示保存的输入值，可核对根域名是否带前导 <code>-</code>；任务“输入与配置 → 建站配置”显示实际采用的值。</p>

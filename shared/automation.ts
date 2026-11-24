@@ -86,7 +86,7 @@ export interface KoobooTemplatePage {
   pageSize: number;
   totalPages: number;
 }
-export interface ResourceInput { name: string; scenario: Scenario; description: string; contentUrl: string; referenceUrl: string; referenceTemplateId?: string; referenceTemplateName?: string; templateUsageMode?: TemplateUsageMode; externalSource: string; externalId: string; files: MaterialFile[]; siteName?: string; subDomain?: string; rootDomain?: string }
+export interface ResourceInput { name: string; scenario: Scenario; description: string; contentUrl: string; referenceUrl: string; referenceTemplateId?: string; referenceTemplateName?: string; templateUsageMode?: TemplateUsageMode; externalSource: string; externalId: string; files: MaterialFile[]; siteName?: string; subDomain?: string; rootDomain?: string; skipSourceTransfer?: boolean; fallbackToMaterialsOnCloneFailure?: boolean }
 export interface Resource extends ResourceInput { id: string; folderId?: string | null; disposition?: ItemDisposition; revision: number; createdAt: number; updatedAt: number }
 export interface InputVersion extends ResourceInput { id: string; resourceId: string; revision: number; createdAt: number }
 export interface GeneratedSite { id: string; resourceId: string; versionId: string; environmentId: string; siteId: string; name: string; url: string; preferredDomain?: string; disposition?: ItemDisposition; /** Projected from current-revision completed cross-environment delivery; not stored in auto_sites. */ deliveredUrl?: string; /** Projected when any task for this site already has a delivery record; not stored in auto_sites. */ hasDelivery?: boolean; createdAt: number }

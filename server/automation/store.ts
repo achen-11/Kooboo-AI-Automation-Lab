@@ -279,8 +279,10 @@ export class AutomationStore {
       if (input.kind==='evaluation' && !rule) throw new Conflict('没有适用于当前场景的已发布规则');
       if (input.autoDelivery === true && input.kind === 'generation' && !rule) throw new Conflict('开启自动跨环境交付需要适用的已发布评测规则');
       const templateMode = effectiveTemplateUsageMode(version, Boolean(site));
-      const effectiveSkipSourceTransfer = input.kind === 'generation' && version.scenario === 'upgrade' && Boolean(input.skipSourceTransfer);
-      const effectiveFallbackToMaterials = input.kind === 'generation' && version.scenario === 'upgrade' && !effectiveSkipSourceTransfer && Boolean(input.fallbackToMaterialsOnCloneFailure);
+      const rawSkipSourceTransfer = input.skipSourceTransfer ?? version.skipSourceTransfer;
+      const effectiveSkipSourceTransfer = input.kind === 'generation' && version.scenario === 'upgrade' && Boolean(rawSkipSourceTransfer);
+      const rawFallbackToMaterials = input.fallbackToMaterialsOnCloneFailure ?? version.fallbackToMaterialsOnCloneFailure ?? (version.files.length > 0);
+      const effectiveFallbackToMaterials = input.kind === 'generation' && version.scenario === 'upgrade' && !effectiveSkipSourceTransfer && Boolean(rawFallbackToMaterials);
       const templateOpening =
         site && input.kind === 'generation'
           ? '在已有目标站继续生成，不新建站点。'

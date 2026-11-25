@@ -404,7 +404,7 @@ test('optimization loop with rounds, evaluation child view, delivery, and learni
   }
 });
 
-test('standalone evaluation task shows full workflow skeleton with skipped generation/optimization/delivery nodes', async () => {
+test('standalone evaluation task shows adapted evaluation workflow without generation/optimization/delivery nodes', async () => {
   const f = await fixture();
   try {
     const res = await f.saveResource();
@@ -440,12 +440,15 @@ test('standalone evaluation task shows full workflow skeleton with skipped gener
     assert.equal(body.kind, 'evaluation');
     assert.deepEqual(
       body.nodes.filter((n) => n.lane === 'main').map((n) => n.id),
-      ['prepare', 'generation', 'evaluation', 'quality-gate', 'delivery'],
+      ['evaluation'],
     );
-    assert.equal(body.nodes.find((n) => n.id === 'prepare')?.status, 'skipped');
-    assert.equal(body.nodes.find((n) => n.id === 'generation')?.status, 'skipped');
-    assert.equal(body.nodes.find((n) => n.id === 'optimization')?.status, 'skipped');
-    assert.equal(body.nodes.find((n) => n.id === 'delivery')?.status, 'skipped');
+    assert.equal(body.nodes.find((n) => n.id === 'prepare'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'generation'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'quality-gate'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'optimization'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'delivery'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'learning'), undefined);
+    assert.equal(body.edges.length, 0);
     assert.ok(body.blocker);
     assert.equal(body.blocker!.severity, 'warning');
     assert.equal(body.blocker!.nodeId, 'evaluation');
@@ -454,7 +457,7 @@ test('standalone evaluation task shows full workflow skeleton with skipped gener
   }
 });
 
-test('multi-hop manual re-evaluation walks ancestry back to generation and displays full completed workflow', async () => {
+test('multi-hop manual re-evaluation walks ancestry back to generation and omits unconfigured gate/optimization/delivery nodes', async () => {
   const f = await fixture();
   try {
     const res = await f.saveResource();
@@ -528,21 +531,26 @@ test('multi-hop manual re-evaluation walks ancestry back to generation and displ
     const { body } = await f.fetchWorkflow(eval2.id);
     assert.equal(body.rootTaskId, gen.id);
     assert.equal(body.viewingTaskId, eval2.id);
+    assert.deepEqual(
+      body.nodes.filter((n) => n.lane === 'main').map((n) => n.id),
+      ['prepare', 'generation', 'evaluation'],
+    );
     assert.equal(body.nodes.find((n) => n.id === 'prepare')?.status, 'completed');
     assert.equal(body.nodes.find((n) => n.id === 'generation')?.status, 'completed');
     const evalNode = body.nodes.find((n) => n.id === 'evaluation');
     assert.equal(evalNode?.status, 'completed');
     assert.equal(evalNode?.taskId, eval2.id);
     assert.ok(evalNode?.metrics?.some((m) => m.value === '92.6 分'));
-    assert.equal(body.nodes.find((n) => n.id === 'quality-gate')?.status, 'skipped');
-    assert.equal(body.nodes.find((n) => n.id === 'optimization')?.status, 'skipped');
-    assert.equal(body.nodes.find((n) => n.id === 'delivery')?.status, 'skipped');
+    assert.equal(body.nodes.find((n) => n.id === 'quality-gate'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'optimization'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'delivery'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'learning'), undefined);
   } finally {
     await f.close();
   }
 });
 
-test('workflow graph marks evaluation and quality-gate skipped when autoEvaluate is disabled and reflects HTTP-only delivery verification', async () => {
+test('workflow graph omits evaluation/quality-gate/optimization/learning when disabled and reflects HTTP-only direct delivery', async () => {
   const f = await fixture({ deliveryEnabled: true });
   try {
     f.vault.updateAutomation({
@@ -578,6 +586,7 @@ test('workflow graph marks evaluation and quality-gate skipped when autoEvaluate
       },
       f.vault.automation(),
     )[0];
+    gen.siteUrl = site.url;
     gen.generation = { prepared: true, deliveryId: randomUUID(), deliveryState: 'completed' };
     gen.stage = 'handoff';
     gen.status = 'completed';
@@ -599,15 +608,249 @@ test('workflow graph marks evaluation and quality-gate skipped when autoEvaluate
     f.automationStore.put(gen);
 
     const { body } = await f.fetchWorkflow(gen.id);
-    assert.equal(body.nodes.find((n) => n.id === 'evaluation')?.status, 'skipped');
-    const gateNode = body.nodes.find((n) => n.id === 'quality-gate');
-    assert.equal(gateNode?.status, 'skipped');
-    assert.equal(gateNode?.statusLabel, '已跳过');
+    assert.deepEqual(
+      body.nodes.filter((n) => n.lane === 'main').map((n) => n.id),
+      ['prepare', 'generation', 'delivery'],
+    );
+    assert.deepEqual(
+      body.edges.map((e) => `${e.from}->${e.to}`),
+      ['prepare->generation', 'generation->delivery'],
+    );
+    assert.equal(body.nodes.find((n) => n.id === 'evaluation'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'quality-gate'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'optimization'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'learning'), undefined);
+    const prepNode = body.nodes.find((n) => n.id === 'prepare');
+    assert.ok(prepNode?.checks?.some((c) => c.id === 'prepare-manifest' && c.label === '锁定交付清单与上下文'));
+    const genNode = body.nodes.find((n) => n.id === 'generation');
+    assert.equal(genNode?.subtitle, '已生成站点并交接交付');
+    assert.ok(genNode?.checks?.some((c) => c.id === 'site-ready' && c.label === '刷新站点地址并交接交付'));
     const delNode = body.nodes.find((n) => n.id === 'delivery');
     assert.equal(delNode?.status, 'completed');
     assert.match(delNode?.summary || '', /已关闭 AI 视觉核验/);
     assert.ok(delNode?.checks?.some((c) => c.label.includes('HTTP 可达性检查（已关闭 AI 视觉核验）')));
-    assert.equal(body.nodes.find((n) => n.id === 'learning'), undefined);
+    assert.match(body.headline, /站点生成与跨环境交付已全部完成/);
+    assert.doesNotMatch(body.headline, /独立评测/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('generate-only task without evaluation/delivery/learning shows compact 2-node graph and omits learning copy', async () => {
+  const f = await fixture({ deliveryEnabled: false });
+  try {
+    f.vault.updateAutomation({
+      ...defaultAutomationSettings,
+      enabled: true,
+      autoEvaluate: false,
+      learning: { ...defaultAutomationSettings.learning!, collect: false, use: false },
+    });
+    const res = await f.saveResource();
+    const version = f.automationStore.versions(res.id)[0];
+    const site = {
+      id: randomUUID(),
+      resourceId: res.id,
+      versionId: version.id,
+      environmentId: f.environmentId,
+      siteId: randomUUID(),
+      name: 'GenOnlySite',
+      url: 'https://gen-only.test/',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(site);
+
+    const gen = f.automationStore.create(
+      {
+        resourceIds: [res.id],
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: f.environmentId,
+        generatedSiteId: site.id,
+        autoEvaluate: false,
+        requirements: '',
+      },
+      f.vault.automation(),
+    )[0];
+    gen.siteUrl = site.url;
+    gen.generation = { prepared: true, deliveryId: randomUUID(), deliveryState: 'completed' };
+    gen.stage = 'handoff';
+    gen.status = 'completed';
+    gen.stopped = true;
+    f.automationStore.put(gen);
+
+    const { body } = await f.fetchWorkflow(gen.id);
+    assert.equal(body.overallStatus, 'completed');
+    assert.equal(body.overallLabel, '全流程完成');
+    assert.equal(body.blocker, null);
+    assert.deepEqual(
+      body.nodes.map((n) => n.id),
+      ['prepare', 'generation'],
+    );
+    assert.deepEqual(
+      body.edges.map((e) => `${e.from}->${e.to}`),
+      ['prepare->generation'],
+    );
+    assert.ok(!body.edges.some((e) => ['fail', 'loop', 'pass'].includes(e.kind)));
+    const prepNode = body.nodes.find((n) => n.id === 'prepare');
+    assert.ok(prepNode?.checks?.some((c) => c.id === 'prepare-manifest' && c.label === '锁定交付清单与上下文'));
+    const genNode = body.nodes.find((n) => n.id === 'generation');
+    assert.equal(genNode?.subtitle, '已生成可访问站点');
+    assert.ok(genNode?.checks?.some((c) => c.id === 'site-ready' && c.label === '刷新站点可访问地址'));
+    assert.match(body.headline, /站点已生成完成，可直接访问使用/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('generate-only task omits learning even when global learning.collect is true until manual evaluation appears', async () => {
+  const f = await fixture();
+  try {
+    f.vault.updateAutomation({
+      ...defaultAutomationSettings,
+      enabled: true,
+      autoEvaluate: false,
+      learning: { ...defaultAutomationSettings.learning!, collect: true, use: false },
+    });
+    const res = await f.saveResource();
+    const version = f.automationStore.versions(res.id)[0];
+    const site = {
+      id: randomUUID(),
+      resourceId: res.id,
+      versionId: version.id,
+      environmentId: f.environmentId,
+      siteId: randomUUID(),
+      name: 'CollectToggleSite',
+      url: 'https://collect-toggle.test/',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(site);
+
+    const gen = f.automationStore.create(
+      {
+        resourceIds: [res.id],
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: f.environmentId,
+        generatedSiteId: site.id,
+        autoEvaluate: false,
+        requirements: '',
+      },
+      f.vault.automation(),
+    )[0];
+    gen.siteUrl = site.url;
+    gen.generation = { prepared: true, deliveryId: randomUUID(), deliveryState: 'completed' };
+    gen.stage = 'handoff';
+    gen.status = 'completed';
+    gen.stopped = true;
+    f.automationStore.beginSiteChange(gen);
+
+    const beforeEval = await f.fetchWorkflow(gen.id);
+    assert.deepEqual(beforeEval.body.nodes.map((n) => n.id), ['prepare', 'generation']);
+    assert.equal(beforeEval.body.nodes.find((n) => n.id === 'learning'), undefined);
+
+    const manualEval = f.automationStore.create(
+      {
+        resourceIds: [res.id],
+        kind: 'evaluation',
+        scope: 'homepage',
+        environmentId: f.environmentId,
+        generatedSiteId: site.id,
+        requirements: '手动发起评测',
+        parentId: gen.id,
+        ruleSnapshot: sampleRule,
+      },
+      f.vault.automation(),
+    )[0];
+    manualEval.status = 'completed';
+    manualEval.stopped = true;
+    manualEval.siteRevision = gen.siteRevision;
+    manualEval.report = makeReport('passed', 90, 88);
+    f.automationStore.put(manualEval);
+    f.automationStore.publishSiteReport(manualEval);
+
+    const afterEval = await f.fetchWorkflow(gen.id);
+    assert.deepEqual(
+      afterEval.body.nodes.filter((n) => n.lane === 'main').map((n) => n.id),
+      ['prepare', 'generation', 'evaluation'],
+    );
+    assert.ok(afterEval.body.nodes.some((n) => n.id === 'learning'));
+  } finally {
+    await f.close();
+  }
+});
+
+test('generation + evaluation without optimization shows pass edge to delivery and marks delivery skipped when evaluation fails', async () => {
+  const f = await fixture({ deliveryEnabled: true });
+  try {
+    const res = await f.saveResource();
+    const version = f.automationStore.versions(res.id)[0];
+    const site = {
+      id: randomUUID(),
+      resourceId: res.id,
+      versionId: version.id,
+      environmentId: f.environmentId,
+      siteId: randomUUID(),
+      name: 'EvalDeliverySite',
+      url: 'https://eval-delivery.test/',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(site);
+
+    const gen = f.automationStore.create(
+      {
+        resourceIds: [res.id],
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: f.environmentId,
+        generatedSiteId: site.id,
+        autoEvaluate: true,
+        autoDelivery: true,
+        requirements: '',
+        ruleSnapshot: sampleRule,
+      },
+      f.vault.automation(),
+    )[0];
+    gen.siteUrl = site.url;
+    gen.generation = { prepared: true, deliveryId: randomUUID(), deliveryState: 'completed' };
+    gen.stage = 'handoff';
+    gen.status = 'completed';
+    gen.stopped = true;
+    f.automationStore.put(gen);
+
+    const evalTask = f.automationStore.create(
+      {
+        resourceIds: [res.id],
+        kind: 'evaluation',
+        scope: 'homepage',
+        environmentId: f.environmentId,
+        generatedSiteId: site.id,
+        requirements: '',
+        parentId: gen.id,
+        ruleSnapshot: sampleRule,
+      },
+      f.vault.automation(),
+    )[0];
+    evalTask.status = 'completed';
+    evalTask.stopped = true;
+    evalTask.report = makeReport('failed', 90, 72);
+    f.automationStore.put(evalTask);
+    gen.evaluationTaskId = evalTask.id;
+    f.automationStore.put(gen);
+
+    const { body } = await f.fetchWorkflow(gen.id);
+    assert.deepEqual(
+      body.nodes.filter((n) => n.lane === 'main').map((n) => n.id),
+      ['prepare', 'generation', 'evaluation', 'delivery'],
+    );
+    assert.equal(body.nodes.find((n) => n.id === 'quality-gate'), undefined);
+    assert.equal(body.nodes.find((n) => n.id === 'optimization'), undefined);
+    const evalToDel = body.edges.find((e) => e.from === 'evaluation' && e.to === 'delivery');
+    assert.ok(evalToDel);
+    assert.equal(evalToDel.kind, 'pass');
+    assert.equal(evalToDel.label, '评测通过');
+    const delNode = body.nodes.find((n) => n.id === 'delivery');
+    assert.equal(delNode?.status, 'skipped');
+    assert.equal(delNode?.subtitle, '评测未通过，未自动交付');
   } finally {
     await f.close();
   }

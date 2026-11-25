@@ -405,7 +405,9 @@ export function computeWorkflowLayout(
     placedBoxes.push(finalBox);
   }
 
-  const maxNodeRight = positioned.reduce((max, item) => Math.max(max, item.x + item.width), 320);
+  const maxNodeRight = positioned.length
+    ? positioned.reduce((max, item) => Math.max(max, item.x + item.width), 0)
+    : 320;
   const maxLabelRight = placedBoxes.reduce((max, b) => Math.max(max, b.x + b.width), 0);
   const maxNodeBottom = positioned.reduce(
     (max, item) => Math.max(max, item.y + item.height),

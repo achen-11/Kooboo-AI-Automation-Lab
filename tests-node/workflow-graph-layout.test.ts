@@ -305,3 +305,63 @@ test('adaptive maxWidth fits standard 5-node optimization workflow without horiz
     }
   }
 });
+
+test('compact adapted graphs (1-node evaluation, 2-node generation+followup, 3-node direct delivery) lay out cleanly', () => {
+  // 1-node standalone evaluation should have symmetric horizontal padding
+  const evalOnly = baseGraph();
+  evalOnly.nodes = [evalOnly.nodes.find((n) => n.id === 'evaluation')!].map((n) => ({ ...n, column: 0 }));
+  evalOnly.edges = [];
+  const evalLayout = computeWorkflowLayout(evalOnly);
+  assert.equal(evalLayout.nodes.length, 1);
+  assert.equal(
+    evalLayout.width - (evalLayout.nodes[0].x + evalLayout.nodes[0].width),
+    evalLayout.nodes[0].x,
+    'single node should have symmetric horizontal padding',
+  );
+
+  // 2-node generate-only + followup branch
+  const genOnly = baseGraph();
+  genOnly.nodes = genOnly.nodes
+    .filter((n) => n.id === 'prepare' || n.id === 'generation' || n.id === 'followup')
+    .map((n) => (n.id === 'followup' ? { ...n, column: 1, anchorNodeId: 'generation' } : n));
+  genOnly.edges = [
+    { id: 'e1', from: 'prepare', to: 'generation', kind: 'sequence', completed: true },
+    { id: 'e6', from: 'generation', to: 'followup', kind: 'branch', label: '异常自动跟进' },
+  ];
+  const genLayout = computeWorkflowLayout(genOnly, { maxWidth: 960 });
+  assert.ok(genLayout.width <= 960);
+  assert.equal(genLayout.nodes.length, 3);
+  assert.equal(genLayout.edges.length, 2);
+  for (const edge of genLayout.edges) {
+    assert.ok(edge.path.startsWith('M '));
+  }
+
+  // 3-node direct delivery (prepare -> generation -> delivery)
+  const directDelivery = baseGraph();
+  directDelivery.nodes = [
+    ...directDelivery.nodes.filter((n) => n.id === 'prepare' || n.id === 'generation'),
+    {
+      id: 'delivery',
+      kind: 'delivery',
+      lane: 'main',
+      column: 2,
+      title: '跨环境交付',
+      subtitle: '交付完成',
+      status: 'completed',
+      statusLabel: '已完成',
+      summary: 'ok',
+      description: 'desc',
+      durationMs: 1000,
+    },
+  ];
+  directDelivery.edges = [
+    { id: 'e1', from: 'prepare', to: 'generation', kind: 'sequence', completed: true },
+    { id: 'e2', from: 'generation', to: 'delivery', kind: 'sequence', completed: true },
+  ];
+  const directLayout = computeWorkflowLayout(directDelivery, { maxWidth: 960 });
+  assert.ok(directLayout.width <= 960);
+  assert.equal(directLayout.nodes.length, 3);
+  for (let i = 1; i < directLayout.nodes.length; i++) {
+    assert.ok(directLayout.nodes[i].x > directLayout.nodes[i - 1].x + directLayout.nodes[i - 1].width);
+  }
+});

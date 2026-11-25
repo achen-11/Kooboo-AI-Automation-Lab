@@ -337,6 +337,7 @@ function formatGenerationChecks(
   genTask: AutomationTask,
   prepareComplete: boolean,
   isRunningGen: boolean,
+  nextStage: 'evaluation' | 'delivery' | 'none',
 ): WorkflowStepCheck[] {
   const g = genTask.generation;
   const deliverySent = Boolean(g?.deliveryId || g?.legacySubmitted);
@@ -353,6 +354,12 @@ function formatGenerationChecks(
   const siteReady = Boolean(genTask.siteUrl && (loopCompleted || genTask.status === 'completed'));
 
   const failedAtGen = ['failed', 'interrupted', 'pending'].includes(genTask.status) && prepareComplete;
+  const siteReadyLabel =
+    nextStage === 'evaluation'
+      ? '刷新站点地址并交接评测'
+      : nextStage === 'delivery'
+        ? '刷新站点地址并交接交付'
+        : '刷新站点可访问地址';
 
   return [
     {
@@ -389,7 +396,7 @@ function formatGenerationChecks(
     },
     {
       id: 'site-ready',
-      label: '刷新站点地址并交接评测',
+      label: siteReadyLabel,
       status: siteReady
         ? 'done'
         : failedAtGen && loopCompleted
@@ -407,6 +414,7 @@ function formatPrepareChecks(
   version: InputVersion | undefined,
   selectionRun: LearningRun | undefined,
   isRunningPrepare: boolean,
+  learningUseEnabled: boolean,
 ): WorkflowStepCheck[] {
   const g = genTask.generation || {};
   const needsClone =
@@ -497,7 +505,7 @@ function formatPrepareChecks(
 
   checks.push({
     id: 'prepare-manifest',
-    label: '锁定交付清单与经验指引',
+    label: learningUseEnabled ? '锁定交付清单与经验指引' : '锁定交付清单与上下文',
     status: manifestDone
       ? 'done'
       : failedHere && siteCreated && cloneDone && uploadDone
@@ -625,7 +633,15 @@ export function buildTaskWorkflowGraph(
               : undefined;
 
   // Delivery projection aligned with /summary
-  const evalPlanned = Boolean(evaluationTask || opt || shouldEvaluateAfterGeneration(root, settings));
+  const showEvaluation = Boolean(
+    evaluationTask ||
+      opt ||
+      templateWorkflow?.evaluation ||
+      root.kind === 'evaluation' ||
+      shouldEvaluateAfterGeneration(root, settings),
+  );
+  const showOptimization = Boolean(opt);
+  const showQualityGate = showOptimization;
   const siteHeaders = root.generatedSiteId ? store.headers(root.generatedSiteId) : [];
   const siteState = root.generatedSiteId ? store.siteState(root.generatedSiteId) : undefined;
   const deliveryHeader =
@@ -639,6 +655,7 @@ export function buildTaskWorkflowGraph(
       ? deliveryHeader
       : undefined;
   const deliveryTask = currentDeliveryHeader ? store.task(currentDeliveryHeader.id, false) : undefined;
+  const del = deliveryTask?.delivery;
   const envConfig = vault.get().environments.find((e) => e.id === root.environmentId);
   const envDeliveryEnabled = Boolean(envConfig?.delivery?.enabled);
   const autoDeliveryFlag = root.autoDelivery ?? evaluationTask?.autoDelivery;
@@ -648,6 +665,7 @@ export function buildTaskWorkflowGraph(
         ? autoDeliveryFlag
         : envConfig?.delivery?.auto && root.scope === 'site' && ['migration', 'upgrade'].includes(root.scenario)),
   );
+  const showDelivery = Boolean(del || autoDeliveryFlag || autoDeliveryExpected);
 
   // Timing & bounded learning & supplements
   const timing = store.timing.summary(workflowIds, now);
@@ -661,6 +679,9 @@ export function buildTaskWorkflowGraph(
     : [];
   const selectionRun = learningRuns.find((r) => r.kind === 'selection');
   const reflectionRuns = learningRuns.filter((r) => r.kind === 'reflection');
+  const learningUseEnabled = Boolean(selectionRun || (settings.learning?.use && root.learningPolicy?.use !== false));
+  const learningCollectEnabled = Boolean(settings.learning?.collect && root.learningPolicy?.collect !== false);
+  const showLearning = Boolean(reflectionRuns.length > 0 || (learningCollectEnabled && showEvaluation));
 
   const activeTask: AutomationTask =
     viewing.kind === 'evaluation' && !opt
@@ -828,23 +849,10 @@ export function buildTaskWorkflowGraph(
     });
   }
 
-  // 2. Core Node 1: Prepare
+  // 2. Core Node 1: Prepare & 3. Core Node 2: Generation (only when generation is part of workflow)
   let prepDone = false;
-  if (!hasGeneration) {
-    nodes.push({
-      id: 'prepare',
-      kind: 'prepare',
-      lane: 'main',
-      column: col++,
-      title: '环境与资料准备',
-      subtitle: '已有站点，直接进入评测',
-      status: 'skipped',
-      statusLabel: '已跳过',
-      summary: '本次从已有生成站直接发起独立评测，跳过建站准备阶段。',
-      description: '在 Kooboo 环境中初始化目标站点、同步源站内容或模板 Sandbox，并上传参考图片与说明资料。',
-      durationMs: null,
-    });
-  } else {
+  let genDone = false;
+  if (hasGeneration) {
     const prepTask = initialGenerationTask || root;
     const prepGen = prepTask.generation;
     prepDone = Boolean(
@@ -867,7 +875,13 @@ export function buildTaskWorkflowGraph(
     else if (prepTask.status === 'cancelled') prepStatus = 'cancelled';
     else prepStatus = 'attention';
 
-    const prepChecks = formatPrepareChecks(prepTask, version, selectionRun, prepStatus === 'running');
+    const prepChecks = formatPrepareChecks(
+      prepTask,
+      version,
+      selectionRun,
+      prepStatus === 'running',
+      learningUseEnabled,
+    );
     const refUrl = effectiveReferenceUrl(version, prepTask);
     const tplMode = effectiveTemplateUsageMode(version, Boolean(prepTask.generatedSiteId));
     const prepMetrics: WorkflowNodeMetric[] = [];
@@ -916,25 +930,7 @@ export function buildTaskWorkflowGraph(
         ...(prepStatus === 'attention' ? [{ type: 'tab' as const, label: '查看中断原因', tab: 'execution' as const }] : []),
       ],
     });
-  }
 
-  // 3. Core Node 2: Generation
-  let genDone = false;
-  if (!hasGeneration) {
-    nodes.push({
-      id: 'generation',
-      kind: 'generation',
-      lane: 'main',
-      column: col++,
-      title: 'AI 生成建站',
-      subtitle: '直接对已有站点评测',
-      status: 'skipped',
-      statusLabel: '已跳过',
-      summary: '本次未执行 AI 建站，直接针对已有站点运行独立评测。',
-      description: '将整理好的需求、参考视觉和资料包发送给 Kooboo AI 会话，追踪其完成建站并检查站点可访问性。',
-      durationMs: null,
-    });
-  } else {
     const isMultiRound = rounds.length > 1;
     const genNodeTask = isMultiRound ? (initialGenerationTask || root) : (generationTask || root);
     genDone = Boolean(
@@ -951,7 +947,12 @@ export function buildTaskWorkflowGraph(
     else if (genNodeTask.status === 'cancelled') genStatus = 'cancelled';
     else genStatus = 'attention';
 
-    const genChecks = formatGenerationChecks(genNodeTask, prepDone, genStatus === 'running');
+    const genNextStage: 'evaluation' | 'delivery' | 'none' = showEvaluation
+      ? 'evaluation'
+      : showDelivery
+        ? 'delivery'
+        : 'none';
+    const genChecks = formatGenerationChecks(genNodeTask, prepDone, genStatus === 'running', genNextStage);
     const genActions: WorkflowNodeAction[] = [{ type: 'tab', label: '查看执行记录', tab: 'execution' }];
     if (genNodeTask.generation?.deliveryId || genNodeTask.generation?.prepared) {
       genActions.push({ type: 'tab', label: '查看发送给 AI 的委托', tab: 'input' });
@@ -964,7 +965,11 @@ export function buildTaskWorkflowGraph(
       column: col++,
       title: 'AI 生成建站',
       subtitle: genDone
-        ? '已生成站点并交接'
+        ? showEvaluation
+          ? '已生成站点并交接评测'
+          : showDelivery
+            ? '已生成站点并交接交付'
+            : '已生成可访问站点'
         : genStatus === 'running'
           ? genNodeTask.generation?.deliveryState === 'accepted'
             ? 'AI 正在构建页面'
@@ -978,11 +983,13 @@ export function buildTaskWorkflowGraph(
       statusLabel: workflowNodeStatusLabels[genStatus],
       summary: genDone
         ? genNodeTask.siteUrl
-          ? evalPlanned
+          ? showEvaluation
             ? 'AI 已完成站点页面构建并刷新出可访问地址，流程进入独立评测。'
-            : (autoDeliveryFlag || autoDeliveryExpected)
+            : showDelivery
               ? 'AI 已完成站点页面构建并刷新出可访问地址，已跳过独立评测，直接进入跨环境交付。'
-              : 'AI 已完成站点页面构建并刷新出可访问地址（已关闭自动评测，可直接使用或按需手动发起评测 / 交付）。'
+              : envDeliveryEnabled
+                ? 'AI 已完成站点页面构建并刷新出可访问地址（未开启自动评测与自动交付，可直接使用或按需手动发起评测 / 交付）。'
+                : 'AI 已完成站点页面构建并刷新出可访问地址（未开启自动评测，可直接使用或按需在右上角手动发起评测）。'
           : '生成阶段已结束。'
         : genStatus === 'attention'
           ? cleanText(genNodeTask.interruption?.reason || genNodeTask.error, 'AI 生成建站未能正常结束，需要核查。')
@@ -998,153 +1005,147 @@ export function buildTaskWorkflowGraph(
     });
   }
 
-  // 4. Core Node 3: Evaluation (always shown)
+  // 4. Core Node 3: Evaluation (shown when configured or executed)
   const evalNodeTask = evaluationTask;
   const isTemplateEval = Boolean(templateWorkflow);
   const tplEval = templateWorkflow?.evaluation;
   const evalReport = evalNodeTask?.report;
 
-  let evalStatus: WorkflowNodeStatus;
-  if (evalNodeTask) {
-    if (evalNodeTask.status === 'completed' && (evalReport || tplEval)) evalStatus = 'completed';
-    else if (evalNodeTask.status === 'queued') evalStatus = 'queued';
-    else if (['running', 'following-up', 'cancelling'].includes(evalNodeTask.status)) evalStatus = 'running';
-    else if (evalNodeTask.status === 'cancelled') evalStatus = 'cancelled';
-    else evalStatus = 'attention';
-  } else if (genDone && !evalPlanned) {
-    evalStatus = 'skipped';
-  } else {
-    evalStatus = 'pending';
-  }
+  let evalStatus: WorkflowNodeStatus = 'skipped';
+  let evalPassed = false;
+  if (showEvaluation) {
+    if (evalNodeTask) {
+      if (evalNodeTask.status === 'completed' && (evalReport || tplEval)) evalStatus = 'completed';
+      else if (evalNodeTask.status === 'queued') evalStatus = 'queued';
+      else if (['running', 'following-up', 'cancelling'].includes(evalNodeTask.status)) evalStatus = 'running';
+      else if (evalNodeTask.status === 'cancelled') evalStatus = 'cancelled';
+      else evalStatus = 'attention';
+    } else {
+      evalStatus = 'pending';
+    }
 
-  const evalMetrics: WorkflowNodeMetric[] = [];
-  if (evalReport) {
-    for (const s of evalReport.scores) {
+    evalPassed = Boolean(
+      evalStatus === 'completed' &&
+        ((evalReport && evalReport.quality === 'passed') || (tplEval && tplEval.quality === 'passed')),
+    );
+
+    const evalMetrics: WorkflowNodeMetric[] = [];
+    if (evalReport) {
+      for (const s of evalReport.scores) {
+        evalMetrics.push({
+          label: s.viewport === 'desktop' ? 'PC 端' : s.viewport === 'mobile' ? '移动端' : '业务',
+          value: s.value === null ? '未验证' : `${s.value} 分`,
+          tone: scoreTone(s.value, targetScore),
+        });
+      }
+      const severeCount = evalReport.issues.filter(
+        (i) => i.severity === 'critical' || i.severity === 'major',
+      ).length;
       evalMetrics.push({
-        label: s.viewport === 'desktop' ? 'PC 端' : s.viewport === 'mobile' ? '移动端' : '业务',
-        value: s.value === null ? '未验证' : `${s.value} 分`,
-        tone: scoreTone(s.value, targetScore),
+        label: '问题清单',
+        value: severeCount > 0 ? `${evalReport.issues.length} 项（${severeCount} 项重要）` : `${evalReport.issues.length} 项`,
+        tone: severeCount > 0 ? 'bad' : evalReport.issues.length > 0 ? 'warn' : 'good',
+      });
+    } else if (tplEval) {
+      const openCount = tplEval.issues.filter((i) => i.status === 'open').length;
+      evalMetrics.push({
+        label: '待修复项',
+        value: `${openCount} 项`,
+        tone: openCount > 0 ? 'warn' : 'good',
       });
     }
-    const severeCount = evalReport.issues.filter(
-      (i) => i.severity === 'critical' || i.severity === 'major',
-    ).length;
-    evalMetrics.push({
-      label: '问题清单',
-      value: severeCount > 0 ? `${evalReport.issues.length} 项（${severeCount} 项重要）` : `${evalReport.issues.length} 项`,
-      tone: severeCount > 0 ? 'bad' : evalReport.issues.length > 0 ? 'warn' : 'good',
-    });
-  } else if (tplEval) {
-    const openCount = tplEval.issues.filter((i) => i.status === 'open').length;
-    evalMetrics.push({
-      label: '待修复项',
-      value: `${openCount} 项`,
-      tone: openCount > 0 ? 'warn' : 'good',
-    });
-  }
 
-  const evalChecks: WorkflowStepCheck[] = [
-    {
-      id: 'eval-capture',
-      label: 'PC / 移动端实机截图与取证',
-      status:
-        (evalNodeTask?.artifacts?.length || 0) > 0 || Boolean(evalReport || tplEval)
+    const evalChecks: WorkflowStepCheck[] = [
+      {
+        id: 'eval-capture',
+        label: 'PC / 移动端实机截图与取证',
+        status:
+          (evalNodeTask?.artifacts?.length || 0) > 0 || Boolean(evalReport || tplEval)
+            ? 'done'
+            : evalStatus === 'running'
+              ? 'running'
+              : evalStatus === 'attention'
+                ? 'failed'
+                : 'pending',
+      },
+      {
+        id: 'eval-rules',
+        label: '规则对比与问题清单输出',
+        status: evalReport || tplEval
           ? 'done'
-          : evalStatus === 'running'
-            ? 'running'
-            : evalStatus === 'attention'
-              ? 'failed'
+          : evalStatus === 'attention'
+            ? 'failed'
+            : evalStatus === 'running' && (evalNodeTask?.artifacts?.length || 0) > 0
+              ? 'running'
               : 'pending',
-    },
-    {
-      id: 'eval-rules',
-      label: '规则对比与问题清单输出',
-      status: evalReport || tplEval
-        ? 'done'
-        : evalStatus === 'attention'
-          ? 'failed'
-          : evalStatus === 'running' && (evalNodeTask?.artifacts?.length || 0) > 0
-            ? 'running'
-            : 'pending',
-    },
-  ];
-  if (evalReport?.completeness || evalReport?.migrationCheck || evalReport?.collectionTarget) {
-    const completeOk =
-      (!evalReport.completeness || evalReport.completeness.state === 'complete') &&
-      (!evalReport.migrationCheck || evalReport.migrationCheck.state === 'complete') &&
-      (!evalReport.collectionTarget || evalReport.collectionTarget.state === 'complete');
-    evalChecks.push({
-      id: 'eval-completeness',
-      label: '全站内容与迁移完整性核验',
-      status: completeOk ? 'done' : 'failed',
-    });
-  }
+      },
+    ];
+    if (evalReport?.completeness || evalReport?.migrationCheck || evalReport?.collectionTarget) {
+      const completeOk =
+        (!evalReport.completeness || evalReport.completeness.state === 'complete') &&
+        (!evalReport.migrationCheck || evalReport.migrationCheck.state === 'complete') &&
+        (!evalReport.collectionTarget || evalReport.collectionTarget.state === 'complete');
+      evalChecks.push({
+        id: 'eval-completeness',
+        label: '全站内容与迁移完整性核验',
+        status: completeOk ? 'done' : 'failed',
+      });
+    }
 
-  const evalSubtitle =
-    evalStatus === 'completed'
-      ? evalReport
-        ? evalReport.quality === 'passed'
-          ? '已通过质量核验'
-          : evalReport.quality === 'failed'
-            ? `发现 ${evalReport.issues.length} 项待改进`
-            : '存在未核验项'
-        : tplEval
-          ? tplEval.quality === 'passed'
-            ? '区块核验通过'
-            : '存在待修复区块'
-          : '评测已结束'
-      : evalStatus === 'skipped'
-        ? '已跳过自动评测，可手动发起'
+    const evalSubtitle =
+      evalStatus === 'completed'
+        ? evalReport
+          ? evalReport.quality === 'passed'
+            ? '已通过质量核验'
+            : evalReport.quality === 'failed'
+              ? `发现 ${evalReport.issues.length} 项待改进`
+              : '存在未核验项'
+          : tplEval
+            ? tplEval.quality === 'passed'
+              ? '区块核验通过'
+              : '存在待修复区块'
+            : '评测已结束'
         : evalNodeTask
           ? taskStatusNames[evalNodeTask.status]
           : genDone
             ? '待发起评测'
             : '等待建站完成后开始';
 
-  nodes.push({
-    id: 'evaluation',
-    kind: 'evaluation',
-    lane: 'main',
-    column: col++,
-    title: isTemplateEval ? '区块共享核验' : '独立评测',
-    subtitle: evalSubtitle,
-    status: evalStatus,
-    statusLabel: workflowNodeStatusLabels[evalStatus],
-    summary: evalReport
-      ? cleanText(evalReport.summary, '独立评测已完成。', 140)
-      : evalStatus === 'attention'
-        ? cleanText(evalNodeTask?.interruption?.reason || evalNodeTask?.error, '独立评测过程发生异常，需要处理。')
-        : evalStatus === 'skipped'
-          ? '当前任务未开启自动评测，已跳过独立评测；如需质量评分，可在右上角手动点击「发起评测」。'
+    nodes.push({
+      id: 'evaluation',
+      kind: 'evaluation',
+      lane: 'main',
+      column: col++,
+      title: isTemplateEval ? '区块共享核验' : '独立评测',
+      subtitle: evalSubtitle,
+      status: evalStatus,
+      statusLabel: workflowNodeStatusLabels[evalStatus],
+      summary: evalReport
+        ? cleanText(evalReport.summary, '独立评测已完成。', 140)
+        : evalStatus === 'attention'
+          ? cleanText(evalNodeTask?.interruption?.reason || evalNodeTask?.error, '独立评测过程发生异常，需要处理。')
           : '生成完成后由独立评测代理对目标站双端画面、内容完整性和规则逐项打分。',
-    description: '由独立评审代理打开真实浏览器截图取证，对比参考站与资料清单进行打分，找出具体缺陷。',
-    taskId: evalNodeTask?.id,
-    durationMs: stageDuration(timing.stages, ['evaluation', 'evidence']),
-    checks: evalChecks,
-    ...(evalMetrics.length ? { metrics: evalMetrics } : {}),
-    actions: [
-      ...(evalReport || tplEval ? [{ type: 'tab' as const, label: '查看评测结果', tab: 'report' as const }] : []),
-      ...(evalNodeTask && evalNodeTask.id !== viewing.id
-        ? [{ type: 'task' as const, label: '打开评测任务详情', taskId: evalNodeTask.id }]
-        : []),
-      ...(evalStatus === 'attention' || evalStatus === 'cancelled'
-        ? [{ type: 'tab' as const, label: '查看执行记录', tab: 'execution' as const }]
-        : []),
-    ],
-  });
+      description: '由独立评审代理打开真实浏览器截图取证，对比参考站与资料清单进行打分，找出具体缺陷。',
+      taskId: evalNodeTask?.id,
+      durationMs: stageDuration(timing.stages, ['evaluation', 'evidence']),
+      checks: evalChecks,
+      ...(evalMetrics.length ? { metrics: evalMetrics } : {}),
+      actions: [
+        ...(evalReport || tplEval ? [{ type: 'tab' as const, label: '查看评测结果', tab: 'report' as const }] : []),
+        ...(evalNodeTask && evalNodeTask.id !== viewing.id
+          ? [{ type: 'task' as const, label: '打开评测任务详情', taskId: evalNodeTask.id }]
+          : []),
+        ...(evalStatus === 'attention' || evalStatus === 'cancelled'
+          ? [{ type: 'tab' as const, label: '查看执行记录', tab: 'execution' as const }]
+          : []),
+      ],
+    });
+  }
 
-  // 5. Core Node 4: Quality Gate (always shown)
-  const evalPassed = Boolean(
-    evalStatus === 'completed' &&
-      ((evalReport && evalReport.quality === 'passed') || (tplEval && tplEval.quality === 'passed')),
-  );
-  let gateStatus: WorkflowNodeStatus;
-  let gateSubtitle: string;
-  let gateSummary: string;
+  // 5. Core Node 4: Quality Gate (only when automatic optimization is enabled)
   const currentRoundNo = opt?.rounds.at(-1)?.number ?? 0;
-
-  if (opt) {
-    gateStatus =
+  if (showQualityGate && opt) {
+    const gateStatus: WorkflowNodeStatus =
       opt.state === 'completed'
         ? 'completed'
         : opt.state === 'stopped'
@@ -1156,154 +1157,135 @@ export function buildTaskWorkflowGraph(
                 ? 'pending'
                 : 'running'
             : 'pending';
-    gateSubtitle =
+    const gateSubtitle =
       opt.state === 'completed'
         ? `已达标（≥ ${targetScore} 分）`
         : opt.state === 'stopped'
           ? '未达标，优化已停止'
           : `目标 ≥ ${targetScore} 分 · 第 ${currentRoundNo} 轮`;
-    gateSummary =
+    const gateSummary =
       opt.state === 'completed'
         ? 'PC 与移动端均达到质量目标，无严重或主要缺陷，准予放行。'
         : cleanText(opt.reason, `自动检查双端分数是否均 ≥ ${targetScore} 分、必过项通过且无严重/主要问题。`);
-  } else if (evalStatus === 'completed') {
-    if (evalPassed) {
-      gateStatus = 'completed';
-      gateSubtitle = '评测已达到交付标准';
-      gateSummary = '独立评测已通过，当前站点已满足既定质量要求。';
-    } else {
-      gateStatus = 'skipped';
-      gateSubtitle = '未开启自动优化 · 可手动处理';
-      gateSummary = '当前任务未开启自动质量优化；评测存在待改进项，可手动点击「继续生成」或开启自动优化。';
-    }
-  } else if (evalStatus === 'skipped') {
-    gateStatus = 'skipped';
-    gateSubtitle = '已跳过评测与质量门禁';
-    gateSummary = '当前任务未开启自动评测与自动优化，跳过质量门禁判定。';
-  } else {
-    gateStatus = 'pending';
-    gateSubtitle = '等待独立评测结果';
-    gateSummary = `独立评测完成后将在此核对双端是否达到 ${targetScore} 分且无重要缺陷。`;
-  }
 
-  const maxRoundsText = opt
-    ? root.autonomy
+    const maxRoundsText = root.autonomy
       ? root.autonomy.policy.hardMaxRounds
         ? `最多 ${root.autonomy.policy.hardMaxRounds} 轮`
         : '持续至达标'
-      : `最多 ${opt.policy.maxRounds} 轮`
-    : '未开启自动修复';
+      : `最多 ${opt.policy.maxRounds} 轮`;
 
-  nodes.push({
-    id: 'quality-gate',
-    kind: 'quality-gate',
-    lane: 'main',
-    column: col++,
-    title: '质量达标判定',
-    subtitle: gateSubtitle,
-    status: gateStatus,
-    statusLabel: gateStatus === 'skipped' ? (evalStatus === 'skipped' ? '已跳过' : '未开启优化') : workflowNodeStatusLabels[gateStatus],
-    summary: gateSummary,
-    description: `达标条件：PC 与移动端均 ≥ ${targetScore} 分、适用必检项全部通过、无严重/主要缺陷（${maxRoundsText}）。`,
-    taskId: root.id,
-    durationMs: null,
-    metrics: [
-      { label: '目标分数', value: `≥ ${targetScore} 分`, tone: 'neutral' },
-      { label: '修复轮次', value: opt ? `${currentRoundNo} (${maxRoundsText})` : maxRoundsText, tone: 'neutral' },
-    ],
-    actions: [{ type: 'tab', label: '查看评测结果', tab: 'report' }],
-  });
-
-  // 6. Core Node 5: Cross-environment Delivery (always shown)
-  const del = deliveryTask?.delivery;
-  let delStatus: WorkflowNodeStatus;
-  let delSubtitle: string;
-  let delSummary: string;
-
-  if (del) {
-    if (del.status === 'completed') delStatus = 'completed';
-    else if (del.status === 'running' || del.status === 'verifying') delStatus = 'running';
-    else if (del.status === 'queued') delStatus = 'queued';
-    else delStatus = 'attention';
-    delSubtitle = deliveryStatusNames[del.status];
-    delSummary =
-      cleanText(del.error) ||
-      (del.status === 'completed'
-        ? (del.policy.verifyWithAi === false
-            ? '目标站已迁移完成并通过 HTTP 可达性检查（已关闭 AI 视觉核验）。'
-            : '目标站已迁移完成并通过双端交付核验。')
-        : '正在执行跨环境迁移或双端交付核验。');
-  } else if (opt?.state === 'stopped') {
-    delStatus = 'skipped';
-    delSubtitle = '优化未达标，未自动交付';
-    delSummary = '自动优化未达标已停止，系统按安全策略未自动交付，可在「交付」页手动发起。';
-  } else if (autoDeliveryFlag || autoDeliveryExpected) {
-    delStatus = 'pending';
-    delSubtitle = !evalPlanned ? '等待生成完成后自动交付' : '等待评测达标后自动交付';
-    delSummary = !evalPlanned
-      ? '生成完成后将跳过源站评测，直接迁移到目标环境。'
-      : '评测达到交付标准后将自动迁移到目标环境并核验可访问性。';
-  } else if (envDeliveryEnabled) {
-    delStatus = 'skipped';
-    delSubtitle = '未开启自动交付，可手动发起';
-    delSummary = !evalPlanned && genDone
-      ? '站点已生成完成；如需迁移到目标环境，可在「交付」标签页直接发起跨环境交付。'
-      : '当前任务未开启自动交付；确认质量满意后可在「交付」标签页手动发起跨环境迁移。';
-  } else {
-    delStatus = 'skipped';
-    delSubtitle = '当前环境未配置交付';
-    delSummary = '当前环境未配置跨环境交付服务；如仅需在本机使用生成站可忽略此步。';
+    nodes.push({
+      id: 'quality-gate',
+      kind: 'quality-gate',
+      lane: 'main',
+      column: col++,
+      title: '质量达标判定',
+      subtitle: gateSubtitle,
+      status: gateStatus,
+      statusLabel: workflowNodeStatusLabels[gateStatus],
+      summary: gateSummary,
+      description: `达标条件：PC 与移动端均 ≥ ${targetScore} 分、适用必检项全部通过、无严重/主要缺陷（${maxRoundsText}）。`,
+      taskId: root.id,
+      durationMs: null,
+      metrics: [
+        { label: '目标分数', value: `≥ ${targetScore} 分`, tone: 'neutral' },
+        { label: '修复轮次', value: `${currentRoundNo} (${maxRoundsText})`, tone: 'neutral' },
+      ],
+      actions: [{ type: 'tab', label: '查看评测结果', tab: 'report' }],
+    });
   }
 
-  const delChecks: WorkflowStepCheck[] = [
-    {
-      id: 'del-migrate',
-      label: '向目标环境发起站点迁移',
-      status: del?.target || del?.status === 'completed'
-        ? 'done'
-        : del?.status === 'running'
-          ? 'running'
-          : del?.status === 'uncertain' || (del?.status === 'failed' && !del.target)
-            ? 'failed'
-            : delStatus === 'skipped'
-              ? 'skipped'
-              : 'pending',
-    },
-    {
-      id: 'del-verify',
-      label: del?.policy.verifyWithAi === false ? '目标站 HTTP 可达性检查（已关闭 AI 视觉核验）' : '目标站可达性与双端视觉核验',
-      status: del?.status === 'completed'
-        ? 'done'
-        : del?.status === 'verifying'
-          ? 'running'
-          : del?.status === 'failed' && Boolean(del.target)
-            ? 'failed'
-            : delStatus === 'skipped'
-              ? 'skipped'
-              : 'pending',
-    },
-  ];
+  // 6. Core Node 5: Cross-environment Delivery (shown when configured or executed)
+  if (showDelivery) {
+    let delStatus: WorkflowNodeStatus;
+    let delSubtitle: string;
+    let delSummary: string;
 
-  nodes.push({
-    id: 'delivery',
-    kind: 'delivery',
-    lane: 'main',
-    column: col++,
-    title: '跨环境交付',
-    subtitle: delSubtitle,
-    status: delStatus,
-    statusLabel: delStatus === 'skipped' ? '未开启' : workflowNodeStatusLabels[delStatus],
-    summary: delSummary,
-    description: '完成最终质量验收后，把站点发布到目标交付环境并对可访问性与页面呈现做一次独立核验。',
-    taskId: deliveryTask?.id,
-    durationMs: stageDuration(timing.stages, ['delivery']),
-    checks: delChecks,
-    ...(envDeliveryEnabled || del ? { actions: [{ type: 'tab' as const, label: '查看交付详情', tab: 'delivery' as const }] } : {}),
-  });
+    if (del) {
+      if (del.status === 'completed') delStatus = 'completed';
+      else if (del.status === 'running' || del.status === 'verifying') delStatus = 'running';
+      else if (del.status === 'queued') delStatus = 'queued';
+      else delStatus = 'attention';
+      delSubtitle = deliveryStatusNames[del.status];
+      delSummary =
+        cleanText(del.error) ||
+        (del.status === 'completed'
+          ? (del.policy.verifyWithAi === false
+              ? '目标站已迁移完成并通过 HTTP 可达性检查（已关闭 AI 视觉核验）。'
+              : '目标站已迁移完成并通过双端交付核验。')
+          : '正在执行跨环境迁移或双端交付核验。');
+    } else if (opt?.state === 'stopped') {
+      delStatus = 'skipped';
+      delSubtitle = '优化未达标，未自动交付';
+      delSummary = '自动优化未达标已停止，系统按安全策略未自动交付，可在「交付」页手动发起。';
+    } else if (!opt && showEvaluation && evalStatus === 'completed' && !evalPassed && envConfig?.delivery?.requirePassed !== false) {
+      delStatus = 'skipped';
+      delSubtitle = '评测未通过，未自动交付';
+      delSummary = '独立评测未通过且当前交付策略要求达标后自动迁移，可在「交付」标签页手动发起。';
+    } else if (autoDeliveryFlag || autoDeliveryExpected) {
+      delStatus = 'pending';
+      delSubtitle = !showEvaluation ? '等待生成完成后自动交付' : '等待评测达标后自动交付';
+      delSummary = !showEvaluation
+        ? '生成完成后将跳过源站评测，直接迁移到目标环境。'
+        : '评测达到交付标准后将自动迁移到目标环境并核验可访问性。';
+    } else {
+      delStatus = 'skipped';
+      delSubtitle = '未开启自动交付，可手动发起';
+      delSummary = !showEvaluation && genDone
+        ? '站点已生成完成；如需迁移到目标环境，可在「交付」标签页直接发起跨环境交付。'
+        : '当前任务未开启自动交付；确认质量满意后可在「交付」标签页手动发起跨环境迁移。';
+    }
 
-  // 7. Branch Node: Optimization Repair Loop (always shown as part of full skeleton)
-  const evalCol = nodes.find((n) => n.id === 'evaluation')?.column ?? 2;
-  if (opt) {
+    const delChecks: WorkflowStepCheck[] = [
+      {
+        id: 'del-migrate',
+        label: '向目标环境发起站点迁移',
+        status: del?.target || del?.status === 'completed'
+          ? 'done'
+          : del?.status === 'running'
+            ? 'running'
+            : del?.status === 'uncertain' || (del?.status === 'failed' && !del.target)
+              ? 'failed'
+              : delStatus === 'skipped'
+                ? 'skipped'
+                : 'pending',
+      },
+      {
+        id: 'del-verify',
+        label: del?.policy.verifyWithAi === false ? '目标站 HTTP 可达性检查（已关闭 AI 视觉核验）' : '目标站可达性与双端视觉核验',
+        status: del?.status === 'completed'
+          ? 'done'
+          : del?.status === 'verifying'
+            ? 'running'
+            : del?.status === 'failed' && Boolean(del.target)
+              ? 'failed'
+              : delStatus === 'skipped'
+                ? 'skipped'
+                : 'pending',
+      },
+    ];
+
+    nodes.push({
+      id: 'delivery',
+      kind: 'delivery',
+      lane: 'main',
+      column: col++,
+      title: '跨环境交付',
+      subtitle: delSubtitle,
+      status: delStatus,
+      statusLabel: delStatus === 'skipped' ? '未开启' : workflowNodeStatusLabels[delStatus],
+      summary: delSummary,
+      description: '完成最终质量验收后，把站点发布到目标交付环境并对可访问性与页面呈现做一次独立核验。',
+      taskId: deliveryTask?.id,
+      durationMs: stageDuration(timing.stages, ['delivery']),
+      checks: delChecks,
+      ...(envDeliveryEnabled || del ? { actions: [{ type: 'tab' as const, label: '查看交付详情', tab: 'delivery' as const }] } : {}),
+    });
+  }
+
+  // 7. Branch Node: Optimization Repair Loop (only when automatic optimization is enabled)
+  if (showOptimization && opt) {
+    const evalCol = nodes.find((n) => n.id === 'evaluation')?.column ?? 2;
     const activeOptChild =
       opt.activeTaskId && opt.activeTaskId !== root.id
         ? store.task(opt.activeTaskId, false)
@@ -1375,21 +1357,6 @@ export function buildTaskWorkflowGraph(
           : []),
       ],
     });
-  } else {
-    nodes.push({
-      id: 'optimization',
-      kind: 'optimization',
-      lane: 'branch',
-      column: evalCol,
-      anchorNodeId: 'evaluation',
-      title: '自动优化修复',
-      subtitle: '未开启自动修复',
-      status: 'skipped',
-      statusLabel: '未开启',
-      summary: '当前任务未开启自动质量优化，如需未达标自动修复并复评，可在右上角「更多 → 自动优化到目标」开启。',
-      description: '自动闭环修复支路：评测未达标时自动分析缺陷并修改原站点，完成后回到独立评测复验。',
-      durationMs: null,
-    });
   }
 
   // 8. Sequential & Loop Edges
@@ -1407,6 +1374,16 @@ export function buildTaskWorkflowGraph(
         completed: from.status === 'completed' && to.status !== 'pending' && to.status !== 'skipped',
         active: to.status === 'running' || to.status === 'queued',
       });
+    } else if (from.kind === 'evaluation' && to.kind === 'delivery' && envConfig?.delivery?.requirePassed !== false) {
+      edges.push({
+        id: `edge-${from.id}-${to.id}`,
+        from: from.id,
+        to: to.id,
+        kind: 'pass',
+        label: '评测通过',
+        completed: evalPassed && to.status !== 'pending' && to.status !== 'skipped',
+        active: to.status === 'running' || to.status === 'queued',
+      });
     } else {
       edges.push({
         id: `edge-${from.id}-${to.id}`,
@@ -1421,24 +1398,26 @@ export function buildTaskWorkflowGraph(
     }
   }
 
-  edges.push({
-    id: 'edge-gate-opt',
-    from: 'quality-gate',
-    to: 'optimization',
-    kind: 'fail',
-    label: '未达标 · 进入修复',
-    active: Boolean(opt && (opt.state === 'planning' || opt.state === 'repairing')),
-    completed: Boolean(opt && opt.rounds.length > 1),
-  });
-  edges.push({
-    id: 'edge-opt-eval',
-    from: 'optimization',
-    to: 'evaluation',
-    kind: 'loop',
-    label: '修复后复评',
-    active: Boolean(opt && opt.state === 'waiting-evaluation' && opt.rounds.length > 1),
-    completed: Boolean(opt && opt.rounds.length > 1 && nodes.find((n) => n.id === 'evaluation')?.status === 'completed'),
-  });
+  if (showOptimization && showQualityGate && showEvaluation) {
+    edges.push({
+      id: 'edge-gate-opt',
+      from: 'quality-gate',
+      to: 'optimization',
+      kind: 'fail',
+      label: '未达标 · 进入修复',
+      active: Boolean(opt && (opt.state === 'planning' || opt.state === 'repairing')),
+      completed: Boolean(opt && opt.rounds.length > 1),
+    });
+    edges.push({
+      id: 'edge-opt-eval',
+      from: 'optimization',
+      to: 'evaluation',
+      kind: 'loop',
+      label: '修复后复评',
+      active: Boolean(opt && opt.state === 'waiting-evaluation' && opt.rounds.length > 1),
+      completed: Boolean(opt && opt.rounds.length > 1 && nodes.find((n) => n.id === 'evaluation')?.status === 'completed'),
+    });
+  }
 
   // 9. Optional Followup branch node (only when followup was triggered/active)
   const followupOwner =
@@ -1519,8 +1498,8 @@ export function buildTaskWorkflowGraph(
     }
   }
 
-  // 10. Experience Learning branch node (when reflection exists OR learning collection is enabled)
-  if (reflectionRuns.length > 0 || (settings.learning?.collect && root.learningPolicy?.collect !== false)) {
+  // 10. Experience Learning branch node (when reflection exists OR learning collection is enabled for an evaluation-capable workflow)
+  if (showLearning) {
     const latestLearn = reflectionRuns[0];
     const learnStatus: WorkflowNodeStatus = !latestLearn
       ? 'pending'
@@ -1631,7 +1610,7 @@ export function buildTaskWorkflowGraph(
       blocker = buildDeliveryBlocker(deliveryTask, deliveryTask.delivery, qReason);
     }
   } else if (opt?.state === 'stopped') {
-    const gateNode = nodes.find((n) => n.id === 'quality-gate')!;
+    const gateNode = nodes.find((n) => n.id === 'quality-gate') || mainNodes[mainNodes.length - 1];
     blocker = {
       nodeId: gateNode.id,
       nodeTitle: gateNode.title,
@@ -1748,10 +1727,16 @@ export function buildTaskWorkflowGraph(
     overallLabel = '全流程完成';
     headline =
       deliveryTask?.delivery?.status === 'completed'
-        ? '建站、独立评测与跨环境交付核验已全部完成。'
+        ? showEvaluation && evalStatus === 'completed'
+          ? '建站、独立评测与跨环境交付核验已全部完成。'
+          : '站点生成与跨环境交付已全部完成。'
         : evalPassed
-          ? '站点生成与独立评测已全部达标完成。'
-          : '所有已触发流程节点均已执行完成。';
+          ? hasGeneration
+            ? '站点生成与独立评测已全部达标完成。'
+            : '独立评测已达标完成。'
+          : !showEvaluation && hasGeneration && genDone
+            ? '站点已生成完成，可直接访问使用。'
+            : '所有已触发流程节点均已执行完成。';
   } else {
     const nextPending = mainNodes.find((n) => n.status === 'pending');
     overallStatus = 'pending';

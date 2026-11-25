@@ -4,6 +4,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
+import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import {
   defaultAutomationSettings,
@@ -13,7 +14,7 @@ import {
 } from '../shared/automation.js';
 import { AutomationStore } from '../server/automation/store.js';
 import { AutomationWorker } from '../server/automation/worker.js';
-import { queueDelivery, reportPassedDeliveryGate, parseDeliveryVerification } from '../server/automation/delivery.js';
+import { queueDelivery, reportPassedDeliveryGate, parseDeliveryVerification, executeDelivery, verifyDelivery } from '../server/automation/delivery.js';
 import { advanceOptimization, applyOptimizationAction } from '../server/automation/optimization.js';
 import { deliveredSiteUrl, primarySiteUrl } from '../shared/site-delivery.js';
 
@@ -322,7 +323,7 @@ test('POST /api/automation/tasks validates autoDelivery guards, freezes value an
   }
 });
 
-test('non-optimization generation with autoDelivery=true forces evaluation when autoEvaluate=false and queues delivery; autoDelivery=false suppresses env auto', async () => {
+test('non-optimization generation with autoDelivery=true skips evaluation when autoEvaluate=false and queues direct delivery; autoDelivery=false suppresses env auto', async () => {
   const f = await fixture();
   let worker: AutomationWorker | undefined;
   try {
@@ -358,6 +359,7 @@ test('non-optimization generation with autoDelivery=true forces evaluation when 
       },
       f.vault.automation(),
     )[0];
+    assert.equal(gen1.autoEvaluate, false);
     gen1.learningPolicy = { ...gen1.learningPolicy!, collect: false, use: false };
     f.automationStore.put(gen1);
 
@@ -368,33 +370,29 @@ test('non-optimization generation with autoDelivery=true forces evaluation when 
       {
         generation: async (task, store) => {
           store.beginSiteChange(task);
-        },
-        evaluation: async (task, store) => {
-          task.report = makeReport(92, 'passed', store, task);
-          // Pause worker right as evaluation returns so queued delivery is observable before runDelivery executes
+          // Pause worker right as generation completes so queued direct delivery is observable before runDelivery executes
           if (task.scenario === 'materials') {
             f.vault.updateAutomation({ ...f.vault.automation(), enabled: false });
           }
+        },
+        evaluation: async (task, store) => {
+          task.report = makeReport(92, 'passed', store, task);
         },
       },
       () => true,
     );
 
     await worker.tick();
-    let eval1Id = '';
+    let updatedGen1 = f.automationStore.task(gen1.id)!;
     for (let i = 0; i < 80; i++) {
-      const currentGen = f.automationStore.task(gen1.id)!;
-      if (currentGen.evaluationTaskId) {
-        eval1Id = currentGen.evaluationTaskId;
-        const ev = f.automationStore.task(eval1Id)!;
-        if (ev.status === 'completed' && ev.delivery) break;
-      }
+      updatedGen1 = f.automationStore.task(gen1.id)!;
+      if (updatedGen1.status === 'completed' && updatedGen1.delivery) break;
       await new Promise(r => setTimeout(r, 15));
     }
-    assert.ok(eval1Id, 'autoDelivery=true should force evaluation creation even with autoEvaluate=false');
-    const eval1 = f.automationStore.task(eval1Id)!;
-    assert.equal(eval1.autoDelivery, true);
-    assert.equal(eval1.delivery?.status, 'queued');
+    assert.equal(updatedGen1.evaluationTaskId, undefined, 'autoEvaluate=false must skip evaluation even with autoDelivery=true');
+    assert.equal(updatedGen1.autoDelivery, true);
+    assert.equal(updatedGen1.delivery?.status, 'queued');
+    assert.equal(updatedGen1.delivery?.evaluationTaskId, '');
 
     // Now test explicit autoDelivery=false overrides env.delivery.auto=true even for migration+site
     const migrationRes = f.automationStore.saveResource({
@@ -1153,35 +1151,30 @@ test('POST /api/automation/tasks freezes env.delivery.auto when autoDelivery is 
           task.generatedSiteId = site.id;
           task.siteUrl = site.url;
           store.beginSiteChange(task);
+          if (task.scenario === 'upgrade') {
+            f.vault.updateAutomation({ ...f.vault.automation(), enabled: false });
+          }
         },
         evaluation: async (task, store) => {
           const report = makeReport(92, 'failed', store, task);
           report.issues = [{ severity: 'major', title: 'Address mismatch', detail: 'Needs review', evidence: [] }];
           task.report = report;
           store.publishSiteReport(task);
-          if (task.scenario === 'upgrade') {
-            f.vault.updateAutomation({ ...f.vault.automation(), enabled: false });
-          }
         },
       },
       () => true,
     );
 
     await worker.tick();
-    let evalId = '';
+    let currentGen = f.automationStore.task(rootId)!;
     for (let i = 0; i < 80; i++) {
-      const currentGen = f.automationStore.task(rootId)!;
-      if (currentGen.evaluationTaskId) {
-        evalId = currentGen.evaluationTaskId;
-        const ev = f.automationStore.task(evalId)!;
-        if (ev.status === 'completed' && ev.delivery) break;
-      }
+      currentGen = f.automationStore.task(rootId)!;
+      if (currentGen.status === 'completed' && currentGen.delivery) break;
       await new Promise(r => setTimeout(r, 15));
     }
-    assert.ok(evalId, 'frozen autoDelivery=true must force evaluation handoff even when autoEvaluate=false');
-    const evalTask = f.automationStore.task(evalId)!;
-    assert.equal(evalTask.autoDelivery, true);
-    assert.equal(evalTask.delivery?.status, 'queued');
+    assert.equal(currentGen.evaluationTaskId, undefined, 'autoEvaluate=false must skip evaluation and queue direct delivery');
+    assert.equal(currentGen.autoDelivery, true);
+    assert.equal(currentGen.delivery?.status, 'queued');
     await worker.stop();
     worker = undefined;
 
@@ -1455,6 +1448,216 @@ test('POST /api/automation/tasks handles omitted autoDelivery gracefully across 
     assert.equal(childRes.statusCode, 201, childRes.body);
     assert.equal(f.automationStore.task(childRes.json().items[0].id)!.autoDelivery, false);
   } finally {
+    await f.close();
+  }
+});
+
+test('per-task autoEvaluate overrides global setting and manual delivery works directly on generation tasks without evaluation', async () => {
+  const f = await fixture();
+  let worker: AutomationWorker | undefined;
+  try {
+    // 1. Global autoEvaluate=false, per-task autoEvaluate=true -> creates evaluation
+    f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true, autoEvaluate: false });
+    const siteA = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'SiteA', url: 'https://hk-a.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(siteA);
+    const resEvalOn = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/tasks',
+      headers: { ...f.headers, 'idempotency-key': randomUUID() },
+      payload: { resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: siteA.id, autoEvaluate: true },
+    });
+    assert.equal(resEvalOn.statusCode, 201, resEvalOn.body);
+    const genEvalOnId = resEvalOn.json().items[0].id as string;
+    const genEvalOn = f.automationStore.task(genEvalOnId)!;
+    assert.equal(genEvalOn.autoEvaluate, true);
+
+    // 2. Global autoEvaluate=true, per-task autoEvaluate=false -> skips evaluation and supports direct manual delivery even without rules
+    f.automationStore.db.prepare('DELETE FROM auto_rules').run();
+    f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true, autoEvaluate: true });
+    const siteB = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'SiteB', url: 'https://hk-b.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(siteB);
+    const resEvalOff = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/tasks',
+      headers: { ...f.headers, 'idempotency-key': randomUUID() },
+      payload: { resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: siteB.id, autoEvaluate: false, autoDelivery: true },
+    });
+    assert.equal(resEvalOff.statusCode, 201, resEvalOff.body);
+    const genEvalOffId = resEvalOff.json().items[0].id as string;
+    const genEvalOff = f.automationStore.task(genEvalOffId)!;
+    assert.equal(genEvalOff.autoEvaluate, false);
+    assert.equal(genEvalOff.autoDelivery, true);
+
+    // Reject autoEvaluate=false combined with optimization
+    const badOpt = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/tasks',
+      headers: { ...f.headers, 'idempotency-key': randomUUID() },
+      payload: { resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, autoEvaluate: false, optimization: { targetScore: 85, maxRounds: 2, maxCostCny: null } },
+    });
+    assert.equal(badOpt.statusCode, 400);
+
+    // Disable auto-delivery on genEvalOff temporarily so we can test manual POST /delivery on generation task
+    genEvalOff.autoDelivery = false;
+    genEvalOff.learningPolicy = { ...genEvalOff.learningPolicy!, collect: false, use: false };
+    f.automationStore.put(genEvalOff);
+    genEvalOn.learningPolicy = { ...genEvalOn.learningPolicy!, collect: false, use: false };
+    f.automationStore.put(genEvalOn);
+
+    worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      f.directory,
+      {
+        generation: async (task, store) => {
+          store.beginSiteChange(task);
+        },
+        evaluation: async (task, store) => {
+          task.report = makeReport(60, 'failed', store, task);
+          store.publishSiteReport(task);
+        },
+      },
+      () => true,
+    );
+    await worker.tick();
+    for (let i = 0; i < 80; i++) {
+      const a = f.automationStore.task(genEvalOnId)!;
+      const b = f.automationStore.task(genEvalOffId)!;
+      const evA = a.evaluationTaskId ? f.automationStore.task(a.evaluationTaskId) : undefined;
+      if (b.status === 'completed' && evA?.status === 'completed') break;
+      await new Promise(r => setTimeout(r, 15));
+    }
+    await worker.stop();
+    worker = undefined;
+
+    const doneA = f.automationStore.task(genEvalOnId)!;
+    const doneB = f.automationStore.task(genEvalOffId)!;
+    assert.ok(doneA.evaluationTaskId, 'per-task autoEvaluate=true should override global false');
+    assert.equal(doneB.evaluationTaskId, undefined, 'per-task autoEvaluate=false should override global true');
+
+    // Summary & delivery section expose direct delivery for completed generation task B
+    const sumB = (await f.app.inject({ url: `/api/automation/tasks/${doneB.id}/summary`, headers: f.headers })).json();
+    assert.equal(sumB.deliveryEnabled, true);
+    const delSecB = (await f.app.inject({ url: `/api/automation/tasks/${doneB.id}/sections/delivery`, headers: f.headers })).json();
+    assert.equal(delSecB.task.id, doneB.id);
+    assert.equal(delSecB.autoEvaluate, false);
+
+    // Manual delivery on generation task B succeeds directly even with requirePassed=true (no evaluation exists)
+    const deliverB = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${doneB.id}/delivery`, headers: f.headers });
+    assert.equal(deliverB.statusCode, 200, deliverB.body);
+    assert.equal(deliverB.json().delivery.status, 'queued');
+
+    // Manual delivery on generation task A is still blocked by its failed current evaluation report
+    const deliverA = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${doneA.id}/delivery`, headers: f.headers });
+    assert.equal(deliverA.statusCode, 409);
+  } finally {
+    await worker?.stop();
+    await f.close();
+  }
+});
+
+test('delivery with verifyWithAi=false completes via HTTP check only without browser or AI, and settings persist verifyWithAi without losing secrets', async () => {
+  const f = await fixture();
+  let targetOk = true;
+  const server = createServer((_req, res) => {
+    res.writeHead(targetOk ? 200 : 503, { 'content-type': 'text/html' });
+    res.end(targetOk ? '<html><body>ok</body></html>' : 'unavailable');
+  });
+  await new Promise<void>(resolve => server.listen(0, '127.0.0.1', resolve));
+  const addr = server.address() as { port: number };
+  const targetOrigin = `http://127.0.0.1:${addr.port}`;
+  try {
+    // Verify PUT /api/settings persists delivery.verifyWithAi=false and keeps tokens
+    const pub = f.vault.public();
+    const putRes = await f.app.inject({
+      method: 'PUT',
+      url: '/api/settings',
+      headers: f.headers,
+      payload: {
+        ...pub,
+        environments: pub.environments.map(env => env.id === f.envId
+          ? { ...env, delivery: { ...env.delivery!, verifyWithAi: false } }
+          : env),
+      },
+    });
+    assert.equal(putRes.statusCode, 200, putRes.body);
+    assert.equal(putRes.json().environments.find((e: { id: string }) => e.id === f.envId).delivery.verifyWithAi, false);
+    assert.equal(f.vault.get().environments.find(e => e.id === f.envId)!.token, 'secret-hk-token');
+    assert.equal(f.vault.get().environments.find(e => e.id === f.envId)!.delivery?.token, 'secret-migrate-token');
+
+    const site = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'DirectVerifySite', url: 'https://hk-verify.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(site);
+    const gen = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: site.id, autoEvaluate: false, requirements: '' }, f.vault.automation())[0];
+    gen.status = 'completed'; gen.stopped = true; f.automationStore.beginSiteChange(gen);
+
+    queueDelivery(gen, f.automationStore, f.vault);
+    assert.equal(gen.delivery?.policy.verifyWithAi, false);
+    gen.delivery!.target = { siteId: randomUUID(), siteUrl: targetOrigin + '/' };
+    f.automationStore.put(gen);
+
+    await verifyDelivery(gen, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000), {
+      openBrowser: async () => { throw new Error('must not launch browser when verifyWithAi is false'); },
+      createClient: () => { throw new Error('must not create Codex client when verifyWithAi is false'); },
+    });
+    assert.equal(gen.delivery?.status, 'completed');
+    assert.ok(gen.delivery?.verifiedAt);
+    assert.equal(gen.delivery?.verification, undefined);
+    assert.equal(gen.delivery?.checks.every(c => c.ok), true);
+
+    // When target HTTP fails, HTTP-only check marks failed
+    targetOk = false;
+    gen.delivery!.status = 'queued';
+    await verifyDelivery(gen, f.automationStore, f.vault, f.directory, AbortSignal.timeout(5000), {
+      openBrowser: async () => { throw new Error('must not launch browser when verifyWithAi is false'); },
+      createClient: () => { throw new Error('must not create Codex client when verifyWithAi is false'); },
+    });
+    assert.equal(gen.delivery?.status, 'failed');
+    assert.match(gen.delivery?.error || '', /HTTP 可达性检查未全部通过/);
+  } finally {
+    await new Promise<void>(resolve => server.close(() => resolve()));
+    await f.close();
+  }
+});
+
+test('worker followup evaluate action respects autoEvaluate=false and queues direct auto-delivery when enabled', async () => {
+  const f = await fixture();
+  let worker: AutomationWorker | undefined;
+  try {
+    f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true, autoEvaluate: false });
+    const site = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'FollowupDirectSite', url: 'https://hk-followup-direct.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(site);
+    const gen = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: site.id, autoEvaluate: false, autoDelivery: true, requirements: '' }, f.vault.automation())[0];
+    gen.learningPolicy = { ...gen.learningPolicy!, collect: false, use: false };
+    gen.status = 'following-up';
+    gen.stopped = true;
+    gen.followup = { state: 'queued', attempts: 0, elapsedMs: 0, startedAt: Date.now(), nextAt: Date.now() - 1000, tokens: 0, threadId: '', policy: f.vault.automation().followup, executionStopped: true, observations: [], budgetId: randomUUID() };
+    f.automationStore.beginSiteChange(gen);
+
+    worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      f.directory,
+      undefined,
+      () => true,
+      async () => {
+        // Pause worker so delivery stays queued for inspection
+        f.vault.updateAutomation({ ...f.vault.automation(), enabled: false });
+        return { action: 'evaluate', reason: '页面已生成完成', evidence: [] };
+      },
+    );
+
+    await worker.tick();
+    let updated = f.automationStore.task(gen.id)!;
+    for (let i = 0; i < 80; i++) {
+      updated = f.automationStore.task(gen.id)!;
+      if (updated.status === 'completed' && updated.delivery) break;
+      await new Promise(r => setTimeout(r, 15));
+    }
+    assert.equal(updated.status, 'completed');
+    assert.equal(updated.evaluationTaskId, undefined);
+    assert.equal(updated.delivery?.status, 'queued');
+  } finally {
+    await worker?.stop();
     await f.close();
   }
 });

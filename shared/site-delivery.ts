@@ -21,7 +21,7 @@ export interface SiteDeliveryTarget {
 
 export const siteDeliveryStates = {
   running: '处理中', queued: '排队中', attention: '需要处理',
-  ready: '达到交付标准', 'needs-improvement': '未达标', unverified: '有待验证', 'awaiting-evaluation': '待评测',
+  ready: '达到交付标准', generated: '生成完成', 'needs-improvement': '未达标', unverified: '有待验证', 'awaiting-evaluation': '待评测',
 } as const;
 export const siteDeliveryAddressFilters = {
   missing: '尚无可访问地址',

@@ -5,10 +5,11 @@ import type { PublicSettings, RuntimeSettings } from '../../shared/types.js';
 import { settingsSchema } from './validation.js';
 import { Conflict } from './store.js';
 import type { KoobooConnectionInput } from '../../shared/kooboo-auth.js';
-import { defaultAutomationSettings, defaultFollowupSettings, defaultOptimizationPolicy, type AutomationSettings } from '../../shared/automation.js';
+import { defaultAutomationSettings, defaultDeliveryPolicy, defaultFollowupSettings, defaultOptimizationPolicy, type AutomationSettings } from '../../shared/automation.js';
 import { defaultUpdateRepository, type UpdateSource } from '../../shared/update.js';
 import { builtInHarnessSop, resolveHarnessSop } from '../automation/harness.js';
 import type { HarnessSopKey } from '../../shared/harness.js';
+import { resolveDeliveryDefaults } from './delivery-config.js';
 
 export class Vault {
   private key: Buffer;
@@ -50,23 +51,65 @@ export class Vault {
   get(): RuntimeSettings { this.refresh(); return structuredClone({ ...this.current, execution: this.current.execution || { timeoutSeconds: 300, captureAttempts: 2 } }); }
   public(): PublicSettings {
     this.refresh();
-    const { model, environments, updateSource: _updateSource, ...rest } = this.current;
-    return { ...rest, execution: this.current.execution || { timeoutSeconds: 300, captureAttempts: 2 }, model: { endpoint: model.endpoint, name: model.name, hasApiKey: Boolean(model.apiKey) }, environments: environments.map(({ token, delivery, ...env }) => ({ ...env, hasToken: Boolean(token),...(delivery?{delivery:(({token,targetEnvironmentId:_legacyTarget,...policy})=>({...policy,hasToken:!!token}))(delivery)}:{}) })), credentials: this.credentials };
+    const { model, environments, updateSource: _updateSource, deliveryDefaults: _deliveryDefaults, ...rest } = this.current;
+    const defaults = resolveDeliveryDefaults(this.current);
+    const reusable = !defaults.token ? environments.find(env => Boolean(env.delivery?.token)) : undefined;
+    return {
+      ...rest,
+      execution: this.current.execution || { timeoutSeconds: 300, captureAttempts: 2 },
+      deliveryDefaults: {
+        endpoint: defaults.endpoint,
+        savedEndpoint: defaults.savedEndpoint,
+        hasToken: Boolean(defaults.token),
+        hasSavedToken: defaults.hasSavedToken,
+        tokenFromEnv: defaults.tokenFromEnv,
+        endpointFromEnv: defaults.endpointFromEnv,
+        ...(reusable ? { reusableEnvironmentId: reusable.id, reusableEnvironmentName: reusable.name || reusable.origin } : {}),
+      },
+      model: { endpoint: model.endpoint, name: model.name, hasApiKey: Boolean(model.apiKey) },
+      environments: environments.map(({ token, delivery, ...env }) => ({
+        ...env,
+        hasToken: Boolean(token),
+        ...(delivery ? {
+          delivery: (({ token: ownToken, targetEnvironmentId: _legacyTarget, ...policy }) => ({
+            ...policy,
+            verifyWithAi: policy.verifyWithAi ?? true,
+            hasToken: Boolean(ownToken || defaults.token),
+            hasCustomToken: Boolean(ownToken),
+            effectiveEndpoint: policy.endpoint?.trim() || defaults.endpoint,
+          }))(delivery),
+        } : {}),
+      })),
+      credentials: this.credentials,
+    };
   }
   importInitial(settings: unknown, credentials: PublicSettings['credentials']): void {
     const input = settingsSchema.parse(settings);
     if (!credentials || ![credentials.ingestToken, credentials.readToken].every(token => typeof token === 'string' && token.length >= 32 && token.length < 201)) throw new Error('迁移令牌不合法');
     if (this.current.model.endpoint || this.current.environments.length) throw new Error('目标已有配置，不能覆盖');
-    this.current = { ...input, model: { endpoint: input.model.endpoint, name: input.model.name, apiKey: input.model.apiKey || '' }, environments: input.environments.map(env => ({ id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin, token: env.token || '',defaultRootDomain:env.defaultRootDomain,...(env.cloneFallbackEnvironmentId?{cloneFallbackEnvironmentId:env.cloneFallbackEnvironmentId}:{}),...(env.delivery?{delivery:{...env.delivery,token:env.delivery.token||''}}:{}) })) };
+    const { deliveryDefaults: importedDefaults, ...restInput } = input;
+    this.current = {
+      ...restInput,
+      ...(importedDefaults ? { deliveryDefaults: { endpoint: importedDefaults.endpoint.trim(), token: importedDefaults.token || '' } } : {}),
+      model: { endpoint: input.model.endpoint, name: input.model.name, apiKey: input.model.apiKey || '' },
+      environments: input.environments.map(env => ({ id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin, token: env.token || '',defaultRootDomain:env.defaultRootDomain,...(env.cloneFallbackEnvironmentId?{cloneFallbackEnvironmentId:env.cloneFallbackEnvironmentId}:{}),...(env.delivery?{delivery:{...env.delivery,verifyWithAi:env.delivery.verifyWithAi??true,token:env.delivery.token||''}}:{}) })),
+    };
     Object.assign(this.credentials, credentials);
     this.persist();
   }
   update(raw: unknown): PublicSettings {
     const input = settingsSchema.parse(raw);
     this.refresh();
+    const deliveryDefaults = input.deliveryDefaults
+      ? {
+          endpoint: input.deliveryDefaults.endpoint.trim(),
+          token: input.deliveryDefaults.clearToken ? '' : input.deliveryDefaults.token || this.current.deliveryDefaults?.token || '',
+        }
+      : this.current.deliveryDefaults;
     this.current = {
       automation: this.current.automation,
       updateSource: this.current.updateSource,
+      ...(deliveryDefaults ? { deliveryDefaults } : {}),
       threshold: input.threshold, paused: input.paused, execution: input.execution,
       model: { endpoint: input.model.endpoint.replace(/\/$/, ''), name: input.model.name, apiKey: input.model.clearKey ? '' : input.model.apiKey || this.current.model.apiKey },
       environments: input.environments.map((env) => {
@@ -78,10 +121,24 @@ export class Vault {
           id: env.id, name: env.name, origin: env.origin, apiOrigin: env.apiOrigin,
           defaultRootDomain: env.defaultRootDomain ?? prev?.defaultRootDomain,
           ...(nextFallback ? { cloneFallbackEnvironmentId: nextFallback } : {}),
-          ...(env.delivery?{delivery:{enabled:env.delivery.enabled,endpoint:env.delivery.endpoint,auto:env.delivery.auto,requirePassed:env.delivery.requirePassed,timeoutSeconds:env.delivery.timeoutSeconds,token:env.delivery.clearToken?'':env.delivery.token||prev?.delivery?.token||''}}:(prev?.delivery?{delivery:prev.delivery}:{})),
+          ...(env.delivery?{delivery:{enabled:env.delivery.enabled,endpoint:env.delivery.endpoint.trim(),auto:env.delivery.auto,requirePassed:env.delivery.requirePassed,verifyWithAi:env.delivery.verifyWithAi??prev?.delivery?.verifyWithAi??true,timeoutSeconds:env.delivery.timeoutSeconds,token:env.delivery.clearToken?'':env.delivery.token||prev?.delivery?.token||''}}:(prev?.delivery?{delivery:prev.delivery}:{})),
           token: env.clearToken ? '' : env.token || prev?.token || '',
         };
       }),
+    };
+    this.persist();
+    return this.public();
+  }
+  adoptDeliveryDefaultToken(sourceEnvironmentId: string): PublicSettings {
+    this.refresh();
+    const source = this.current.environments.find(item => item.id === sourceEnvironmentId);
+    if (!source?.delivery?.token) throw new Conflict('所选环境未保存独立的迁移服务令牌');
+    const sourceEndpoint = source.delivery.endpoint?.trim() || '';
+    const nextEndpoint = this.current.deliveryDefaults?.endpoint?.trim()
+      || (sourceEndpoint && sourceEndpoint !== defaultDeliveryPolicy.endpoint ? sourceEndpoint : '');
+    this.current.deliveryDefaults = {
+      endpoint: nextEndpoint,
+      token: source.delivery.token,
     };
     this.persist();
     return this.public();

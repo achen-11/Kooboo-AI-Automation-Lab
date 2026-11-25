@@ -14,6 +14,7 @@ import { httpRead } from '../automation/kooboo.js';
 import { diagnosticSnapshot, type DiagnosticSnapshot } from './snapshot.js';
 import { DiagnosticCollector } from './collector.js';
 import { exportRedactor } from './redact.js';
+import { collectDeliverySecrets, resolveDeliveryDefaults } from '../lib/delivery-config.js';
 import { exportKoobooSite, type SiteExportRequest } from './kooboo-export.js';
 import { writeZip } from './zip.js';
 
@@ -80,7 +81,7 @@ export class DiagnosticExports {
   }
   private redactor() {
     const config = this.vault.get();
-    return exportRedactor([config.model.apiKey, config.updateSource?.token || '', this.vault.credentials.readToken, this.vault.credentials.ingestToken, ...config.environments.flatMap(env => [env.token, env.delivery?.token || ''])]);
+    return exportRedactor([config.model.apiKey, config.updateSource?.token || '', this.vault.credentials.readToken, this.vault.credentials.ingestToken, ...config.environments.map(env => env.token), ...collectDeliverySecrets(config)]);
   }
   cancel(id: string) {
     const job = this.jobs.get(id); if (!job || terminal(job)) throw new Conflict('没有正在执行的导出');
@@ -135,7 +136,8 @@ export class DiagnosticExports {
     for (const [key, value] of Object.entries(snapshot.records)) if (key !== 'events') await collector.data(`platform/${sections[key]}/${key}.json`, value);
     for (const task of snapshot.tasks) if (task.report) await collector.data(`platform/reports/${task.id}.json`, task.report);
     const config = this.vault.get(), environmentIds = new Set([snapshot.site?.environmentId, ...snapshot.tasks.map(task => task.environmentId)]);
-    await collector.data('platform/environment.json', { capturedAt: Date.now(), system: { platform: platform(), release: release(), arch: arch(), node: process.version, versions: process.versions }, software: { platform: packageVersion('kooboo-ai-automation-lab'), codexSdk: packageVersion('@openai/codex-sdk'), playwright: packageVersion('playwright') }, environments: config.environments.filter(env => environmentIds.has(env.id)).map(({ token: _token, delivery, ...env }) => ({ ...env, ...(delivery ? { delivery: { ...delivery, token: '[已排除]' } } : {}) })), currentModel: { name: config.model.name, endpoint: config.model.endpoint }, currentAutomationSettings: this.vault.automation(), note: '当前设置供诊断对照；任务中冻结的配置才是历史执行依据。未取得的软件版本记为 unavailable。' });
+    const deliveryDefaults = resolveDeliveryDefaults(config);
+    await collector.data('platform/environment.json', { capturedAt: Date.now(), system: { platform: platform(), release: release(), arch: arch(), node: process.version, versions: process.versions }, software: { platform: packageVersion('kooboo-ai-automation-lab'), codexSdk: packageVersion('@openai/codex-sdk'), playwright: packageVersion('playwright') }, deliveryDefaults: { endpoint: deliveryDefaults.endpoint, savedEndpoint: deliveryDefaults.savedEndpoint, hasToken: Boolean(deliveryDefaults.token), hasSavedToken: deliveryDefaults.hasSavedToken, tokenFromEnv: deliveryDefaults.tokenFromEnv, endpointFromEnv: deliveryDefaults.endpointFromEnv }, environments: config.environments.filter(env => environmentIds.has(env.id)).map(({ token: _token, delivery, ...env }) => ({ ...env, ...(delivery ? { delivery: { ...delivery, token: '[已排除]' } } : {}) })), currentModel: { name: config.model.name, endpoint: config.model.endpoint }, currentAutomationSettings: this.vault.automation(), note: '当前设置供诊断对照；任务中冻结的配置才是历史执行依据。未取得的软件版本记为 unavailable。' });
     if (snapshot.versions.length < new Set(snapshot.tasks.map(task => task.versionId)).size) collector.issue('inputs', '部分任务引用的冻结输入版本已不存在');
   }
   private async collectFiles(snapshot: DiagnosticSnapshot, collector: DiagnosticCollector) {

@@ -24,7 +24,7 @@ before(async () => {
           : args.path === 'notifications'
             ? 'export const notify={success:t=>globalThis.__taskInput.notified.push({type:"success",text:t}),info:t=>globalThis.__taskInput.notified.push({type:"info",text:t}),warning:t=>globalThis.__taskInput.notified.push({type:"warning",text:t}),error:t=>globalThis.__taskInput.notified.push({type:"error",text:t})};'
             : args.path === 'common'
-              ? 'export const workspace={settings:{enabled:false,optimization:{},prompts:{materials:"生成资料站"}}};export const refresh=async()=>{};export const scopeName=()=>"全站";'
+              ? 'export const workspace=globalThis.__taskInput.workspace;export const refresh=async()=>{};export const scopeName=()=>"全站";'
               : 'import {ref} from "vue";export const useTaskSection=()=>({data:ref(globalThis.__taskInput.input),loading:ref(false),error:ref(""),load:()=>{}});', loader: 'js' }));
         builder.onLoad({ filter: /\.vue$/ }, args => {
           if (!/(CreateTaskDialog|TaskInput)\.vue$/.test(args.path)) return { contents: /KoobooRootDomainSelect/.test(args.path)
@@ -59,13 +59,13 @@ const descendants = node => node.children.flatMap(child => [child, ...descendant
 const text = node => (node.tag === '#comment' ? '' : node.text) + node.children.map(text).join('');
 async function settle() { await nextTick(); await new Promise(resolve => setImmediate(resolve)); await nextTick(); }
 const resource = (patch = {}) => ({ id: 'resource', name: '资料站', scenario: 'materials', description: '', files: [], siteName: 'salon', subDomain: 'salon_public', rootDomain: '-shawnchen-hk.kooboo.io', ...patch });
-async function fixture(name, props, input, environments = [{ id: 'env', defaultRootDomain: 'default.test' }]) {
+async function fixture(name, props, input, environments = [{ id: 'env', defaultRootDomain: 'default.test' }], settingsPatch = {}) {
   const previous = new Map(['document', 'Document', '__taskInput'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const calls = [], notified = [];
   class HostDocument { activeElement = null; }
   globalThis.Document = HostDocument;
   globalThis.document = new HostDocument();
-  globalThis.__taskInput = { input, notified, platform: reactive({ settings: { environments } }), request: async (path, options) => {
+  globalThis.__taskInput = { input, notified, workspace: { settings: { enabled: false, optimization: {}, prompts: { materials: '生成资料站' }, ...settingsPatch } }, platform: reactive({ settings: { environments } }), request: async (path, options) => {
     calls.push({ path, options });
     if (path.includes('/delivery-preference')) {
       const id = path.split('/').at(-2);
@@ -190,4 +190,31 @@ test('CreateTaskDialog initializes autoDelivery from environment preference, per
     const createCall = delivered.calls.find(call => call.path === '/automation/tasks');
     assert.equal(JSON.parse(createCall.options.body).autoDelivery, undefined);
   } finally { delivered.close(); }
+});
+
+test('CreateTaskDialog respects global autoEvaluate=false default and supports per-task override; TaskInput renders autoEvaluate state', async () => {
+  const fOff = await fixture('CreateTaskDialog', { resources: [resource()] }, undefined, [{ id: 'env', defaultRootDomain: 'default.test' }], { autoEvaluate: false });
+  try {
+    const modeSelect = fOff.nodes().find(node => node.tag === 'select' && node.props.value === 'generate-only');
+    assert.ok(modeSelect, 'defaults to generate-only when autoEvaluate=false');
+    await fOff.nodes().find(node => node.tag === 'form').props.onSubmit({ preventDefault() {} });
+    const bodyOff = JSON.parse(fOff.calls.find(call => call.path === '/automation/tasks').options.body);
+    assert.equal(bodyOff.autoEvaluate, false);
+    assert.equal(bodyOff.optimization, undefined);
+
+    modeSelect.props.onUpdate('evaluate');
+    await settle();
+    await fOff.nodes().find(node => node.tag === 'form').props.onSubmit({ preventDefault() {} });
+    const bodyOn = JSON.parse(fOff.calls.filter(call => call.path === '/automation/tasks').at(-1).options.body);
+    assert.equal(bodyOn.autoEvaluate, true);
+    assert.equal(bodyOn.optimization, undefined);
+  } finally { fOff.close(); }
+
+  const fInput = await fixture('TaskInput', { taskId: 't1', resourceId: 'r1', scope: 'homepage', kind: 'generation' }, {
+    message: '', version: { ...resource(), revision: 1 }, autoEvaluate: false, autoDelivery: false, rule: null,
+  });
+  try {
+    assert.ok(fInput.text().includes('仅生成（跳过自动评测）'));
+    assert.ok(fInput.text().includes('完成后按需手动交付'));
+  } finally { fInput.close(); }
 });

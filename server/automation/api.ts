@@ -6,10 +6,11 @@ import { resolve } from 'node:path';
 import { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { materialPath, uniqueMaterialPaths } from '../../shared/materials.js';
-import { scenarios, defaultFollowupSettings, defaultOptimizationPolicy, supportsAutomaticOptimization, type AutomationTask } from '../../shared/automation.js';
+import { scenarios, defaultFollowupSettings, defaultOptimizationPolicy, shouldEvaluateAfterGeneration, supportsAutomaticOptimization, type AutomationTask } from '../../shared/automation.js';
 import { stopOptimization } from './optimization.js';
 import { Conflict } from '../lib/store.js';
 import { queueDelivery, deliveryReceipt } from './delivery.js';
+import { resolveEnvironmentDelivery } from '../lib/delivery-config.js';
 import { probeCodex } from './probe.js';
 import { brief, compactNotice, taskExecuting, taskSummary, canAdjustTaskSiteNames } from '../../shared/task-presentation.js';
 import { registerExecutionLogApi } from './execution-log.js';
@@ -80,7 +81,9 @@ const prompt=z.string().min(1).max(30000);
 const followupInput=z.object({enabled:z.boolean(),concurrency:z.number().int().min(1).max(3),maxAttempts:z.number().int().min(1).max(20),maxMinutes:z.number().int().min(1).max(120),maxTokens:z.number().int().min(1000).max(1000000000),maxRequests:z.number().int().min(1).max(1000).optional(),sop:z.string().trim().min(1).max(50000)});
 const optimizationInput=z.object({targetScore:z.number().min(1).max(100),maxRounds:z.number().int().min(1).max(10),maxCostCny:z.number().positive().max(1000000).nullable()});
 const settingsInput=z.object({showExecutionBrowser:z.boolean().optional(),completeness:completenessSettingsSchema.optional(),learning:learningSettingsSchema.optional(),optimization:optimizationInput.extend({sop:z.string().trim().min(1).max(50000)}).optional(),followup:followupInput.default(defaultFollowupSettings),enabled:z.boolean(),autoEvaluate:z.boolean().default(true),generationConcurrency:z.number().int().min(1).max(10),evaluationConcurrency:z.number().int().min(1).max(5),timeoutMinutes:z.number().int().min(1).max(240),evaluationModel:z.string().trim().min(1).max(100),evaluationEndpoint:url,prompts:z.object({materials:prompt,migration:prompt,upgrade:prompt,'site-template':prompt,'app-template':prompt})});
-const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional(),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),autoDelivery:z.boolean().optional(),skipSourceTransfer:z.boolean().optional(),fallbackToMaterialsOnCloneFailure:z.boolean().optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
+const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional(),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),autoEvaluate:z.boolean().optional(),autoDelivery:z.boolean().optional(),skipSourceTransfer:z.boolean().optional(),fallbackToMaterialsOnCloneFailure:z.boolean().optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
+  if(input.autoEvaluate===false&&input.optimization)ctx.addIssue({code:'custom',message:'开启自动优化时必须启用评测流程',path:['autoEvaluate']});
+  if(input.autoEvaluate!==undefined&&input.kind!=='generation')ctx.addIssue({code:'custom',message:'自动评测开关仅适用于生成任务',path:['autoEvaluate']});
   if(input.rootDomain&&(input.kind!=='generation'||input.generatedSiteId))ctx.addIssue({code:'custom',message:'根域名仅用于新建生成站，已有站点沿用原域名',path:['rootDomain']});
   if((input.siteName||input.subDomain)&&(input.kind!=='generation'||input.generatedSiteId||input.resourceIds.length!==1))ctx.addIssue({code:'custom',message:'自定义站点名和子域名仅用于单资源新建生成站；批量任务请在各资源中分别指定',path:['subDomain']});
   if((input.skipSourceTransfer||input.fallbackToMaterialsOnCloneFailure)&&input.kind!=='generation')ctx.addIssue({code:'custom',message:'跳过原站克隆配置仅适用于生成任务',path:['skipSourceTransfer']});
@@ -339,10 +342,12 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const old=store.db.prepare('SELECT hash,json FROM auto_requests WHERE id=?').get(key);
       if(old){if(old.hash!==hash)throw new Conflict('同一个请求标识不能用于不同任务');return JSON.parse(old.json);}
       const envId=input.generatedSiteId?store.site(input.generatedSiteId)?.environmentId||input.environmentId:input.environmentId;
-      const env=vault.get().environments.find(e=>e.id===envId);
+      const settingsSnapshot=vault.get();
+      const env=settingsSnapshot.environments.find(e=>e.id===envId);
+      const resolvedDelivery=resolveEnvironmentDelivery(settingsSnapshot,envId);
       const siteHasDelivery=Boolean(input.generatedSiteId&&store.headers(input.generatedSiteId).some(t=>t.delivery));
       if(input.autoDelivery===true){
-        if(!env?.delivery?.enabled||!env.delivery.token)throw new Conflict('当前环境未启用跨环境交付或缺少迁移令牌，无法开启自动交付');
+        if(!resolvedDelivery?.enabled||!resolvedDelivery.token)throw new Conflict('当前环境未启用跨环境交付或缺少迁移令牌，无法开启自动交付');
         if(siteHasDelivery)throw new Conflict('该生成站已有关联跨环境交付记录，不能重复开启自动交付');
       }
       const collections=input.collectionSnapshotId?new CollectionStore(store,directory):undefined;
@@ -356,9 +361,9 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       }
       // Resolve the default inside the idempotent transaction so retries keep the original choice.
       const defaultRootDomain=input.kind==='generation'&&!input.generatedSiteId
-        ?vault.get().environments.find(e=>e.id===input.environmentId)?.defaultRootDomain||undefined:undefined;
-      const defaultAutoDelivery=input.autoDelivery===undefined&&env?.delivery?.enabled&&!siteHasDelivery
-        ?Boolean(env.delivery.token&&env.delivery.auto):undefined;
+        ?env?.defaultRootDomain||undefined:undefined;
+      const defaultAutoDelivery=input.autoDelivery===undefined&&resolvedDelivery?.enabled&&!siteHasDelivery
+        ?Boolean(resolvedDelivery.token&&resolvedDelivery.auto):undefined;
       const value={items:store.create({...input,defaultRootDomain,defaultAutoDelivery,...(snapshot?{versionId:snapshot.inputVersionId}:{})},executionSettings())};
       for(const task of value.items){
         new TemplateWorkflowStore(store).initialize(task);
@@ -407,7 +412,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const siteState=task.generatedSiteId?store.siteState(task.generatedSiteId):undefined;
     const deliveryHeader=(task.delivery?task:undefined)||(evaluation?.delivery?evaluation:undefined)||siteHeaders.find(h=>h.delivery&&(!siteState||h.siteRevision===siteState.revision))||siteHeaders.find(h=>h.delivery);
     const envDeliveryEnabled=Boolean(vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled);
-    const deliveryEnabled=Boolean(((task.kind==='evaluation'||evaluation||task.autoDelivery)&&envDeliveryEnabled)||deliveryHeader?.delivery);
+    const deliveryEnabled=Boolean(((task.kind==='evaluation'||evaluation||task.autoDelivery||(task.kind==='generation'&&task.generatedSiteId&&task.status==='completed'))&&envDeliveryEnabled)||deliveryHeader?.delivery);
     const currentDeliveryHeader=deliveryHeader&&(!siteState||!deliveryHeader.generatedSiteId||deliveryHeader.siteRevision===siteState.revision)?deliveryHeader:undefined;
     return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled,...(currentDeliveryHeader?.delivery?{delivery:{taskId:currentDeliveryHeader.id,status:currentDeliveryHeader.delivery.status,...(currentDeliveryHeader.delivery.targetUrl?{targetUrl:currentDeliveryHeader.delivery.targetUrl}:{})}}:{}),canCompareLive,...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),...(workflowActive?{workflowActive}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
   });
@@ -426,7 +431,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const defaultRoot=vault.get().environments.find(env=>env.id===task.environmentId)?.defaultRootDomain;
       if(defaultRoot)roots.push(defaultRoot);
       const autoDelivery=task.autoDelivery??store.root(task)?.autoDelivery;
-      return {message:task.message,version,rule:task.rule,threadId:task.threadId,model:task.model,...taskSiteNaming(task,version,site,roots),...(autoDelivery!==undefined?{autoDelivery}:{}),...(task.generation?.skipSourceTransfer!==undefined?{skipSourceTransfer:task.generation.skipSourceTransfer}:{}),...(task.generation?.fallbackToMaterialsOnCloneFailure!==undefined?{fallbackToMaterialsOnCloneFailure:task.generation.fallbackToMaterialsOnCloneFailure}:{}),optimization:task.optimization?{policy:task.optimization.policy}:undefined};
+      return {message:task.message,version,rule:task.rule,threadId:task.threadId,model:task.model,...taskSiteNaming(task,version,site,roots),...(task.autoEvaluate!==undefined?{autoEvaluate:task.autoEvaluate}:{}),...(autoDelivery!==undefined?{autoDelivery}:{}),...(task.generation?.skipSourceTransfer!==undefined?{skipSourceTransfer:task.generation.skipSourceTransfer}:{}),...(task.generation?.fallbackToMaterialsOnCloneFailure!==undefined?{fallbackToMaterialsOnCloneFailure:task.generation.fallbackToMaterialsOnCloneFailure}:{}),optimization:task.optimization?{policy:task.optimization.policy}:undefined};
     }
     if(section==='execution'){
       const q=pagination.extend({taskId:uuid.optional()}).parse(request.query);if(q.taskId&&!executionTaskIds(task).includes(q.taskId))throw new Conflict('执行记录不属于本工作流');const selected=q.taskId?store.task(q.taskId)!:task;const total=Number(store.db.prepare('SELECT COUNT(*) AS total FROM auto_events WHERE task_id=?').get(selected.id).total),pages=Math.max(1,Math.ceil(total/q.pageSize)),page=Math.min(q.page,pages);
@@ -456,8 +461,8 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const siteHeaders=task.generatedSiteId?store.headers(task.generatedSiteId):[];
       const siteState=task.generatedSiteId?store.siteState(task.generatedSiteId):undefined;
       const siteDeliveryHeader=siteHeaders.find(h=>h.delivery&&(!siteState||h.siteRevision===siteState.revision))||siteHeaders.find(h=>h.delivery);
-      const deliverySource=task.delivery?task:evalTask?.delivery?evalTask:siteDeliveryHeader?store.task(siteDeliveryHeader.id):(task.kind==='evaluation'?task:store.currentReport(task)||evalTask);
-      return {task:deliverySource?{id:deliverySource.id,kind:deliverySource.kind,environmentId:deliverySource.environmentId,status:deliverySource.status,delivery:deliverySource.delivery,report:deliverySource.report?{quality:deliverySource.report.quality}:null}:null,...(autoDelivery!==undefined?{autoDelivery}:{})};
+      const deliverySource=task.delivery?task:evalTask?.delivery?evalTask:siteDeliveryHeader?store.task(siteDeliveryHeader.id):(task.kind==='evaluation'?task:store.currentReport(task)||evalTask||(task.kind==='generation'&&task.generatedSiteId&&task.status==='completed'?task:undefined));
+      return {task:deliverySource?{id:deliverySource.id,kind:deliverySource.kind,environmentId:deliverySource.environmentId,status:deliverySource.status,delivery:deliverySource.delivery,report:deliverySource.report?{quality:deliverySource.report.quality}:null}:null,...(autoDelivery!==undefined?{autoDelivery}:{}),...(task.kind==='generation'?{autoEvaluate:shouldEvaluateAfterGeneration(task,vault.automation())}:{})};
     }
     const source=task.kind==='evaluation'?task:task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
     const round=z.coerce.number().int().min(0).max(10).optional().parse((request.query as Record<string,unknown>).round);const selected=round===undefined?undefined:task.optimization?.rounds.find(r=>r.number===round);if(round!==undefined&&!selected)throw new Conflict('优化轮次不存在');const current=selected?store.task(selected.evaluationTaskId||''):task.kind==='evaluation'?source:store.currentReport(task);return {taskId:current?.id||null,report:current?.report?{...current.report,...(current.report.completeness?{completeness:{...current.report.completeness,checks:[]}}:{})}:null,rule:task.rule||null,evaluation:current?{scope:current.scope,scenario:current.scenario,siteUrl:current.siteUrl,createdAt:current.createdAt,status:current.status}:undefined,historical:round!==undefined,selectedRound:selected?{brief:selected.brief,progress:selected.progress}:undefined,optimization:task.optimization?{state:task.optimization.state,reason:task.optimization.reason,rounds:task.optimization.rounds.map(r=>{const evaluation=r.evaluationTaskId?store.task(r.evaluationTaskId):undefined;return {number:r.number,generationTaskId:r.generationTaskId,evaluationTaskId:r.evaluationTaskId,status:evaluation?.status||store.task(r.generationTaskId)?.status,scores:evaluation?.report?.scores||null,summary:brief(r.progress?.reason||evaluation?.report?.summary||'等待本轮独立复评')};})}:undefined};

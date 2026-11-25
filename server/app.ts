@@ -13,6 +13,8 @@ import { chromium } from 'playwright';
 import { submissionSchema, webUrl, environmentConnectionSchema } from './lib/validation.js';
 import { testEnvironment, availableRootDomains } from './lib/kooboo.js';
 import { loginKooboo, KoobooLoginError } from './lib/kooboo-auth.js';
+import { KoobooBrowserLoginManager, KoobooBrowserLoginError, type KoobooBrowserLoginDependencies } from './lib/kooboo-browser-login.js';
+import { collectDeliverySecrets } from './lib/delivery-config.js';
 import { Artifacts } from './lib/artifacts.js';
 import { scoringStatus } from '../shared/result.js';
 import { defaultRuleVersion } from './lib/agent-rule.js';
@@ -43,7 +45,7 @@ function present(item: Evaluation) {
   return { ...item, evaluationId: item.id, jobId: item.submission.jobId, attemptId: item.submission.attemptId, status: item.run.status, scoringStatus: scoringStatus(item.run), fidelityScore: item.run.report?.fidelityScore ?? null, completionScore: item.run.report?.completionScore ?? null, ruleSetVersion: item.run.snapshot?.rule.version ?? item.submission.ruleSetVersion ?? 'visual-v1', reportUrl: `/#/evaluations/${item.id}` };
 }
 
-export async function createApp(options: { directory: string; serveWeb?: boolean; startWorker?: boolean; workerDependencies?: Partial<Dependencies>; backgroundEntry?: URL; updateTransport?: UpdateTransport; createAutomationWorker?: (store: AutomationStore, vault: Vault, directory: string) => AutomationWorker }) {
+export async function createApp(options: { directory: string; serveWeb?: boolean; startWorker?: boolean; workerDependencies?: Partial<Dependencies>; browserLoginDependencies?: KoobooBrowserLoginDependencies; backgroundEntry?: URL; updateTransport?: UpdateTransport; createAutomationWorker?: (store: AutomationStore, vault: Vault, directory: string) => AutomationWorker }) {
   const directory = resolve(options.directory);
   const vault = new Vault(directory);
   const store = new Store(resolve(directory, 'database.sqlite'));
@@ -53,7 +55,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   const worker = new Worker(store, vault, artifacts, directory, options.workerDependencies);
   const automationStore = new AutomationStore(store.db,value=>{
     const settings=vault.get();
-    for(const secret of [settings.model.apiKey,settings.updateSource?.token||'',...settings.environments.flatMap(e=>[e.token,e.delivery?.token||''])])if(secret)value=value.replaceAll(secret,'[已隐藏]');
+    for(const secret of [settings.model.apiKey,settings.updateSource?.token||'',...settings.environments.map(e=>e.token),...collectDeliverySecrets(settings)])if(secret)value=value.replaceAll(secret,'[已隐藏]');
     return value.replace(/Bearer\s+[^\s"',;\\]+/gi,'Bearer [已隐藏]');
   });
   const automationWorker = options.createAutomationWorker
@@ -65,6 +67,7 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   let session = randomUUID() + randomUUID();
   let modelTestRunning = false;
   const environmentLogins = new Set<string>();
+  const browserLogins = new KoobooBrowserLoginManager(directory, vault, environmentLogins, options.browserLoginDependencies);
   const knownHosts = new Set(['127.0.0.1', 'localhost', '[::1]']);
   const origins = new Set(['http://127.0.0.1:4180', 'http://localhost:4180', 'http://127.0.0.1:4181', 'http://localhost:4181']);
 
@@ -124,6 +127,10 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
   });
   app.get('/api/settings', async (_request, reply) => { reply.header('Cache-Control', 'no-store'); return vault.public(); });
   app.put('/api/settings', async (request) => vault.update(request.body));
+  app.post('/api/settings/delivery-defaults/adopt-token', async (request) => {
+    const { environmentId } = z.object({ environmentId: z.string().uuid() }).parse(request.body);
+    return vault.adoptDeliveryDefaultToken(environmentId);
+  });
   app.post('/api/environments/login', async (request, reply) => {
     const { username, password, code, ...connection } = environmentConnectionSchema.extend({
       username: z.string().trim().min(1, '请填写账号').max(320),
@@ -144,6 +151,26 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
       if (error instanceof KoobooLoginError) return reply.code(422).send({ error: error.message });
       throw error;
     } finally { environmentLogins.delete(connection.id); }
+  });
+  app.post('/api/environments/browser-login/start', async (request, reply) => {
+    const connection = environmentConnectionSchema.parse(request.body);
+    try {
+      return await browserLogins.start(connection);
+    } catch (error) {
+      if (error instanceof KoobooBrowserLoginError) return reply.code(422).send({ error: error.message });
+      throw error;
+    }
+  });
+  app.get('/api/environments/browser-login/:sessionId', async (request, reply) => {
+    const { sessionId } = z.object({ sessionId: z.string().uuid() }).parse(request.params);
+    const status = browserLogins.get(sessionId);
+    if (!status) return reply.code(404).send({ error: '登录会话不存在或已过期' });
+    return status;
+  });
+  app.post('/api/environments/browser-login/:sessionId/cancel', async (request) => {
+    const { sessionId } = z.object({ sessionId: z.string().uuid() }).parse(request.params);
+    await browserLogins.cancel(sessionId);
+    return { ok: true };
   });
   app.post('/api/model/test', async (_request, reply) => {
     const model = vault.get().model;
@@ -308,12 +335,12 @@ export async function createApp(options: { directory: string; serveWeb?: boolean
     const owned = automationWorker instanceof BackgroundWorkers ? await automationWorker.quiesce() : automationWorker.ownedIds().length + Number(worker.busy);
     // The maintenance barrier observes real executor ownership, including legacy jobs.
     // Historical unknown stops still fence retries, but do not own this process or block updates.
-    return owned + Number(diagnosticExports.busy) + Number(modelTestRunning);
+    return owned + Number(diagnosticExports.busy) + Number(modelTestRunning) + browserLogins.activeCount;
   } });
 
   const dist = resolve(process.cwd(), 'dist');
   if (options.serveWeb !== false && existsSync(dist)) await app.register(staticFiles, { root: dist, prefix: '/' });
-  app.addHook('onClose', async () => { await Promise.all([worker.stop(), automationWorker.stop()]); store.close(); });
+  app.addHook('onClose', async () => { await Promise.all([worker.stop(), automationWorker.stop(), browserLogins.closeAll()]); store.close(); });
   if (options.startWorker !== false) {
     try { await automationWorker.start(); if (!(automationWorker instanceof BackgroundWorkers)) worker.start(); }
     catch (error) { await app.close(); throw error; }

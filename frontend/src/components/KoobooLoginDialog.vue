@@ -4,7 +4,10 @@ import { X, LogIn, LoaderCircle, Eye, EyeOff } from '@lucide/vue';
 import { api, message } from '../api';
 import type { KoobooConnectionInput, KoobooLoginResult } from '../../../shared/kooboo-auth';
 
-const emit = defineEmits<{ connected: [result: Extract<KoobooLoginResult, { status: 'connected' }>] }>();
+const emit = defineEmits<{
+  connected: [result: Extract<KoobooLoginResult, { status: 'connected' }>];
+  switchToBrowser: [connection: KoobooConnectionInput];
+}>();
 const dialog = ref<HTMLDialogElement>();
 const usernameInput = ref<HTMLInputElement>(), codeInput = ref<HTMLInputElement>();
 const connection = ref<KoobooConnectionInput>();
@@ -44,6 +47,13 @@ async function submit(): Promise<void> {
   } catch (reason) { error.value = message(reason); code.value = ''; }
   finally { busy.value = false; }
 }
+function openBrowserLogin(): void {
+  if (!connection.value || busy.value) return;
+  const target = { ...connection.value };
+  dialog.value?.close();
+  clear();
+  emit('switchToBrowser', target);
+}
 defineExpose({ open });
 </script>
 
@@ -58,6 +68,7 @@ defineExpose({ open });
       <div v-if="suggestedOrigin" class="alert info" role="status"><p>该账号所属的环境为 {{ suggestedOrigin }}。</p><button type="button" class="text-action" @click="useSuggestedOrigin()">使用此地址重新登录</button></div>
       <p v-if="error" class="alert error" role="alert">{{ error }}</p>
       <p class="text-muted small-text">登录后自动加密保存访问凭据，不保存密码。</p>
+      <p class="switch-login-hint"><button type="button" class="text-action" :disabled="busy" @click="openBrowserLogin()">使用 Google / SSO 登录？改用浏览器窗口自动获取</button></p>
       <div class="modal-actions"><button type="button" class="button secondary" :disabled="busy" @click="close()">取消</button><button class="button primary" :disabled="busy || !!suggestedOrigin"><LoaderCircle v-if="busy" class="spin" :size="17" /><LogIn v-else :size="17" />{{ busy ? '连接中…' : verification ? '验证并连接' : '登录并连接' }}</button></div>
     </form>
   </dialog>
@@ -67,4 +78,5 @@ defineExpose({ open });
 .kooboo-login-modal{max-width:460px;}
 .connection-origin{overflow-wrap:anywhere;color:var(--muted);margin:0 0 20px;}
 .alert p{margin:0 0 8px;}
+.switch-login-hint{margin:8px 0 0 !important;}
 </style>

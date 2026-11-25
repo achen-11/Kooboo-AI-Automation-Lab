@@ -32,6 +32,7 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   humanAttention?: HumanNotice;
   nextStep: string;
   canAdjustSiteNames?: boolean;
+  autoEvaluate?: boolean;
   autoDelivery?: boolean;
   deliveryStatus?: string;
   optimization?: OptimizationSummary;
@@ -81,6 +82,7 @@ export function taskSummary(task: AutomationTask): TaskSummary {
     ...(humanAttention ? { attentionCategory: humanAttention.category, humanAttention } : {}),
     nextStep: adjustNames ? '自动调整被占用的站点名称或子域名后继续原任务。' : brief(humanAttention?.userActions[0] || task.interruption?.nextSteps[0] || ''),
     canAdjustSiteNames: adjustNames,
+    ...(task.autoEvaluate !== undefined ? { autoEvaluate: task.autoEvaluate } : {}),
     ...(task.autoDelivery !== undefined ? { autoDelivery: task.autoDelivery } : {}),
     deliveryStatus: task.delivery?.status,
     delivery: task.delivery ? { status: task.delivery.status, ...(task.delivery.target?.siteUrl ? { targetUrl: task.delivery.target.siteUrl } : {}) } : undefined };
@@ -92,7 +94,7 @@ export function initialTaskTab(search: string): TaskTab {
 export function compactNotice(notice: { id: string; taskId: string; title: string; createdAt: number; readAt: number | null }, task?: Pick<TaskSummary, 'resourceName' | 'status' | 'delivery'>): CompactNotice {
   const delivery = notice.title.includes('交付');
   const interruption = /中断|核查|检查|未启动/.test(notice.title);
-  const summaries: Record<string, string> = { '任务已中断': '自动跟进未能继续，请查看中断原因与下一步。', '评测报告已完成': '评分、问题清单和证据已保存。', '生成已结束': '生成阶段已结束，可查看站点并发起评测。', '自动交付未启动': '源站评测已结束，请查看交付条件。', '交付核验完成': '目标站核验结果与证据已保存。', '交付需要核查': '请核查迁移回执或目标站状态。', '交付已中断': '请查看交付原因与恢复方式。', '交付恢复检查': '服务恢复后需要检查交付状态。' };
+  const summaries: Record<string, string> = { '任务已中断': '自动跟进未能继续，请查看中断原因与下一步。', '评测报告已完成': '评分、问题清单和证据已保存。', '生成已结束': '生成阶段已结束，可查看站点或按需发起评测 / 交付。', '自动交付未启动': '源站评测已结束，请查看交付条件。', '跨环境交付完成': '目标站迁移完成，HTTP 可达性检查通过。', '交付核验完成': '目标站核验结果与证据已保存。', '交付需要核查': '请核查迁移回执或目标站状态。', '交付已中断': '请查看交付原因与恢复方式。', '交付恢复检查': '服务恢复后需要检查交付状态。' };
   const superseded = Boolean(task && interruption && (delivery ? task.delivery?.status === 'completed' : !['pending', 'failed', 'interrupted'].includes(task.status)));
   const {id,taskId,title,createdAt,readAt}=notice;
   return { id, taskId, title, createdAt, readAt, resourceName: task?.resourceName || '任务', summary: summaries[notice.title] || '查看任务详情了解进展。', tab: delivery ? 'delivery' : notice.title.includes('报告') ? 'report' : 'overview', currentStatus: task?.status, superseded };

@@ -135,15 +135,27 @@ export interface Evaluation {
 export interface RuntimeSettings {
   updateSource?: import('./update.js').UpdateSource;
   automation?: import('./automation.js').AutomationSettings;
+  deliveryDefaults?: { endpoint: string; token: string };
   threshold: number;
   paused: boolean;
   execution: { timeoutSeconds: number; captureAttempts: number };
   model: { endpoint: string; name: string; apiKey: string };
   environments: { id: string; name: string; origin: string; apiOrigin: string; token: string; defaultRootDomain?: string; cloneFallbackEnvironmentId?: string; delivery?: import('./automation.js').DeliveryPolicy & {token:string} }[];
 }
-export interface PublicSettings extends Omit<RuntimeSettings, 'model' | 'environments' | 'updateSource'> {
+export interface PublicDeliveryDefaults {
+  endpoint: string;
+  savedEndpoint: string;
+  hasToken: boolean;
+  hasSavedToken: boolean;
+  tokenFromEnv: boolean;
+  endpointFromEnv: boolean;
+  reusableEnvironmentName?: string;
+  reusableEnvironmentId?: string;
+}
+export interface PublicSettings extends Omit<RuntimeSettings, 'model' | 'environments' | 'updateSource' | 'deliveryDefaults'> {
+  deliveryDefaults: PublicDeliveryDefaults;
   model: Omit<RuntimeSettings['model'], 'apiKey'> & { hasApiKey: boolean };
-  environments: (Omit<RuntimeSettings['environments'][number], 'token'|'delivery'> & { hasToken: boolean; delivery?:import('./automation.js').DeliveryPolicy & {hasToken:boolean} })[];
+  environments: (Omit<RuntimeSettings['environments'][number], 'token'|'delivery'> & { hasToken: boolean; delivery?:import('./automation.js').DeliveryPolicy & {hasToken:boolean; hasCustomToken:boolean; effectiveEndpoint:string} })[];
   credentials: { ingestToken: string; readToken: string };
 }
 

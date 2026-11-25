@@ -541,3 +541,74 @@ test('multi-hop manual re-evaluation walks ancestry back to generation and displ
     await f.close();
   }
 });
+
+test('workflow graph marks evaluation and quality-gate skipped when autoEvaluate is disabled and reflects HTTP-only delivery verification', async () => {
+  const f = await fixture({ deliveryEnabled: true });
+  try {
+    f.vault.updateAutomation({
+      ...defaultAutomationSettings,
+      enabled: true,
+      autoEvaluate: false,
+      learning: { ...defaultAutomationSettings.learning!, collect: false, use: false },
+    });
+    const res = await f.saveResource();
+    const version = f.automationStore.versions(res.id)[0];
+    const site = {
+      id: randomUUID(),
+      resourceId: res.id,
+      versionId: version.id,
+      environmentId: f.environmentId,
+      siteId: randomUUID(),
+      name: 'DirectSite',
+      url: 'https://direct-site.test/',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(site);
+
+    const gen = f.automationStore.create(
+      {
+        resourceIds: [res.id],
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: f.environmentId,
+        generatedSiteId: site.id,
+        autoEvaluate: false,
+        autoDelivery: true,
+        requirements: '',
+      },
+      f.vault.automation(),
+    )[0];
+    gen.generation = { prepared: true, deliveryId: randomUUID(), deliveryState: 'completed' };
+    gen.stage = 'handoff';
+    gen.status = 'completed';
+    gen.stopped = true;
+    gen.delivery = {
+      id: randomUUID(),
+      policy: { enabled: true, endpoint: 'https://migrate.test', auto: true, requirePassed: true, verifyWithAi: false, timeoutSeconds: 180 },
+      status: 'completed',
+      sourceEnvironmentId: f.environmentId,
+      sourceSiteId: site.siteId,
+      sourceUrl: site.url,
+      evaluationTaskId: '',
+      target: { siteId: randomUUID(), siteUrl: 'https://delivered-direct.test/' },
+      updatedAt: Date.now(),
+      error: '',
+      checks: [{ url: 'https://delivered-direct.test/', status: 200, ok: true, detail: 'ok' }],
+      verifiedAt: Date.now(),
+    };
+    f.automationStore.put(gen);
+
+    const { body } = await f.fetchWorkflow(gen.id);
+    assert.equal(body.nodes.find((n) => n.id === 'evaluation')?.status, 'skipped');
+    const gateNode = body.nodes.find((n) => n.id === 'quality-gate');
+    assert.equal(gateNode?.status, 'skipped');
+    assert.equal(gateNode?.statusLabel, '已跳过');
+    const delNode = body.nodes.find((n) => n.id === 'delivery');
+    assert.equal(delNode?.status, 'completed');
+    assert.match(delNode?.summary || '', /已关闭 AI 视觉核验/);
+    assert.ok(delNode?.checks?.some((c) => c.label.includes('HTTP 可达性检查（已关闭 AI 视觉核验）')));
+    assert.equal(body.nodes.find((n) => n.id === 'learning'), undefined);
+  } finally {
+    await f.close();
+  }
+});

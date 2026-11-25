@@ -86,6 +86,13 @@ export const settingsSchema = z
   .object({
     threshold: z.number().min(0).max(100),
     paused: z.boolean(),
+    deliveryDefaults: z
+      .object({
+        endpoint: z.union([z.literal(''), webUrl]),
+        token: z.string().max(10000).optional(),
+        clearToken: z.boolean().optional(),
+      })
+      .optional(),
     model: z.object({
       endpoint: z.union([z.literal(''), webUrl]),
       name: z.string().max(200),
@@ -100,7 +107,7 @@ export const settingsSchema = z
           cloneFallbackEnvironmentId: z.union([z.literal(''), z.string().uuid()]).optional(),
           token: z.string().max(10000).optional(),
           clearToken: z.boolean().optional(),
-          delivery:z.object({enabled:z.boolean(),endpoint:webUrl,auto:z.boolean(),requirePassed:z.boolean(),timeoutSeconds:z.number().int().min(30).max(900),token:z.string().max(10000).optional(),clearToken:z.boolean().optional()}).optional(),
+          delivery:z.object({enabled:z.boolean(),endpoint:z.union([z.literal(''),webUrl]),auto:z.boolean(),requirePassed:z.boolean(),verifyWithAi:z.boolean().optional(),timeoutSeconds:z.number().int().min(30).max(900),token:z.string().max(10000).optional(),clearToken:z.boolean().optional()}).optional(),
         })
       )
       .max(50),

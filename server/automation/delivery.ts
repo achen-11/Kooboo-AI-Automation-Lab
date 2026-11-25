@@ -13,6 +13,7 @@ import { codexClient } from './evaluator.js';
 import { usageCapture } from './usage-proxy.js';
 import { builtInHarnessSop } from './harness.js';
 import { exportRedactor } from '../diagnostics/redact.js';
+import { collectDeliverySecrets, resolveEnvironmentDelivery } from '../lib/delivery-config.js';
 
 const receiptSchema=z.object({siteId:z.guid(),siteUrl:z.url().refine(v=>{const u=new URL(v);return /^https?:$/.test(u.protocol)&&!u.username&&!u.password;})});
 export function reportPassedDeliveryGate(task:AutomationTask,threshold:number):boolean{
@@ -42,20 +43,27 @@ export function reportPassedDeliveryGate(task:AutomationTask,threshold:number):b
 }
 export function queueDelivery(task:AutomationTask,store:AutomationStore,vault:Vault){
   if(store.domainReserved(task.generatedSiteId))throw new Conflict('站点正在换绑域名，请稍后安排交付');
-  if(task.kind!=='evaluation'||task.status!=='completed'||!task.stopped||!task.report)throw new Conflict('请先完成源站的独立评测');
+  const isCompletedEvaluation=task.kind==='evaluation'&&task.status==='completed'&&task.stopped&&Boolean(task.report);
+  const isCompletedGeneration=task.kind==='generation'&&task.status==='completed'&&task.stopped&&Boolean(task.generatedSiteId);
+  if(!isCompletedEvaluation&&!isCompletedGeneration)throw new Conflict(task.kind==='generation'?'请先完成站点生成':'请先完成源站的独立评测');
   if(task.delivery)return task;
-  const env=vault.get().environments.find(e=>e.id===task.environmentId),config=env?.delivery;
+  const config=resolveEnvironmentDelivery(vault.get(),task.environmentId);
   if(!config?.enabled||!config.token)throw new Conflict('当前连接未启用交付，或缺少迁移令牌');
   const threshold=store.root(task)?.optimization?.threshold??vault.get().threshold;
-  if(config.requirePassed&&!reportPassedDeliveryGate(task,threshold))throw new Conflict('当前交付策略要求源站评测通过');
+  const reportOwner=isCompletedEvaluation?task:store.currentReport(task);
+  if(config.requirePassed&&reportOwner&&!reportPassedDeliveryGate(reportOwner,threshold))throw new Conflict('当前交付策略要求源站评测通过');
   const site=task.generatedSiteId&&store.site(task.generatedSiteId);if(!site||!site.url)throw new Conflict('缺少生成站身份或地址');
-  if(site.preferredDomain&&store.currentReport(task)?.id!==task.id)throw new Conflict('站点域名已变更，请先完成当前地址的独立评测再交付');
+  if(isCompletedEvaluation&&site.preferredDomain&&store.currentReport(task)?.id!==task.id)throw new Conflict('站点域名已变更，请先完成当前地址的独立评测再交付');
   const related=store.tasks().filter(t=>t.generatedSiteId===site.id);
   if(related.some(t=>!t.stopped||['queued','following-up'].includes(t.status)))throw new Conflict('同一个源站还有执行任务，请等待结束');
   if(related.some(t=>t.id!==task.id&&t.delivery))throw new Conflict('这个源站已有关联交付；请查看原交付记录，首版不重复迁移或覆盖目标站');
-  const {token,targetEnvironmentId:_legacyTarget,...policy}=config;
-  task.delivery={id:randomUUID(),policy,status:'queued',stopped:true,sourceEnvironmentId:task.environmentId,sourceSiteId:site.siteId,sourceUrl:site.url,evaluationTaskId:task.id,updatedAt:Date.now(),error:'',checks:[]};
-  store.put(task);store.event(task.id,'已排队跨环境交付；源站和评测报告保留不变');return task;
+  if(isCompletedGeneration){
+    const siteState=store.siteState(site.id);
+    if(siteState?.revision)task.siteRevision=siteState.revision;
+  }
+  const {token:_token,hasCustomEndpoint:_hasCustomEndpoint,hasCustomToken:_hasCustomToken,...policy}=config;
+  task.delivery={id:randomUUID(),policy,status:'queued',stopped:true,sourceEnvironmentId:task.environmentId,sourceSiteId:site.siteId,sourceUrl:site.url,evaluationTaskId:reportOwner?.id||'',updatedAt:Date.now(),error:'',checks:[]};
+  store.put(task);store.event(task.id,reportOwner?'已排队跨环境交付；源站和评测报告保留不变':'已排队跨环境交付（跳过源站评测）；源站保留不变');return task;
 }
 export function deliveryReceipt(raw:unknown){return receiptSchema.parse(raw);}
 export function expectedDeliveryPaths(task:AutomationTask,directory:string){
@@ -84,6 +92,15 @@ export async function checkDeliveryAccess(task:AutomationTask,store:AutomationSt
 export async function verifyDelivery(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,dependencies:{openBrowser?:typeof evaluationBrowser;createClient?:typeof codexClient}={}){
   const paths=await checkDeliveryAccess(task,store,directory,signal);
   const delivery=task.delivery!;
+  if(delivery.policy.verifyWithAi===false){
+    delivery.verifiedAt=Date.now();
+    const allOk=delivery.checks.length>0&&delivery.checks.every(c=>c.ok);
+    delivery.status=allOk?'completed':'failed';
+    delivery.error=allOk?'':'目标站 HTTP 可达性检查未全部通过，请查看访问检查明细。';
+    store.put(task);
+    store.event(task.id,allOk?'目标站 HTTP 可达性检查通过，交付已完成（已关闭 AI 视觉核验）':'目标站 HTTP 可达性检查未通过（已关闭 AI 视觉核验）');
+    return;
+  }
   const work=resolve(directory,'automation-runs',task.id,'delivery',delivery.id);mkdirSync(resolve(work,'evidence'),{recursive:true,mode:0o700});
   const retained=(delivery.artifacts||[]).filter(f=>{try{return createHash('sha256').update(readFileSync(resolve(work,'evidence',f.name))).digest('hex')===f.sha256;}catch{return false;}});
   writeFileSync(resolve(work,'evidence-manifest.json'),JSON.stringify(retained),{mode:0o600});
@@ -198,7 +215,8 @@ function deliveryRedactor(vault: Vault, extraSecrets: string[] = []) {
     config.updateSource?.token || '',
     vault.credentials.readToken,
     vault.credentials.ingestToken,
-    ...config.environments.flatMap(env => [env.token, env.delivery?.token || '']),
+    ...config.environments.map(env => env.token),
+    ...collectDeliverySecrets(config),
     ...extraSecrets,
   ]);
 }
@@ -330,7 +348,7 @@ export async function executeDelivery(task:AutomationTask,store:AutomationStore,
   const delivery=task.delivery!;
   if(!delivery.target){
     if(delivery.attemptedAt)throw new Error('迁移发送结果不确定，禁止自动再次发送。请核查迁移服务 / 目标环境，取得 siteId 与 siteUrl 后补录回执。');
-    const config=vault.get().environments.find(e=>e.id===delivery.sourceEnvironmentId)?.delivery;
+    const config=resolveEnvironmentDelivery(vault.get(),delivery.sourceEnvironmentId);
     if(!config?.enabled||config.endpoint!==delivery.policy.endpoint||!config.token)throw new Error('原迁移配置不可用；请补齐同一连接的迁移令牌');
     const sourceClient=koobooClient({...task,environmentId:delivery.sourceEnvironmentId},vault,signal);
     const sourceList=await sourceClient.request('Site/List');const actualSource=(Array.isArray(sourceList)?sourceList:[]).find(s=>siteIdentity(s).toLowerCase()===delivery.sourceSiteId.toLowerCase());
@@ -374,7 +392,7 @@ export async function executeDelivery(task:AutomationTask,store:AutomationStore,
         eventDetail=[`迁移回执解析或校验失败：${parseMessage}`,`耗时 ${elapsed}`,...(contentType?[`content-type=${contentType}`]:[]),...(traceHeader?[traceHeader]:[]),bodySummary?`响应摘要：${bodySummary}`:'响应体为空','已标记为不确定，禁止自动重发。'].join('；');
         throw parseError;
       }
-      delivery.target=target;delivery.status='verifying';store.put(task);store.event(task.id,'目标站回执已保存；开始独立交付核验');
+      delivery.target=target;delivery.status='verifying';store.put(task);store.event(task.id,delivery.policy.verifyWithAi===false?'目标站回执已保存；已关闭 AI 视觉核验，开始 HTTP 可达性检查':'目标站回执已保存；开始独立交付核验');
     }catch(error){
       const elapsed=formatElapsedMs(Date.now()-startedAt);
       const rawMessage=redactor.text(error instanceof Error?error.message:String(error));

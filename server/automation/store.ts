@@ -62,7 +62,7 @@ export class AutomationStore {
       CREATE INDEX IF NOT EXISTS auto_task_index_site ON auto_task_index(site_key,created_at DESC);`);
     // Backfill/repair after an upgrade or rollback; preserve original insertion ordering.
     db.transaction(() => {
-      for (const row of db.prepare("SELECT t.json FROM auto_tasks t LEFT JOIN auto_task_index h ON h.id=t.id WHERE h.id IS NULL OR t.status<>h.status OR json_extract(t.json,'$.updatedAt') IS NOT json_extract(h.json,'$.updatedAt') OR json_type(h.json,'$.summary.canAdjustSiteNames') IS NULL OR (json_extract(t.json,'$.delivery.target.siteUrl') IS NOT NULL AND json_extract(h.json,'$.delivery.targetUrl') IS NULL) OR (json_extract(t.json,'$.autoDelivery') IS NOT NULL AND json_extract(h.json,'$.summary.autoDelivery') IS NULL) ORDER BY t.rowid").all()) this.indexTask(JSON.parse(row.json));
+      for (const row of db.prepare("SELECT t.json FROM auto_tasks t LEFT JOIN auto_task_index h ON h.id=t.id WHERE h.id IS NULL OR t.status<>h.status OR json_extract(t.json,'$.updatedAt') IS NOT json_extract(h.json,'$.updatedAt') OR json_type(h.json,'$.summary.canAdjustSiteNames') IS NULL OR (json_extract(t.json,'$.delivery.target.siteUrl') IS NOT NULL AND json_extract(h.json,'$.delivery.targetUrl') IS NULL) OR (json_extract(t.json,'$.autoDelivery') IS NOT NULL AND json_extract(h.json,'$.summary.autoDelivery') IS NULL) OR (json_extract(t.json,'$.autoEvaluate') IS NOT NULL AND json_extract(h.json,'$.summary.autoEvaluate') IS NULL) ORDER BY t.rowid").all()) this.indexTask(JSON.parse(row.json));
     });
     if (!this.rules().length) {
       this.publish({ name: 'Site UI · 初始规则', kind: 'site', sop: initialSop, references: '', criteria: [
@@ -262,7 +262,7 @@ export class AutomationStore {
   }
   event(id: string, message: string) { this.db.prepare('INSERT INTO auto_events(task_id,time,message) VALUES(?,?,?)').run(id,Date.now(),this.redact(message).slice(0,16000)); }
   events(id: string) { return this.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq').all(id); }
-  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; siteName?: string; subDomain?: string; rootDomain?: string; defaultRootDomain?: string; defaultAutoDelivery?: boolean; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule; optimization?: Partial<OptimizationPolicy>; optimizationRootId?: string; optimizationRound?: number; autoDelivery?: boolean; skipSourceTransfer?: boolean; fallbackToMaterialsOnCloneFailure?: boolean }, settings: AutomationSettings) {
+  create(input: { resourceIds: string[]; kind: AutomationTask['kind']; scope: AutomationTask['scope']; environmentId: string; siteName?: string; subDomain?: string; rootDomain?: string; defaultRootDomain?: string; defaultAutoDelivery?: boolean; generatedSiteId?: string; requirements: string; ruleId?: string; parentId?: string; versionId?: string; ruleSnapshot?: AutomationRule; optimization?: Partial<OptimizationPolicy>; optimizationRootId?: string; optimizationRound?: number; autoEvaluate?: boolean; autoDelivery?: boolean; skipSourceTransfer?: boolean; fallbackToMaterialsOnCloneFailure?: boolean }, settings: AutomationSettings) {
     return this.db.transaction(() => input.resourceIds.map(id => {
       const resource = this.resource(id); if (!resource) throw new Conflict('资源不存在');
       const version = input.versionId ? this.version(input.versionId) : this.versions(id)[0];
@@ -273,11 +273,14 @@ export class AutomationStore {
       if (!site && !input.parentId && resource.disposition) throw new Conflict('所选资源已归档，请先移回在列后再创建任务');
       if (input.kind==='evaluation' && !site) throw new Conflict('评测必须选择一个已有生成站');
       if(input.optimization&&(input.kind!=='generation'||!supportsAutomaticOptimization(version.scenario)))throw new Conflict('自动优化仅支持资料建站、AI Site 模板、迁移与升级生成');
+      const effectiveAutoEvaluate = input.kind === 'generation'
+        ? (input.optimization ? true : (input.autoEvaluate ?? settings.autoEvaluate))
+        : undefined;
       const kind = version.scenario==='app-template'?'app':'site';
       const eligible=this.rules().filter(r=>r.kind===kind&&(!r.scenarios||r.scenarios.includes(version.scenario))&&r.criteria.some(c=>c.scopes.includes(input.scope)));
       const rule = input.ruleSnapshot || eligible.find(r=>r.id===input.ruleId) || (!input.ruleId?eligible.at(-1):undefined);
       if (input.kind==='evaluation' && !rule) throw new Conflict('没有适用于当前场景的已发布规则');
-      if (input.autoDelivery === true && input.kind === 'generation' && !rule) throw new Conflict('开启自动跨环境交付需要适用的已发布评测规则');
+      if (input.autoDelivery === true && input.kind === 'generation' && effectiveAutoEvaluate && !rule) throw new Conflict('开启自动跨环境交付需要适用的已发布评测规则');
       const templateMode = effectiveTemplateUsageMode(version, Boolean(site));
       const rawSkipSourceTransfer = input.skipSourceTransfer ?? version.skipSourceTransfer;
       const effectiveSkipSourceTransfer = input.kind === 'generation' && version.scenario === 'upgrade' && Boolean(rawSkipSourceTransfer);
@@ -329,9 +332,10 @@ export class AutomationStore {
         };
       }
       const parent=input.parentId?this.task(input.parentId):undefined;
+      if (effectiveAutoEvaluate !== undefined) task.autoEvaluate = effectiveAutoEvaluate;
       if (input.autoDelivery !== undefined) task.autoDelivery = input.autoDelivery;
       else if (parent?.autoDelivery !== undefined) task.autoDelivery = parent.autoDelivery;
-      else if (input.defaultAutoDelivery !== undefined) task.autoDelivery = input.defaultAutoDelivery && Boolean(rule);
+      else if (input.defaultAutoDelivery !== undefined) task.autoDelivery = input.defaultAutoDelivery && (!effectiveAutoEvaluate || Boolean(rule));
       const siteWorkflowTasks=!parent&&site&&version.scenario==='site-template'?this.siteTasks(site.id).filter(other=>other.templateWorkflow&&other.versionId===task.versionId):[];
       const siteWorkflowSource=siteWorkflowTasks.find(other=>other.scope===task.scope);
       if(!siteWorkflowSource&&siteWorkflowTasks.some(other=>other.scope==='homepage')&&task.scope==='site'&&input.kind==='generation')throw new Conflict('该生成站由首页范围的新模板流程创建，冻结基线不含内页；请新建全站生成任务，避免丢失基线回退旧流程');
@@ -368,7 +372,7 @@ export class AutomationStore {
         task.model={name:settings.evaluationModel,endpoint:settings.evaluationEndpoint};
         task.optimization={policy:structuredClone(policy),state:'waiting-evaluation',rounds:[{number:0,revision,generationTaskId:task.id,startedAt:now}],activeTaskId:task.id,currentRevision:revision,reportId:null,noImprovement:0,reason:'',nextSteps:[],recoveryPolicy:structuredClone(settings.followup),threshold:80};
       }
-      this.put(task);this.event(task.id,'任务已入队，输入版本及评测规则已固定');
+      this.put(task);this.event(task.id,effectiveAutoEvaluate===false?'任务已入队，输入版本已固定（已关闭自动评测）':'任务已入队，输入版本及评测规则已固定');
       if(adoptedManifestFrom)this.event(task.id,`沿用站点当前报告 ${adoptedManifestFrom} 的更新交付清单（同一输入、站点与资料版本）。`);
       return task;
     }));

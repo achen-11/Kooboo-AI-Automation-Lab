@@ -326,3 +326,52 @@ test('site deliveries project safe recovery metadata consistent with per-task re
     assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${tCancelled.id}/resume`, headers: f.headers })).statusCode, 200);
   } finally { await f.close(); }
 });
+
+test('site deliveries project generated state when autoEvaluate is disabled and awaiting-evaluation otherwise', async () => {
+  const f = await fixture();
+  try {
+    const resGenerated = f.store.saveResource({ name: 'Direct Gen Site', scenario: 'materials', description: '', contentUrl: '', referenceUrl: '', files: [], externalSource: '', externalId: '' });
+    const siteGenerated = { id: randomUUID(), resourceId: resGenerated.id, versionId: f.store.versions(resGenerated.id)[0].id, environmentId: f.site.environmentId, siteId: randomUUID(), name: 'DirectGen', url: 'https://direct-gen.test', createdAt: 10 };
+    f.store.saveSite(siteGenerated);
+    const genNoEval = f.store.create({ resourceIds: [resGenerated.id], generatedSiteId: siteGenerated.id, kind: 'generation', scope: 'homepage', environmentId: siteGenerated.environmentId, autoEvaluate: false, requirements: '' }, { ...f.settings, autoEvaluate: false })[0];
+    f.store.beginSiteChange(genNoEval);
+    genNoEval.status = 'completed';
+    genNoEval.stopped = true;
+    f.store.put(genNoEval);
+
+    const rowNoEval = siteDeliveries(f.store, 80, siteGenerated.id)[0];
+    assert.equal(rowNoEval.state, 'generated');
+    assert.match(rowNoEval.reason, /已关闭自动评测/);
+
+    // Direct delivery completed updates reason cleanly for generated sites
+    genNoEval.delivery = {
+      id: randomUUID(),
+      policy: { enabled: true, endpoint: 'https://migrate.test', auto: false, requirePassed: true, verifyWithAi: false, timeoutSeconds: 180 },
+      status: 'completed',
+      sourceEnvironmentId: siteGenerated.environmentId,
+      sourceSiteId: siteGenerated.siteId,
+      sourceUrl: siteGenerated.url,
+      evaluationTaskId: '',
+      target: { siteId: randomUUID(), siteUrl: 'https://delivered.test/' },
+      updatedAt: Date.now(),
+      error: '',
+      checks: [{ url: 'https://delivered.test/', status: 200, ok: true, detail: 'ok' }],
+      verifiedAt: Date.now(),
+    };
+    f.store.put(genNoEval);
+    const deliveredRow = siteDeliveries(f.store, 80, siteGenerated.id)[0];
+    assert.equal(deliveredRow.state, 'generated');
+    assert.match(deliveredRow.reason, /已跳过源站评测/);
+
+    // Generation with autoEvaluate=true and no report yet stays awaiting-evaluation
+    const genWithEval = f.create('homepage');
+    f.store.beginSiteChange(genWithEval);
+    genWithEval.status = 'completed';
+    genWithEval.stopped = true;
+    f.store.put(genWithEval);
+    const rowAwaiting = siteDeliveries(f.store, 80, f.site.id)[0];
+    assert.equal(rowAwaiting.state, 'awaiting-evaluation');
+  } finally {
+    await f.close();
+  }
+});

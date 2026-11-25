@@ -1,4 +1,4 @@
-import type { AutomationTask, FollowupAction } from '../../shared/automation.js';
+import { shouldEvaluateAfterGeneration, type AutomationTask, type FollowupAction } from '../../shared/automation.js';
 import type { HumanNotice } from '../../shared/human-diagnostics.js';
 import { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
@@ -249,11 +249,19 @@ export class AutomationWorker{
         task.status='completed';task.error='';
         if(task.followup)task.followup.state='resolved';
         if(task.kind==='evaluation')this.store.publishSiteReport(task);
-        if(task.kind==='generation'&&(task.optimization||task.optimizationRootId||task.autoDelivery||this.vault.automation().autoEvaluate)&&(!this.store.root(task)?.optimization||!['stopped','completed'].includes(this.store.root(task)!.optimization!.state))){task.stage='handoff';this.store.ensureEvaluation(task,this.vault.automation());}
-        else this.store.notice(task,task.kind==='evaluation'?'评测报告已完成':'生成已结束',task.resourceName+(task.kind==='evaluation'?'：查看本轮报告、问题与证据。':'：自动评测已关闭。'));
+        const settings=this.vault.automation();
+        const root=this.store.root(task);
+        const optDone=Boolean(root?.optimization&&['stopped','completed'].includes(root.optimization.state));
+        if(task.kind==='generation'&&shouldEvaluateAfterGeneration(task,settings)&&!optDone){task.stage='handoff';this.store.ensureEvaluation(task,settings);}
+        else this.store.notice(task,task.kind==='evaluation'?'评测报告已完成':'生成已结束',task.resourceName+(task.kind==='evaluation'?'：查看本轮报告、问题与证据。':'：自动评测已关闭，可直接查看站点。'));
       }
       this.store.put(task);this.store.event(task.id,task.status==='cancelled'?'任务已取消':'本阶段执行已结束');
-      if(task.kind==='evaluation'&&task.status==='completed'){const root=this.store.root(task);if(!root?.optimization)this.maybeQueueAutoDelivery(task,root);}
+      if(task.status==='completed'){
+        const root=this.store.root(task);
+        const optDone=Boolean(root?.optimization&&['stopped','completed'].includes(root.optimization.state));
+        if(task.kind==='evaluation'&&!root?.optimization)this.maybeQueueAutoDelivery(task,root);
+        else if(task.kind==='generation'&&!task.evaluationTaskId&&!optDone&&!root?.optimization)this.maybeQueueAutoDelivery(task,root);
+      }
     }catch(error){
       task.stopped=!(error instanceof UnconfirmedStop);
       const reason=error instanceof UnconfirmedStop?error:controller.signal.reason||error;
@@ -289,7 +297,7 @@ export class AutomationWorker{
     const finishTiming=this.store.timing.activity(task.id,'delivery');
     let unconfirmed=false;const delivery=task.delivery!;delivery.attempts=(delivery.attempts||0)+1;this.store.put(task);
     const timer=setTimeout(()=>controller.abort(new Error('交付执行达到本轮时限')),(delivery.policy.timeoutSeconds+this.vault.automation().timeoutMinutes*60)*1000);timer.unref();
-    try{await executeDelivery(task,this.store,this.vault,this.directory,controller.signal);this.store.notice(task,delivery.status==='completed'?'交付核验完成':'交付需要核查',delivery.error||'目标站与独立交付核验证据已保存。');}
+    try{await executeDelivery(task,this.store,this.vault,this.directory,controller.signal);this.store.notice(task,delivery.status==='completed'?(delivery.policy.verifyWithAi===false?'跨环境交付完成':'交付核验完成'):'交付需要核查',delivery.error||(delivery.policy.verifyWithAi===false?'目标站已迁移完成并通过 HTTP 可达性检查。':'目标站与独立交付核验证据已保存。'));}
     catch(error){unconfirmed=error instanceof UnconfirmedStop;delivery.error=(error instanceof Error?error.message:'交付失败')+'；源站报告保留。';
       if(!unconfirmed&&delivery.target&&(delivery.attempts||0)<3&&!controller.signal.aborted&&!this.stopping){delivery.status='queued';delivery.nextAt=Date.now()+10000;this.store.event(task.id,'保留目标回执，稍后恢复原交付核验会话：'+delivery.error);}
       else{delivery.status=delivery.target?'failed':delivery.attemptedAt?'uncertain':'failed';this.store.notice(task,'交付已中断',delivery.error+' 请检查迁移回执、目标连接或核验证据后恢复核验。');}
@@ -400,8 +408,16 @@ export class AutomationWorker{
     if(action.action==='wait'){task.status='following-up';followup.state='waiting';followup.nextAt=Date.now()+(action.waitSeconds||30)*1000;this.store.put(task);return;}
     if(!followup.executionStopped)throw new Error('原执行停止尚未确认，不能重试或交接');
     if(action.action==='evaluate'){
+      const settings=this.vault.automation();
+      const root=this.store.root(task);
+      const optDone=Boolean(root?.optimization&&['stopped','completed'].includes(root.optimization.state));
+      const shouldEval=shouldEvaluateAfterGeneration(task,settings)&&!optDone;
       task.generation={...task.generation,deliveryState:'completed',state:'completed'};task.stage='handoff';
-      this.store.ensureEvaluation(task,this.vault.automation());task.status='completed';task.error='';followup.state='resolved';
+      if(shouldEval)this.store.ensureEvaluation(task,settings);
+      task.status='completed';task.error='';followup.state='resolved';
+      this.store.put(task);this.store.event(task.id,`AI 已安排 ${action.action}：${action.reason}`);
+      if(!task.evaluationTaskId&&!optDone&&!root?.optimization)this.maybeQueueAutoDelivery(task,root);
+      return;
     }else{
       if(action.action==='retry')rememberSiteRetry(task,this.store);
       if(action.action==='retry'&&task.kind==='evaluation'){const retained=retainAccountReservations(this.store.db,'evaluation:'+task.id,task.id);if(retained.count)this.store.event(task.id,`跟进重试：保留 ${retained.count} 笔已停止评测请求的未知用量预占（${retained.tokens} token）。`);}

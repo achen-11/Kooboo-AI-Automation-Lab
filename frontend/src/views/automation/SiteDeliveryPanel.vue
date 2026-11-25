@@ -75,7 +75,7 @@ async function copyUrl(url: string, label: string) {
   </section>
 </template>
 <style scoped>
-.site-readiness.ready{color:#16765d}.site-readiness.attention,.site-readiness.needs-improvement{color:#a65e0a}.site-readiness.running,.site-readiness.queued{color:var(--blue)}.site-readiness.unverified,.site-readiness.awaiting-evaluation{color:var(--muted)}
+.site-readiness.ready,.site-readiness.generated{color:#16765d}.site-readiness.attention,.site-readiness.needs-improvement{color:#a65e0a}.site-readiness.running,.site-readiness.queued{color:var(--blue)}.site-readiness.unverified,.site-readiness.awaiting-evaluation{color:var(--muted)}
 .site-summary{display:flex;flex-wrap:wrap;gap:24px 64px;margin:4px 0 18px}.site-summary>div{display:flex;flex-direction:column;gap:9px}.site-summary span{font-size:12px;color:var(--muted)}.site-summary strong{font-size:22px;font-weight:600;font-variant-numeric:tabular-nums}
 .site-links-card{display:flex;flex-direction:column;gap:10px;padding:14px 16px;margin-bottom:18px;background:var(--field);border:1px solid #e3e8f2;border-radius:10px}
 .site-link-row{display:flex;align-items:center;flex-wrap:wrap;gap:8px 10px;min-width:0;font-size:13px}

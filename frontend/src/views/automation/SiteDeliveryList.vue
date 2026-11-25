@@ -436,7 +436,7 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
 .delivery-reason,.delivery-status-link{font-size:12px;padding:0;white-space:nowrap}
 .delivery-reason-text{display:-webkit-box;-webkit-line-clamp:2;-webkit-box-orient:vertical;overflow:hidden;white-space:normal;word-break:break-word;margin-top:4px;font-size:11.5px;line-height:1.45;color:var(--muted);max-width:100%}
 .delivery-result{font-weight:600;white-space:nowrap}
-.delivery-result.ready{color:#16765d}.delivery-result.attention,.delivery-result.needs-improvement{color:#a65e0a}.delivery-result.unverified,.delivery-result.awaiting-evaluation{color:var(--muted)}.delivery-result.running,.delivery-result.queued{color:var(--blue)}
+.delivery-result.ready,.delivery-result.generated{color:#16765d}.delivery-result.attention,.delivery-result.needs-improvement{color:#a65e0a}.delivery-result.unverified,.delivery-result.awaiting-evaluation{color:var(--muted)}.delivery-result.running,.delivery-result.queued{color:var(--blue)}
 .site-scores{display:flex;flex-wrap:wrap;gap:5px;max-width:100%}
 .site-score{display:inline-flex;align-items:baseline;gap:4px;padding:3px 6px;border-radius:5px;background:var(--field);font-variant-numeric:tabular-nums}
 .site-score span{font-size:10px}.site-score strong{font-size:13.5px;font-weight:600}

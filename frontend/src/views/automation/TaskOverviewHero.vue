@@ -413,7 +413,8 @@ async function copyUrl(url: string) {
   font-weight: 650;
   line-height: 1.3;
 }
-.hero-result-value.ready {
+.hero-result-value.ready,
+.hero-result-value.generated {
   color: #16765d;
 }
 .hero-result-value.attention,

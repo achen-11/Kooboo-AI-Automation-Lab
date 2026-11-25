@@ -4,6 +4,7 @@ import {
   effectiveReferenceUrl,
   effectiveTemplateUsageMode,
   scenarios,
+  shouldEvaluateAfterGeneration,
   taskStatusNames,
   type AutomationTask,
   type FollowupRun,
@@ -624,6 +625,7 @@ export function buildTaskWorkflowGraph(
               : undefined;
 
   // Delivery projection aligned with /summary
+  const evalPlanned = Boolean(evaluationTask || opt || shouldEvaluateAfterGeneration(root, settings));
   const siteHeaders = root.generatedSiteId ? store.headers(root.generatedSiteId) : [];
   const siteState = root.generatedSiteId ? store.siteState(root.generatedSiteId) : undefined;
   const deliveryHeader =
@@ -976,7 +978,11 @@ export function buildTaskWorkflowGraph(
       statusLabel: workflowNodeStatusLabels[genStatus],
       summary: genDone
         ? genNodeTask.siteUrl
-          ? 'AI 已完成站点页面构建并刷新出可访问地址，流程进入独立评测。'
+          ? evalPlanned
+            ? 'AI 已完成站点页面构建并刷新出可访问地址，流程进入独立评测。'
+            : (autoDeliveryFlag || autoDeliveryExpected)
+              ? 'AI 已完成站点页面构建并刷新出可访问地址，已跳过独立评测，直接进入跨环境交付。'
+              : 'AI 已完成站点页面构建并刷新出可访问地址（已关闭自动评测，可直接使用或按需手动发起评测 / 交付）。'
           : '生成阶段已结束。'
         : genStatus === 'attention'
           ? cleanText(genNodeTask.interruption?.reason || genNodeTask.error, 'AI 生成建站未能正常结束，需要核查。')
@@ -1005,7 +1011,7 @@ export function buildTaskWorkflowGraph(
     else if (['running', 'following-up', 'cancelling'].includes(evalNodeTask.status)) evalStatus = 'running';
     else if (evalNodeTask.status === 'cancelled') evalStatus = 'cancelled';
     else evalStatus = 'attention';
-  } else if (genDone && !settings.autoEvaluate && !opt && !root.autoDelivery) {
+  } else if (genDone && !evalPlanned) {
     evalStatus = 'skipped';
   } else {
     evalStatus = 'pending';
@@ -1088,7 +1094,7 @@ export function buildTaskWorkflowGraph(
             : '存在待修复区块'
           : '评测已结束'
       : evalStatus === 'skipped'
-        ? '自动评测未开启，可手动发起'
+        ? '已跳过自动评测，可手动发起'
         : evalNodeTask
           ? taskStatusNames[evalNodeTask.status]
           : genDone
@@ -1109,7 +1115,7 @@ export function buildTaskWorkflowGraph(
       : evalStatus === 'attention'
         ? cleanText(evalNodeTask?.interruption?.reason || evalNodeTask?.error, '独立评测过程发生异常，需要处理。')
         : evalStatus === 'skipped'
-          ? '当前全局设置关闭了自动评测，您可以在右上角手动点击「发起评测」。'
+          ? '当前任务未开启自动评测，已跳过独立评测；如需质量评分，可在右上角手动点击「发起评测」。'
           : '生成完成后由独立评测代理对目标站双端画面、内容完整性和规则逐项打分。',
     description: '由独立评审代理打开真实浏览器截图取证，对比参考站与资料清单进行打分，找出具体缺陷。',
     taskId: evalNodeTask?.id,
@@ -1170,6 +1176,10 @@ export function buildTaskWorkflowGraph(
       gateSubtitle = '未开启自动优化 · 可手动处理';
       gateSummary = '当前任务未开启自动质量优化；评测存在待改进项，可手动点击「继续生成」或开启自动优化。';
     }
+  } else if (evalStatus === 'skipped') {
+    gateStatus = 'skipped';
+    gateSubtitle = '已跳过评测与质量门禁';
+    gateSummary = '当前任务未开启自动评测与自动优化，跳过质量门禁判定。';
   } else {
     gateStatus = 'pending';
     gateSubtitle = '等待独立评测结果';
@@ -1192,7 +1202,7 @@ export function buildTaskWorkflowGraph(
     title: '质量达标判定',
     subtitle: gateSubtitle,
     status: gateStatus,
-    statusLabel: gateStatus === 'skipped' ? '未开启优化' : workflowNodeStatusLabels[gateStatus],
+    statusLabel: gateStatus === 'skipped' ? (evalStatus === 'skipped' ? '已跳过' : '未开启优化') : workflowNodeStatusLabels[gateStatus],
     summary: gateSummary,
     description: `达标条件：PC 与移动端均 ≥ ${targetScore} 分、适用必检项全部通过、无严重/主要缺陷（${maxRoundsText}）。`,
     taskId: root.id,
@@ -1219,7 +1229,9 @@ export function buildTaskWorkflowGraph(
     delSummary =
       cleanText(del.error) ||
       (del.status === 'completed'
-        ? '目标站已迁移完成并通过双端交付核验。'
+        ? (del.policy.verifyWithAi === false
+            ? '目标站已迁移完成并通过 HTTP 可达性检查（已关闭 AI 视觉核验）。'
+            : '目标站已迁移完成并通过双端交付核验。')
         : '正在执行跨环境迁移或双端交付核验。');
   } else if (opt?.state === 'stopped') {
     delStatus = 'skipped';
@@ -1227,12 +1239,16 @@ export function buildTaskWorkflowGraph(
     delSummary = '自动优化未达标已停止，系统按安全策略未自动交付，可在「交付」页手动发起。';
   } else if (autoDeliveryFlag || autoDeliveryExpected) {
     delStatus = 'pending';
-    delSubtitle = '等待评测达标后自动交付';
-    delSummary = '评测达到交付标准后将自动迁移到目标环境并核验可访问性。';
+    delSubtitle = !evalPlanned ? '等待生成完成后自动交付' : '等待评测达标后自动交付';
+    delSummary = !evalPlanned
+      ? '生成完成后将跳过源站评测，直接迁移到目标环境。'
+      : '评测达到交付标准后将自动迁移到目标环境并核验可访问性。';
   } else if (envDeliveryEnabled) {
     delStatus = 'skipped';
     delSubtitle = '未开启自动交付，可手动发起';
-    delSummary = '当前任务未开启自动交付；确认质量满意后可在「交付」标签页手动发起跨环境迁移。';
+    delSummary = !evalPlanned && genDone
+      ? '站点已生成完成；如需迁移到目标环境，可在「交付」标签页直接发起跨环境交付。'
+      : '当前任务未开启自动交付；确认质量满意后可在「交付」标签页手动发起跨环境迁移。';
   } else {
     delStatus = 'skipped';
     delSubtitle = '当前环境未配置交付';
@@ -1255,7 +1271,7 @@ export function buildTaskWorkflowGraph(
     },
     {
       id: 'del-verify',
-      label: '目标站可达性与双端视觉核验',
+      label: del?.policy.verifyWithAi === false ? '目标站 HTTP 可达性检查（已关闭 AI 视觉核验）' : '目标站可达性与双端视觉核验',
       status: del?.status === 'completed'
         ? 'done'
         : del?.status === 'verifying'
@@ -1504,7 +1520,7 @@ export function buildTaskWorkflowGraph(
   }
 
   // 10. Experience Learning branch node (when reflection exists OR learning collection is enabled)
-  if (reflectionRuns.length > 0 || settings.learning?.collect) {
+  if (reflectionRuns.length > 0 || (settings.learning?.collect && root.learningPolicy?.collect !== false)) {
     const latestLearn = reflectionRuns[0];
     const learnStatus: WorkflowNodeStatus = !latestLearn
       ? 'pending'

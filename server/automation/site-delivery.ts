@@ -58,7 +58,11 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
       }
     } else if (busy || members.some(optimizing)) {
       state = busy?.status === 'queued' ? 'queued' : 'running';
-      reason = busy ? busy.kind === 'generation' ? '正在生成或修复，完成后继续独立评测。' : '正在独立评测当前版本。' : '正在分析报告并安排下一轮修复。';
+      reason = busy
+        ? busy.kind === 'generation'
+          ? (busy.summary.autoEvaluate === false ? '正在生成站点（已关闭自动评测）。' : '正在生成或修复，完成后继续独立评测。')
+          : '正在独立评测当前版本。'
+        : '正在分析报告并安排下一轮修复。';
     } else if (controller?.optimization?.state === 'stopped') {
       state = 'attention'; reason = controller.optimization.reason || '流程已停止，请查看原因和下一步。';
     } else if (report?.report) {
@@ -73,12 +77,21 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
         && (!controller?.optimization || targetReached(controller, report.report));
       state = passed ? 'ready' : report.report.quality === 'unverified' ? 'unverified' : 'needs-improvement';
       reason = passed ? `${scope === 'homepage' ? '仅首页' : '全站'}已通过当前评测口径；正式上线与适用交付核验仍按环境处理。` : report.report.summary;
+    } else if (latestGeneration?.status === 'completed' && latestGeneration.summary.autoEvaluate === false) {
+      state = 'generated';
+      reason = '生成已完成（已关闭自动评测，可直接使用站点或按需手动发起评测 / 交付）。';
     }
     const deliveryTask = members.find(task => task.delivery && (!siteState || task.siteRevision === siteState.revision));
     const delivery = deliveryTask?.delivery;
     if (delivery && ['failed', 'uncertain'].includes(delivery.status)) { state = 'attention'; reason = delivery.error || '交付核验尚未完成。'; recovery = undefined; }
     else if (delivery && ['queued', 'running', 'verifying'].includes(delivery.status)) { state = 'running'; reason = '正在迁移交付或核验目标环境。'; recovery = undefined; }
-    else if (delivery?.status === 'completed' && (state === 'ready' || state === 'unverified')) { reason = state === 'ready' ? '已完成跨环境交付并通过核验。' : '已完成跨环境交付并通过核验；源站报告含未验证说明。'; }
+    else if (delivery?.status === 'completed' && (state === 'ready' || state === 'unverified' || state === 'generated')) {
+      reason = state === 'generated'
+        ? '已完成站点生成与跨环境交付（已跳过源站评测）。'
+        : state === 'ready'
+          ? '已完成跨环境交付并通过核验。'
+          : '已完成跨环境交付并通过核验；源站报告含未验证说明。';
+    }
     const ids = members.map(task => task.id), entries=ids.flatMap(taskId=>[...(ledger.get(taskId)?.values()||[])]), usage = mergeUsage(entries,ids.slice(1));
     const stages = (Object.keys(usageStageNames) as UsageBreakdownStage[]).map(stage => ({ stage, usage: mergeUsage(members.flatMap(task=>[...(ledger.get(task.id)?.entries()||[])].filter(([raw])=>generationStage(raw,task.optimizationRound)===stage).map(([,value])=>value)),ids.slice(1)) }));
     const detail = controller?.optimization ? controller : latest?.kind === 'evaluation' && latestGeneration?.evaluationTaskId !== latest.id ? latest : latestGeneration || latest;

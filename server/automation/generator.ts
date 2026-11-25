@@ -8,6 +8,7 @@ import {
   type MaterialFile,
   type RequiredKoobooSandboxCapability,
 } from '../../shared/automation.js';
+import { buildSiteUiHardRulesPrompt } from './site-ui-rules.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { Pending, GenerationInputError, FollowupRuntimeError } from './errors.js';
@@ -761,10 +762,14 @@ export async function executeGeneration(
       if(task.requirementsId&&!manifest)throw new GenerationInputError('固定交付清单不存在，禁止发送不完整委托');
       const referenceImages=action?.action==='answer'?undefined:await prepareReferenceMedia(task,store,directory,{siteId:site.siteId,apiOrigin,token:environment.token!,request,input,includeBaseline:initial},signal);
       const templateExecutionGuidance=buildTemplateExecutionGuidance(task,input,site.siteId);
+      const isContinuation=!initial||Boolean(task.parentId||task.repairEvidence||task.optimizationRound);
+      const templateMode=templateRef?.mode??effectiveTemplateUsageMode(input,Boolean(task.parentId));
+      const siteUiGuidance=buildSiteUiHardRulesPrompt({scenario:task.scenario,scope:task.scope,templateMode,isContinuation});
+      const combinedGuidance=[siteUiGuidance,adoptedGuidance(task,store,'generation',vault).trim(),collectionGuidance.trim(),acceptedAssetGuidance.trim()].filter(Boolean).join('\n\n');
       const prepared=action?.action==='answer'?undefined:await prepareGenerationContext(task,store,request,site.siteId,{
         instructions:action?.action==='continue'&&action.message!==task.message
           ?task.message+'\n\n本轮已核对的跟进要求：\n'+action.message:task.message,
-        guidance:adoptedGuidance(task,store,'generation',vault)+collectionGuidance+acceptedAssetGuidance,
+        guidance:combinedGuidance?`\n\n${combinedGuidance}`:'',
         ...(templateExecutionGuidance?{templateExecutionGuidance}:{}),
         manifest,
         materials,

@@ -312,3 +312,130 @@ test('formatPrecheckDigest includes deterministic anchorCheck summary without in
   ]);
   assert.match(digest, /页内锚点自检：共 4 个锚点链接，命中有效目标区块 3 个，缺失目标：\[#missing-cta\]/);
 });
+
+test('emits v1.2 layout balance, visibility, duplication, min-font, nav and locale signals', () => {
+  const desktopSnap = baseSnapshot({
+    viewport: 'desktop',
+    viewportWidth: 1440,
+    viewportHeight: 900,
+    headerSticky: false,
+    desktopHamburgerDetected: true,
+    minFontViolationCount: 12,
+    minFontSamples: [{ fontSize: 10, text: 'Copyright footer text' }],
+    headingLineOverflows: [{ tag: 'h1', lines: 4, maxLines: 3, text: 'Very long hero title wrapping onto four lines' }],
+    heroFoldMetrics: {
+      hasHeroSection: true,
+      h1Top: 100,
+      headerBottom: 80,
+      ctaBottom: 890,
+      heroImgBottom: 940,
+      textBlockHeight: 700,
+      maxTextBlockHeight: 640,
+      centerPct: 68,
+    },
+    splitImbalances: [
+      { mediaHeight: 250, textHeight: 980, diffPx: 730, diffRatio: 2.92, tolerancePx: 48, textToMediaRatio: 3.92 },
+    ],
+    sectionAirGaps: [{ index: 2, sectionHeight: 800, contentHeight: 280, contentRatio: 0.35 }],
+    maxVerticalBlankGap: 320,
+    imageDistortions: [
+      { srcHint: '/img/hero.jpg', opacity: 0.4, naturalRatio: 1.5, renderedRatio: 1.5, ratioDiff: 0, reason: 'low-opacity' },
+    ],
+    duplicationSummary: {
+      phones: [{ value: '06 835 181 80', total: 11, main: 8 }],
+      emails: [{ value: 'info@example.test', total: 4, main: 2 }],
+      ctaLabels: [{ label: 'Meer informatie', total: 5, main: 5 }],
+      duplicateBlocks: [{ text: 'Repeated promotional paragraph across multiple sections.', count: 2 }],
+      duplicateImages: [{ srcHint: '/img/shop.jpg', count: 3 }],
+    },
+    localeHygiene: {
+      htmlLang: 'en',
+      cjkInNonCjkSite: true,
+      nativeDateInputs: 1,
+      demoNavResiduals: ['Demos', 'Home 2'],
+    },
+  });
+
+  const signals = evaluateVisualPrecheckSignals(desktopSnap);
+  const codes = signals.map(s => s.code);
+  assert.deepEqual(codes, [
+    'TITLE_LINES_EXCEEDED',
+    'HERO_FOLD_CLIPPED',
+    'HERO_OFF_CENTER',
+    'SPLIT_HEIGHT_IMBALANCE',
+    'SECTION_AIR_GAP',
+    'IMAGE_VISIBILITY_ISSUE',
+    'CONTENT_DUPLICATION',
+    'MIN_FONT_SIZE',
+    'NAV_NOT_STICKY',
+    'DESKTOP_HAMBURGER_NAV',
+    'LOCALE_OR_DATE_ISSUE',
+  ]);
+
+  const splitSig = signals.find(s => s.code === 'SPLIT_HEIGHT_IMBALANCE')!;
+  assert.match(splitSig.summary, /建议拆 3 图纵排/);
+  assert.equal(splitSig.ruleId, 'R-LAYOUT-04');
+  assert.equal(signals.find(s => s.code === 'HERO_FOLD_CLIPPED')!.ruleId, 'R-LAYOUT-04');
+  assert.equal(signals.find(s => s.code === 'MIN_FONT_SIZE')!.ruleId, 'R-TYPO-01');
+  assert.equal(signals.find(s => s.code === 'LOCALE_OR_DATE_ISSUE')!.ruleId, 'R-TYPO-01');
+  const dupSig = signals.find(s => s.code === 'CONTENT_DUPLICATION')!;
+  assert.equal(dupSig.severityHint, 'major');
+  assert.equal(dupSig.ruleId, 'R-DUPE-01');
+  assert.match(dupSig.summary, /06 835 181 80 整页11\/正文8/);
+
+  // Mobile header gap relaxes from 32px to 24px (30px passes, 13px still flags R-LAYOUT-04)
+  const mobileGapOk = evaluateVisualPrecheckSignals(
+    baseSnapshot({
+      viewport: 'mobile',
+      viewportWidth: 390,
+      viewportHeight: 844,
+      heroFoldMetrics: {
+        hasHeroSection: true,
+        headerBottom: 72,
+        h1Top: 102,
+        ctaBottom: 500,
+        centerPct: 48,
+      },
+    }),
+  );
+  assert.equal(mobileGapOk.some(s => s.code === 'HERO_FOLD_CLIPPED'), false);
+
+  const mobileGapTooTight = evaluateVisualPrecheckSignals(
+    baseSnapshot({
+      viewport: 'mobile',
+      viewportWidth: 390,
+      viewportHeight: 844,
+      heroFoldMetrics: {
+        hasHeroSection: true,
+        headerBottom: 72,
+        h1Top: 85,
+        ctaBottom: 500,
+        centerPct: 48,
+      },
+    }),
+  );
+  const mobileClipSig = mobileGapTooTight.find(s => s.code === 'HERO_FOLD_CLIPPED')!;
+  assert.equal(mobileClipSig.ruleId, 'R-LAYOUT-04');
+  assert.match(mobileClipSig.summary, /不足 24px（13px）/);
+
+  // <10 minFont violations stay minor without forcing R-TYPO-01 cap
+  const smallFontMinor = evaluateVisualPrecheckSignals(
+    baseSnapshot({ minFontViolationCount: 4, minFontSamples: [{ fontSize: 11, text: 'Badge' }] }),
+  );
+  assert.equal(smallFontMinor[0].severityHint, 'minor');
+  assert.equal(smallFontMinor[0].ruleId, undefined);
+
+  const twoStackSignals = evaluateVisualPrecheckSignals(
+    baseSnapshot({
+      splitImbalances: [
+        { mediaHeight: 400, textHeight: 680, diffPx: 280, diffRatio: 0.7, tolerancePx: 48, textToMediaRatio: 1.7 },
+      ],
+    }),
+  );
+  assert.match(twoStackSignals[0].summary, /建议拆 2 图纵排/);
+
+  const digest = formatPrecheckDigest([{ snapshot: desktopSnap, signals }]);
+  assert.match(digest, /首屏安全线测量：CTA底=890px\/900px，中心=68%，文本块高=700px/);
+  assert.match(digest, /最小字号检查：<12px 可见文字共 12 处/);
+  assert.match(digest, /CONTENT_DUPLICATION/);
+});

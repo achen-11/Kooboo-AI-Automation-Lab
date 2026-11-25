@@ -167,6 +167,85 @@ const BUILTIN_CALIBRATION_SEEDS: readonly Omit<CheckerCalibrationCase, 'createdA
       requireCapNote: true,
     },
   },
+  {
+    id: 'cal-r-layout-04-catch',
+    ruleId: 'R-LAYOUT-04',
+    title: '首屏安全线越界或桌面双栏图文高度失衡（沿用参考站失衡）',
+    kind: 'should-catch',
+    scenario: 'upgrade',
+    scope: 'homepage',
+    source: 'builtin',
+    notes: '桌面 1440px 下左文右图双栏图文高度差 310px 远超容差 48px，或首屏主 CTA 底部超出 900px 安全线。',
+    evidenceFiles: [],
+    viewport: 'desktop',
+    criterionId: 'structure',
+    simulatedIssue: {
+      severity: 'major',
+      title: '桌面双栏图文高度差 310px 失衡',
+      detail: '[R-LAYOUT-04] 沿用参考站失衡结构，未按 relative+absolute 或纵排多图重构。',
+      ruleId: 'R-LAYOUT-04',
+      viewport: 'desktop',
+      criterionId: 'structure',
+    },
+    expected: {
+      quality: 'failed',
+      maxDesktopScore: 78,
+      requireRuleInPrompt: true,
+      requireCapNote: true,
+    },
+  },
+  {
+    id: 'cal-r-typo-01-catch',
+    ruleId: 'R-TYPO-01',
+    title: '全站存在 ≥10 处 <12px 小字或非中文站现原生 date 年/月/日',
+    kind: 'should-catch',
+    scenario: 'upgrade',
+    scope: 'homepage',
+    source: 'builtin',
+    notes: '页面有 14 处 badge 与页脚提示沿用参考站 10–11px 小字，且荷兰语页面保留了原生 input[type="date"] 与 <html lang="en">。',
+    evidenceFiles: [],
+    viewport: 'desktop',
+    criterionId: 'sections',
+    simulatedIssue: {
+      severity: 'major',
+      title: '全局 <12px 小字与语种本地化异常',
+      detail: '[R-TYPO-01] 存在 14 处 <12px 可见文字且非中文站点出现原生 date 年/月/日。',
+      ruleId: 'R-TYPO-01',
+      viewport: 'desktop',
+      criterionId: 'sections',
+    },
+    expected: {
+      quality: 'failed',
+      maxDesktopScore: 78,
+      requireRuleInPrompt: true,
+      requireCapNote: true,
+    },
+  },
+  {
+    id: 'cal-r-dupe-01-catch',
+    ruleId: 'R-DUPE-01',
+    title: '同页相同 CTA 文案或电话重复超过 H32 上限',
+    kind: 'should-catch',
+    scenario: 'materials',
+    scope: 'homepage',
+    source: 'builtin',
+    notes: '页面正文中「Afspraak maken」CTA 按钮重复出现 6 次未按区块换场景词，且同一电话号码出现 5 次。',
+    evidenceFiles: [],
+    viewport: 'desktop',
+    criterionId: 'sections',
+    simulatedIssue: {
+      severity: 'minor',
+      title: '同页相同 CTA 文案与电话重复超限',
+      detail: '[R-DUPE-01] 违背 H32，CTA 重复 6 次且未按区块替换场景词。',
+      ruleId: 'R-DUPE-01',
+      viewport: 'desktop',
+      criterionId: 'sections',
+    },
+    expected: {
+      quality: 'passed',
+      requireRuleInPrompt: true,
+    },
+  },
 ];
 
 function validateCap(value: number | null, label: string): number | null {
@@ -318,45 +397,38 @@ export class CheckerChecksStore {
 
   private seedDefaultsIfEmpty() {
     this.db.transaction(() => {
-      const ruleCount = Number(
-        (this.db.prepare('SELECT COUNT(*) AS count FROM auto_checker_checks').get() as { count: number }).count,
-      );
+      const hasRuleStmt = this.db.prepare('SELECT 1 FROM auto_checker_checks WHERE id = ?');
       const now = Date.now();
-      if (ruleCount === 0) {
-        for (let i = 0; i < DEFAULT_ANTI_PATTERN_RULES.length; i++) {
-          const seed = DEFAULT_ANTI_PATTERN_RULES[i];
-          const rule: CheckerCheckRule = {
-            id: seed.id,
-            title: seed.title,
-            severity: seed.severity,
-            trigger: seed.trigger,
-            exemptions: [...seed.exemptions],
-            criterionCap: seed.criterionCap,
-            viewportCap: seed.viewportCap,
-            action: seed.action,
-            scenarios: [...ALL_ACTIVE_SCENARIOS],
-            scopes: [...ALL_SCOPES],
-            enabled: true,
-            source: 'builtin',
-            revision: 1,
-            createdAt: now + i,
-            updatedAt: now + i,
-            rationale: 'Phase 1 Verification Engineering 内置种子红线规则',
-          };
-          this.writeRuleRow(rule, 'system', '初始化内置种子红线规则');
-        }
+      for (let i = 0; i < DEFAULT_ANTI_PATTERN_RULES.length; i++) {
+        const seed = DEFAULT_ANTI_PATTERN_RULES[i];
+        if (hasRuleStmt.get(seed.id)) continue;
+        const rule: CheckerCheckRule = {
+          id: seed.id,
+          title: seed.title,
+          severity: seed.severity,
+          trigger: seed.trigger,
+          exemptions: [...seed.exemptions],
+          criterionCap: seed.criterionCap,
+          viewportCap: seed.viewportCap,
+          action: seed.action,
+          scenarios: [...ALL_ACTIVE_SCENARIOS],
+          scopes: [...ALL_SCOPES],
+          enabled: true,
+          source: 'builtin',
+          revision: 1,
+          createdAt: now + i,
+          updatedAt: now + i,
+          rationale: 'Phase 1 Verification Engineering 内置种子红线规则',
+        };
+        this.writeRuleRow(rule, 'system', '初始化内置种子红线规则');
       }
-      const calCount = Number(
-        (this.db.prepare('SELECT COUNT(*) AS count FROM auto_checker_calibrations').get() as { count: number }).count,
-      );
-      if (calCount === 0) {
-        for (let i = 0; i < BUILTIN_CALIBRATION_SEEDS.length; i++) {
-          const item = BUILTIN_CALIBRATION_SEEDS[i];
-          const cal: CheckerCalibrationCase = { ...item, createdAt: now + i };
-          this.db
-            .prepare('INSERT INTO auto_checker_calibrations VALUES(?,?,?,?)')
-            .run(cal.id, cal.ruleId, cal.createdAt, JSON.stringify(cal));
-        }
+      const hasCalStmt = this.db.prepare('SELECT 1 FROM auto_checker_calibrations WHERE id = ?');
+      const insertCalStmt = this.db.prepare('INSERT INTO auto_checker_calibrations VALUES(?,?,?,?)');
+      for (let i = 0; i < BUILTIN_CALIBRATION_SEEDS.length; i++) {
+        const item = BUILTIN_CALIBRATION_SEEDS[i];
+        if (hasCalStmt.get(item.id)) continue;
+        const cal: CheckerCalibrationCase = { ...item, createdAt: now + i };
+        insertCalStmt.run(cal.id, cal.ruleId, cal.createdAt, JSON.stringify(cal));
       }
     });
   }

@@ -3,7 +3,14 @@ import type { EvaluationHumanSummary, EvaluationVerdict } from '../../shared/hum
 
 export const BOUNDED_CHECKER_RULES_VERSION = 'bounded-v1';
 
-export type BuiltinAntiPatternRuleId = 'R-VISUAL-01' | 'R-VISUAL-02' | 'R-LAYOUT-03' | 'R-COVER-04';
+export type BuiltinAntiPatternRuleId =
+  | 'R-VISUAL-01'
+  | 'R-VISUAL-02'
+  | 'R-LAYOUT-03'
+  | 'R-COVER-04'
+  | 'R-LAYOUT-04'
+  | 'R-TYPO-01'
+  | 'R-DUPE-01';
 export type AntiPatternRuleId = BuiltinAntiPatternRuleId | (string & {});
 
 export interface AntiPatternRule {
@@ -66,6 +73,39 @@ export const DEFAULT_ANTI_PATTERN_RULES: readonly AntiPatternRule[] = [
     criterionCap: null,
     viewportCap: 78,
     action: '分离质量得分与覆盖率；存在未验必检项时保留 unverified 或降档拦截，不得宣称完整通过。',
+  },
+  {
+    id: 'R-LAYOUT-04',
+    title: '首屏安全线越界或分栏图文高度失衡',
+    severity: 'major',
+    trigger:
+      '首屏 CTA/内容主图越出视口安全线或 H1 贴近导航底，或桌面双栏图文高度差超过 max(48px, 短列 8%)（含直接沿用参考站失衡结构，未按 relative+absolute/纵排多图重构）。',
+    exemptions: ['媒体列使用 position: sticky，或 ≥3 列等宽纯卡片/服务网格不按双栏图文失衡判定。'],
+    criterionCap: 75,
+    viewportCap: 78,
+    action: '对应维度（hero/layout）封顶 ≤ 75、视口封顶 ≤ 78；标记 Major 并修正首屏安全线或补齐双栏等高/多图纵排。',
+  },
+  {
+    id: 'R-TYPO-01',
+    title: '全局最小字号违规或语种本地化失真',
+    severity: 'major',
+    trigger:
+      '页面存在 ≥10 处可见文字小于 12px（例如沿用参考站 10–11px 小字/标签），或 <html lang> 与目标语种不符、非中文站残留中文字符、原生 <input type="date"> 出现 年/月/日。',
+    exemptions: ['品牌 Logo SVG 内嵌装饰文字或 aria-hidden="true" 隐藏副本除外。'],
+    criterionCap: 75,
+    viewportCap: 78,
+    action: '对应维度（typography/consistency/locale）封顶 ≤ 75、视口封顶 ≤ 78；标记 Major 并统一抬升至 ≥ 12px、对齐 <html lang> 并替换原生 date 输入框。',
+  },
+  {
+    id: 'R-DUPE-01',
+    title: '同页联系方式、CTA 文案或正文段落重复超限',
+    severity: 'minor',
+    trigger:
+      '违背 H32「一次完整 + 一次精简」原则，同页电话/邮箱整页 > 3（正文 > 1）、相同 CTA 文案整页 > 3（正文 > 2，未按区块替换场景词）、正文/标题完全重复或内容图复用 > 2 次。',
+    exemptions: ['带 aria-hidden="true" 的轮播或跑马灯无缝循环副本除外。'],
+    criterionCap: 82,
+    viewportCap: 85,
+    action: '对应维度（content/dedup）封顶 ≤ 82、视口封顶 ≤ 85；标记 Minor 并清理冗余副本、按区块区分 CTA 文案。',
   },
 ] as const;
 

@@ -66,13 +66,14 @@ test('CheckerChecksStore seeds defaults, versions human-promoted rules, enforces
   const f = await createChecksApp();
   try {
     const initial = f.automationStore.checks.snapshot();
-    assert.equal(initial.rules.length, 4);
+    assert.equal(initial.rules.length, 7);
     assert.deepEqual(
       initial.rules.map(r => r.id),
-      ['R-VISUAL-01', 'R-VISUAL-02', 'R-LAYOUT-03', 'R-COVER-04'],
+      ['R-VISUAL-01', 'R-VISUAL-02', 'R-LAYOUT-03', 'R-COVER-04', 'R-LAYOUT-04', 'R-TYPO-01', 'R-DUPE-01'],
     );
-    assert.equal(initial.calibrations.length, 5);
+    assert.equal(initial.calibrations.length, 8);
     assert.match(initial.markdown, /R-VISUAL-01/);
+    assert.match(initial.markdown, /R-LAYOUT-04/);
     assert.match(initial.hash, /^[a-f0-9]{64}$/);
 
     const suggested = f.automationStore.checks.nextSuggestedIds();
@@ -145,8 +146,8 @@ test('runChecksRegressionSuite verifies built-in seeds, catches custom rules, an
       f.automationStore.checks.listCalibrations(),
       f.directory,
     );
-    assert.equal(baseReport.total, 5);
-    assert.equal(baseReport.passed, 5);
+    assert.equal(baseReport.total, 8);
+    assert.equal(baseReport.passed, 8);
     assert.equal(baseReport.failed, 0);
 
     f.automationStore.checks.createRule(
@@ -205,8 +206,8 @@ test('runChecksRegressionSuite verifies built-in seeds, catches custom rules, an
       f.automationStore.checks.listCalibrations(),
       f.directory,
     );
-    assert.equal(withCustom.total, 7);
-    assert.equal(withCustom.passed, 7);
+    assert.equal(withCustom.total, 10);
+    assert.equal(withCustom.passed, 10);
     assert.equal(withCustom.failed, 0);
 
     f.automationStore.checks.updateRule('R-CONTENT-01', { enabled: false }, 1, '临时停用测试');
@@ -215,7 +216,7 @@ test('runChecksRegressionSuite verifies built-in seeds, catches custom rules, an
       f.automationStore.checks.listCalibrations(),
       f.directory,
     );
-    assert.equal(afterDisable.total, 7);
+    assert.equal(afterDisable.total, 10);
     assert.equal(afterDisable.failed, 1);
     const failedCase = afterDisable.results.find(r => r.ruleId === 'R-CONTENT-01')!;
     assert.equal(failedCase.passed, false);
@@ -230,7 +231,7 @@ test('CHECKS REST API supports full lifecycle, false-positive exemption promotio
     const getRes = await f.app.inject({ url: '/api/automation/checks', headers: f.headers });
     assert.equal(getRes.statusCode, 200);
     const getBody = getRes.json();
-    assert.equal(getBody.snapshot.rules.length, 4);
+    assert.equal(getBody.snapshot.rules.length, 7);
     assert.equal(getBody.suggestedIds['R-CONTENT'], 'R-CONTENT-01');
 
     const postRes = await f.app.inject({
@@ -301,8 +302,8 @@ test('CHECKS REST API supports full lifecycle, false-positive exemption promotio
     });
     assert.equal(regRes.statusCode, 200);
     const reg = regRes.json();
-    assert.equal(reg.total, 7);
-    assert.equal(reg.passed, 7);
+    assert.equal(reg.total, 10);
+    assert.equal(reg.passed, 10);
     assert.equal(reg.failed, 0);
 
     const delRes = await f.app.inject({
@@ -645,6 +646,45 @@ test('executeEvaluation freezes CHECKS.md snapshot, accepts custom ruleId in sch
       { openBrowser: fakeOpenBrowser, createClient: codexFactory as any },
     );
     assert.equal(codexCalls, 2);
+  } finally {
+    await f.cleanup();
+  }
+});
+
+test('CheckerChecksStore incrementally seeds new builtin rules and calibrations into existing DBs without overwriting customized rules', async () => {
+  const f = await createChecksApp();
+  try {
+    const initial = f.automationStore.checks.snapshot();
+    assert.ok(initial.rules.some(r => r.id === 'R-LAYOUT-04'));
+
+    // Simulate an existing customized rule + missing newly introduced v1.2 builtin rules/calibrations
+    const updatedVisual01 = f.automationStore.checks.updateRule(
+      'R-VISUAL-01',
+      { viewportCap: 73 },
+      1,
+      '定制测试阈值',
+    );
+    assert.equal(updatedVisual01.rule.viewportCap, 73);
+
+    const db = f.automationStore.db;
+    db.prepare('DELETE FROM auto_checker_checks WHERE id IN (?, ?, ?)').run('R-LAYOUT-04', 'R-TYPO-01', 'R-DUPE-01');
+    db.prepare('DELETE FROM auto_checker_calibrations WHERE id IN (?, ?, ?)').run(
+      'cal-r-layout-04-catch',
+      'cal-r-typo-01-catch',
+      'cal-r-dupe-01-catch',
+    );
+
+    // Re-opening store should restore only the missing builtin rules/calibrations while keeping R-VISUAL-01 edits
+    const { CheckerChecksStore } = await import('../server/automation/checker-checks.js');
+    const reopenedStore = new CheckerChecksStore(db);
+    const snap = reopenedStore.snapshot();
+
+    assert.equal(snap.rules.length, 7);
+    assert.equal(snap.calibrations.length, 8);
+    assert.equal(snap.rules.find(r => r.id === 'R-VISUAL-01')?.viewportCap, 73);
+    assert.equal(snap.rules.find(r => r.id === 'R-LAYOUT-04')?.viewportCap, 78);
+    assert.equal(snap.rules.find(r => r.id === 'R-TYPO-01')?.criterionCap, 75);
+    assert.equal(snap.rules.find(r => r.id === 'R-DUPE-01')?.viewportCap, 85);
   } finally {
     await f.cleanup();
   }

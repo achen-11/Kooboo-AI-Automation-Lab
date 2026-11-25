@@ -67,6 +67,15 @@ const HARNESS_DOCS: HarnessDocumentSummary[] = [
     runtimeUsage: '供开发与运营理解模板建站、旧站升级（Role-Swap）和预览地址对齐机制。',
   },
   {
+    path: 'generation/references/site-ui-rules.md',
+    title: '企业官网生成 UI 与版式硬约束（v1.2）',
+    category: 'generation',
+    categoryLabel: harnessCategoryLabels.generation,
+    role: 'reference',
+    summary: '沉淀首屏安全线、标题行数、图文等高多图、文字图片双可见、反空旷及同页去重（H01–H32）生成硬约束。',
+    runtimeUsage: '由 `site-ui-rules.ts` 与 `generator.ts` 在首轮生成及续建委托中自动注入公开站点任务上下文。',
+  },
+  {
     path: 'followup/SKILL.md',
     title: '自主跟进 Agent SOP',
     category: 'followup',
@@ -204,7 +213,7 @@ const HARNESS_STAGES: HarnessStageMeta[] = [
     actor: 'Node 宿主 + Kooboo AI',
     summary: '冻结输入版本、准备原站/模板 Sandbox、防死锁克隆页面并向 Kooboo 会话安全投递指令。',
     primaryDoc: 'generation/SKILL.md',
-    referenceDocs: ['generation/references/template-modes.md'],
+    referenceDocs: ['generation/references/template-modes.md', 'generation/references/site-ui-rules.md'],
     editableKeys: [],
   },
   {

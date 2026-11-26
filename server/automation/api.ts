@@ -12,7 +12,7 @@ import { Conflict } from '../lib/store.js';
 import { queueDelivery, deliveryReceipt } from './delivery.js';
 import { resolveEnvironmentDelivery } from '../lib/delivery-config.js';
 import { probeCodex } from './probe.js';
-import { brief, compactNotice, taskExecuting, taskSummary, canAdjustTaskSiteNames } from '../../shared/task-presentation.js';
+import { brief, compactNotice, taskExecuting, taskSummary, canAdjustTaskSiteNames, canHandoffGenerationConversation } from '../../shared/task-presentation.js';
 import { registerExecutionLogApi } from './execution-log.js';
 import { completenessSettingsSchema } from './completeness.js';
 import { registerLearningApi } from './learning-api.js';
@@ -437,6 +437,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const q=pagination.extend({taskId:uuid.optional()}).parse(request.query);if(q.taskId&&!executionTaskIds(task).includes(q.taskId))throw new Conflict('执行记录不属于本工作流');const selected=q.taskId?store.task(q.taskId)!:task;const total=Number(store.db.prepare('SELECT COUNT(*) AS total FROM auto_events WHERE task_id=?').get(selected.id).total),pages=Math.max(1,Math.ceil(total/q.pageSize)),page=Math.min(q.page,pages);
       const items=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT ? OFFSET ?').all(selected.id,q.pageSize,(page-1)*q.pageSize);
       const canAdjustSiteNames=canAdjustTaskSiteNames(selected);
+      const canHandoffConversation=canHandoffGenerationConversation(selected);
       const interruption=selected.interruption&&canAdjustSiteNames?{...selected.interruption,nextSteps:['点击“自动调整名称并继续”，检查可用的名称和子域名后恢复原任务。']}:selected.interruption;
       const humanNotice=(interruption||selected.error||['pending','failed','interrupted'].includes(selected.status))
         ?(canAdjustSiteNames
@@ -453,7 +454,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
             lastAction:selected.followup?.lastAction,
           }))
         :undefined;
-      return {task:{id:selected.id,kind:selected.kind,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{})},context:selected.context,followup:selected.followup,interruption,humanNotice,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
+      return {task:{id:selected.id,kind:selected.kind,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{}),...(canHandoffConversation?{canHandoffConversation:true}:{})},context:selected.context,followup:selected.followup,interruption,humanNotice,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
     }
     if(section==='delivery'){
       const autoDelivery=task.autoDelivery??store.root(task)?.autoDelivery;

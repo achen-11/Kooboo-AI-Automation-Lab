@@ -139,7 +139,7 @@ function openDisposition(nextState: DispositionState) {
 async function onDispositionSaved() { await load(); siteRefresh.value++; }
 const canSupplementCurrent = computed(() => !disposition.value && Boolean(current.value && current.value.kind === 'generation' && current.value.stopped && ['interrupted', 'pending', 'failed', 'cancelled'].includes(current.value.status)));
 async function onSupplementApplied() { await load(); await execution.value?.refresh(); }
-const canRecover = computed(() => !disposition.value && ['resume','adjust-site-names'].includes(taskRecoveryAction(current.value) || ''));
+const canRecover = computed(() => !disposition.value && ['resume', 'adjust-site-names', 'handoff-conversation'].includes(taskRecoveryAction(current.value) || ''));
 const workflowActive = computed(() => data.value?.workflowActive);
 const workflowRecoveryBlocked = computed(() => Boolean(taskRecoveryAction(current.value)) && Boolean(workflowActive.value));
 const canForceResume = computed(() => !disposition.value && Boolean(taskRecoveryAction(current.value)) && (Boolean(workflowActive.value) || /同工作流仍有活动执行|仍有未停止的执行|已确认停止/.test(actionError.value)));
@@ -252,8 +252,9 @@ async function action(suffix: string, id = current.value?.id) {
   if (suffix === 'force-resume') { await forceResume(id); return; }
   if (!id || busy.value) return;
   const restarting = suffix === 'resume' && current.value?.id === id && current.value?.status === 'cancelled';
+  const endpoint = suffix === 'handoff-conversation' ? `/automation/tasks/${id}/generation-context/handoff` : `/automation/tasks/${id}/${suffix}`;
   busy.value = true; actionError.value = '';
-  try { await api(`/automation/tasks/${id}/${suffix}`, { method: 'POST' }); notify.success(suffix === 'adjust-site-names' ? '已调整名称，原任务已重新加入队列' : suffix === 'resume' ? (restarting ? '已重新启动任务' : '已提交恢复请求') : ['cancel','optimization/stop'].includes(suffix) ? '已提交停止请求' : '已确认原执行停止'); await load(); if (['resume','confirm-stopped','adjust-site-names'].includes(suffix)) await execution.value?.refresh(); }
+  try { await api(endpoint, { method: 'POST' }); notify.success(suffix === 'adjust-site-names' ? '已调整名称，原任务已重新加入队列' : suffix === 'handoff-conversation' ? '已为当前站点开启干净新会话并重新加入队列' : suffix === 'resume' ? (restarting ? '已重新启动任务' : '已提交恢复请求') : ['cancel','optimization/stop'].includes(suffix) ? '已提交停止请求' : '已确认原执行停止'); await load(); if (['resume','confirm-stopped','adjust-site-names','handoff-conversation'].includes(suffix)) await execution.value?.refresh(); }
   catch (reason) { actionError.value = message(reason); void load(); }
   finally { busy.value = false; }
 }

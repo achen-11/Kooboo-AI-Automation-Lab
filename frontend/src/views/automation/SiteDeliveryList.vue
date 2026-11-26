@@ -81,17 +81,25 @@ const batchResumeLabel = computed(() => {
     : '一键恢复';
 });
 function canDirectResumeRow(row: SiteDeliverySummary) {
-  return !row.disposition && (row.recovery?.action === 'resume' || row.recovery?.action === 'adjust-site-names');
+  return !row.disposition && (row.recovery?.action === 'resume' || row.recovery?.action === 'adjust-site-names' || row.recovery?.action === 'handoff-conversation');
 }
 async function runSingleResume(row: SiteDeliverySummary) {
   if (batchResuming.value || resumingRowId.value || !canDirectResumeRow(row) || !row.recovery) return;
   resumingRowId.value = row.id;
   const endpoint = row.recovery.action === 'adjust-site-names'
     ? `/automation/tasks/${row.recovery.taskId}/adjust-site-names`
-    : `/automation/tasks/${row.recovery.taskId}/resume`;
+    : row.recovery.action === 'handoff-conversation'
+      ? `/automation/tasks/${row.recovery.taskId}/generation-context/handoff`
+      : `/automation/tasks/${row.recovery.taskId}/resume`;
   try {
     await api(endpoint, { method: 'POST' });
-    notify.success(row.recovery.action === 'adjust-site-names' ? `已调整名称并恢复 ${row.resourceName}` : `已提交恢复 ${row.resourceName}`);
+    notify.success(
+      row.recovery.action === 'adjust-site-names'
+        ? `已调整名称并恢复 ${row.resourceName}`
+        : row.recovery.action === 'handoff-conversation'
+          ? `已为 ${row.resourceName} 切换新会话并恢复`
+          : `已提交恢复 ${row.resourceName}`,
+    );
     await load();
     void refreshStatus();
   } catch (reason) {
@@ -118,7 +126,7 @@ async function openCompare(row: SiteDeliverySummary) {
 async function runBatchResume() {
   if (batchResuming.value) return;
   const targets = [...selectedRows.value];
-  const eligible: Array<{ row: SiteDeliverySummary; action: 'resume' | 'adjust-site-names'; taskId: string }> = [];
+  const eligible: Array<{ row: SiteDeliverySummary; action: 'resume' | 'adjust-site-names' | 'handoff-conversation'; taskId: string }> = [];
   const issues: BatchResumeIssue[] = [];
   const seenTaskIds = new Set<string>();
   for (const row of targets) {
@@ -130,7 +138,7 @@ async function runBatchResume() {
       issues.push({ id: row.id, detailTaskId: row.detailTaskId, resourceName: row.resourceName, reason: '原执行尚未确认停止，请进入详情核查确认后再恢复' });
       continue;
     }
-    if (row.recovery && (row.recovery.action === 'resume' || row.recovery.action === 'adjust-site-names')) {
+    if (row.recovery && (row.recovery.action === 'resume' || row.recovery.action === 'adjust-site-names' || row.recovery.action === 'handoff-conversation')) {
       if (!seenTaskIds.has(row.recovery.taskId)) {
         seenTaskIds.add(row.recovery.taskId);
         eligible.push({ row, action: row.recovery.action, taskId: row.recovery.taskId });
@@ -158,7 +166,9 @@ async function runBatchResume() {
     for (const item of eligible) {
       const endpoint = item.action === 'adjust-site-names'
         ? `/automation/tasks/${item.taskId}/adjust-site-names`
-        : `/automation/tasks/${item.taskId}/resume`;
+        : item.action === 'handoff-conversation'
+          ? `/automation/tasks/${item.taskId}/generation-context/handoff`
+          : `/automation/tasks/${item.taskId}/resume`;
       try {
         await api(endpoint, { method: 'POST' });
         succeeded++;

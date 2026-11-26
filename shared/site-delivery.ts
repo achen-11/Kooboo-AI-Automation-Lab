@@ -28,7 +28,7 @@ export const siteDeliveryAddressFilters = {
   accessible: '已有可访问地址',
 } as const;
 export type SiteDeliveryAddressFilter = keyof typeof siteDeliveryAddressFilters;
-export type SiteDeliveryRecoveryAction = 'resume' | 'adjust-site-names' | 'confirm-stopped';
+export type SiteDeliveryRecoveryAction = 'resume' | 'adjust-site-names' | 'confirm-stopped' | 'handoff-conversation';
 export interface SiteDeliveryRecovery {
   action: SiteDeliveryRecoveryAction;
   taskId: string;

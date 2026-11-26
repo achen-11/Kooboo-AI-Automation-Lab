@@ -17,6 +17,8 @@ import { runInNewContext } from 'node:vm';
 import { GenerationContextStore, generationInputLimits } from '../server/automation/generation-context.js';
 import { GenerationInputError } from '../server/automation/errors.js';
 import { createRequire } from 'node:module';
+import { validateFollowupAction } from '../server/automation/followup.js';
+import { taskRecoveryAction, taskSummary } from '../shared/task-presentation.js';
 
 const time=(s:string)=>Date.parse(s+'+08:00');
 const obs=(patch:Partial<UsageObservation>={}):UsageObservation=>({id:'request',source:'codex',stage:'evaluation',model:'deepseek-flash-1017',endpoint:'https://api.deepseek.com',startedAt:time('2026-11-09T09:30:00'),endedAt:time('2026-11-09T09:31:00'),status:'completed',basis:'request',raw:{input_tokens:1000000,output_tokens:100000,input_tokens_details:{cached_tokens:200000},output_tokens_details:{reasoning_tokens:50000}},...patch});
@@ -416,3 +418,67 @@ test('delivery gate, local capability and unconfirmed browser stop never bypass 
   assert.equal((await f.app.inject({method:'POST',url:`/api/automation/tasks/${t.id}/delivery/verify`,headers:f.headers})).statusCode,409);
   assert.equal((await f.app.inject({method:'POST',url:`/api/automation/tasks/${t.id}/delivery/confirm-stopped`,headers:f.headers})).statusCode,200);assert.equal((await f.app.inject({method:'POST',url:`/api/automation/tasks/${t.id}/delivery/verify`,headers:f.headers})).statusCode,200);
 }finally{await f.close();}});
+
+test('validateFollowupAction blocks continue and retry when session hit 413 RequestEntityTooLarge or openresty HTML',async()=>{
+  const f=await fixture();
+  try{
+    for(const payloadError of [
+      'RequestEntityTooLarge{"error":{"message":"Failed to buffer the request body: length limit exceeded","type":"payload_too_large_error"}}',
+      'RequestEntityTooLarge<html><head><title>413 Request Entity Too Large</title></head><body>openresty</body></html>',
+    ]){
+      const task=f.create('generation');
+      task.status='following-up';
+      task.followup={state:'waiting',attempts:1,elapsedMs:0,startedAt:Date.now(),nextAt:Date.now(),tokens:0,threadId:'thread-413',policy:defaultAutomationSettings.followup,executionStopped:true,observations:['obs-1']};
+      task.generation={prepared:true,conversationId:'conv-413',deliveryId:'del-413',deliveryState:'accepted',runId:'run-413',state:'failed'};
+      task.error=payloadError;
+      const inspection={
+        execution:{
+          version:1,taskId:task.id,siteId:f.site.siteId,conversationId:'conv-413',runId:'run-413',
+          ready:true,running:false,state:'failed',observedAt:Date.now(),canSend:true,pending:null,
+          delivery:{id:'del-413',state:'accepted' as const,conversationId:'conv-413'},
+          outcome:{conversationId:'conv-413',runId:'run-413',status:'failed',time:Date.now()},
+          context:[{id:'m1',role:'assistant',text:payloadError}],
+        },
+      };
+      const obs=new Set(['obs-1']);
+      assert.throws(()=>validateFollowupAction({action:'continue',reason:'try again',evidence:['obs-1'],message:'continue without images'},task,inspection,obs),/请求体超限|413|RequestEntityTooLarge/);
+      assert.throws(()=>validateFollowupAction({action:'retry',reason:'retry run',evidence:['obs-1']},task,inspection,obs),/请求体超限|413|RequestEntityTooLarge/);
+    }
+  }finally{await f.close();}
+});
+
+test('general upgrade generation task hitting 413 can handoff to a clean same-site conversation',async()=>{
+  const f=await fixture();const old=randomUUID();let createCalls=0;
+  const conversations:Array<Record<string,unknown>>=[{id:old,path:'/ai-chat/overview',title:'Upgrade',modelSelection:{provider:'deepseek',model:'deepseek-flash'}}];
+  const server=createServer(async(req,res)=>{
+    res.setHeader('Content-Type','application/json');
+    if(req.url?.startsWith('/_api/v2/AIConversation/List'))return res.end(JSON.stringify(conversations));
+    if(req.url?.startsWith('/_api/v2/AIConversation/Create')){
+      const chunks:Buffer[]=[];for await(const chunk of req)chunks.push(Buffer.from(chunk));
+      const created=JSON.parse(Buffer.concat(chunks).toString());conversations.push(created);createCalls++;
+      return res.end(JSON.stringify(created));
+    }
+    res.end('true');
+  });
+  const origin=await listen(server);
+  try{
+    const raw=f.vault.get();f.vault.update({...raw,environments:raw.environments.map(e=>e.id===f.env?{...e,apiOrigin:origin}:e)});
+    const task=f.create('generation');task.scenario='upgrade';task.status='interrupted';task.stopped=true;
+    task.error='RequestEntityTooLarge<html><head><title>413 Request Entity Too Large</title></head><body>openresty</body></html>';
+    task.generation={prepared:true,conversationId:old,state:'failed',runId:'old-run',deliveryId:randomUUID(),deliveryState:'accepted'};
+    task.followup={state:'interrupted',attempts:2,elapsedMs:1000,startedAt:Date.now(),nextAt:Date.now(),tokens:100,policy:defaultAutomationSettings.followup,executionStopped:true,threadId:'old-followup-thread',observations:[]};
+    f.automationStore.put(task);
+    const summary=taskSummary(task);
+    assert.equal(summary.canHandoffConversation,true);
+    assert.equal(taskRecoveryAction(summary),'handoff-conversation');
+    const result=await f.app.inject({method:'POST',url:`/api/automation/tasks/${task.id}/generation-context/handoff`,headers:f.headers});
+    assert.equal(result.statusCode,200,result.body);
+    const saved=f.automationStore.task(task.id)!;
+    assert.notEqual(saved.generation!.conversationId,old);
+    assert.equal(saved.generatedSiteId,f.site.id);
+    assert.equal(saved.status,'queued');
+    assert.equal(saved.followup!.threadId,'');
+    assert.equal(createCalls,1);
+    assert.equal(conversations.length,2);
+  }finally{await close(server);await f.close();}
+});

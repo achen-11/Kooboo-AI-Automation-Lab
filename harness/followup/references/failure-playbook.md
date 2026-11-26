@@ -41,3 +41,12 @@
 
 - 当以上分类均不命中且经过 `inspect_execution` / `get_conversation` 无法恢复推进时，`interrupt` 并清晰总结“当前做到哪一步、哪一步卡住了、重跑或人工检查前应先确认什么”，禁止把未消化的堆栈原文或 JSON 直接当给用户的提示。
 - 若 `get_conversation` 因远端会话消息体过大而超时，且 `inspect_execution` 已返回明确终态（如 `failed` / `interrupted`），禁止重复重试 `get_conversation`，直接结合 `inspect_execution`、`get_task` 与 `probe_site` 的已有证据作出决策。
+
+## 8. Kooboo 会话请求体超限（`413 Request Entity Too Large` / `payload_too_large_error`）
+
+- **典型信号**：
+  - `inspect_execution` 或 `get_conversation` 末条消息出现 `RequestEntityTooLarge`、`413 Request Entity Too Large`（`openresty` 网关 HTML）或 `payload_too_large_error` / `Failed to buffer the request body: length limit exceeded`。
+- **正确处置**：
+  - 历史中已读取的图片引用会在同一会话内持续带入请求，**严禁**对同一会话调用 `continue` 或 `retry`（即使要求“不再附加大图”也会立即再次失败）；必须直接 `interrupt`。
+  - **严格核实实际写入进展**：对于 `upgrade`（旧站升级）任务，原样克隆的旧站本身就会返回 `HTTP 200`，**绝对不能仅凭 `probe_site` 为 200 就断定“新版首页已生成”**；必须结合 `get_conversation` 或 `inspect_execution` 确认是否真正调用过 `create_page` / `create_style` / `update_text_object`，在 `userSummary` 中如实告知用户“已生成待收尾”或“尚未写入新版页面”。
+- **用户层建议**：告知用户不要删站重来，点击「换新会话继续」按钮（或在 Kooboo 后台为当前站点新建干净会话）即可保留站点与资料继续执行；若尚未写入任何新版页面，建议先压缩资料包中的超大实拍照片后再重新生成。

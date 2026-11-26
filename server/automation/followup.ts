@@ -22,6 +22,7 @@ import { followupRequestPolicy, followupAccountState, isConfirmedCloneFailure, r
 import { collectionTargetRepairContext } from './collection/report.js';
 import { collectionSourceGaps, recollectionObjectiveSchema, validateRecollectionAction } from './collection/recollection.js';
 import { followupTaskContext, followupReportComparison, selectFollowupTaskEvents } from './followup-context.js';
+import { isConversationPayloadTooLarge } from '../../shared/task-presentation.js';
 import { toolsClientScript, windowsToolsHint } from './tools-client.js';
 import {
   canUseBoundedOptimizationPlanning,
@@ -70,6 +71,19 @@ export function isReferenceDecisionAskUserInput(
   );
 }
 
+function hasExecutionPayloadTooLarge(task: AutomationTask, inspection: RecoveryInspection): boolean {
+  const tailText = (inspection.execution?.context || [])
+    .slice(-3)
+    .map(item => (typeof item === 'string' ? item : JSON.stringify(item)))
+    .join('\n');
+  return isConversationPayloadTooLarge(
+    tailText,
+    inspection.conversation?.finalText,
+    task.error,
+    task.context,
+  );
+}
+
 /** Action requests are checked against host-owned observations, never against AI-written files. */
 export function validateFollowupAction(raw:unknown,task:AutomationTask,inspection:RecoveryInspection,observations:Set<string>):FollowupAction {
   const action=followupActionSchema.parse(raw);
@@ -91,6 +105,7 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
     if(task.generation.deliveryState==='sending'&&!(state.delivery?.id===task.generation.deliveryId&&state.delivery.state==='accepted'))throw new Error('原发送结果仍不确定，禁止重新投递');
     if(['failed','interrupted'].includes(state.state)){
       if(!task.generation.prepared||!matchingGenerationOutcome(task,state))throw new Error('失败回执与当前委托不匹配，不能据此重新投递；请核对原会话');
+      if(hasExecutionPayloadTooLarge(task,inspection))throw new Error('当前 Kooboo 会话已触发请求体超限（413 / RequestEntityTooLarge / payload_too_large_error），继续在同一会话 retry 必定再次失败；请改用 interrupt 说明站点当前是否已有新页面写入，并提示用户点击「换新会话继续」保留站点开启干净会话');
       // retry must actually restart a confirmed failed execution. Keep the site,
       // conversation and input, and let the normal continuation delivery run.
       return {...action,action:'continue',retryOf:{deliveryId:task.generation.deliveryId,runId:state.runId},message:action.message||'上一轮执行已确认结束且未完成本任务。请在当前站点和原会话继续原定范围，保留已完成内容，不新建站点。\n本次重试依据：'+action.reason};
@@ -102,6 +117,7 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
     const state=inspection.execution;
     if(!state?.ready||state.running)throw new Error('请先 inspect_execution，确认原会话已就绪且没有运行中的执行');
     if(task.generation.deliveryState==='sending'&&!(state.delivery?.id===task.generation.deliveryId&&state.delivery?.state==='accepted'))throw new Error('原发送结果仍不确定，禁止追加另一轮');
+    if(action.action==='continue'&&hasExecutionPayloadTooLarge(task,inspection))throw new Error('当前 Kooboo 会话已触发请求体超限（413 / RequestEntityTooLarge / payload_too_large_error），继续在同一会话 continue 必定再次失败；请改用 interrupt 说明站点当前是否已有新页面写入，并提示用户点击「换新会话继续」保留站点开启干净会话');
     if(action.action==='continue'&&(!action.message||state.pending))throw new Error('继续生成需要明确消息；有待输入调用时应使用 answer');
     if(action.action==='answer'&&(!action.answer||!state.pending||action.callId!==state.pending.callId))throw new Error('回答必须对应当前待输入调用及其参数');
     if(action.action==='answer'&&state.pending?.name==='ask_user_input'&&state.pending.args?.kind==='upload')throw new Error('待输入调用要求用户上传文件（kind=upload），自动跟进不能伪造上传结果，请改用 interrupt 说明原因与下一步');

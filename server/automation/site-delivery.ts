@@ -49,7 +49,7 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
       const action = taskRecoveryAction(interrupted.summary);
       if (action === 'confirm-stopped') {
         recovery = { action: 'confirm-stopped', taskId: interrupted.id };
-      } else if (action === 'resume' || action === 'adjust-site-names') {
+      } else if (action === 'resume' || action === 'adjust-site-names' || action === 'handoff-conversation') {
         const hasOtherBusy = members.some(task => task.id !== interrupted.id && (active(task) || task.delivery?.stopped === false));
         const staleEval = interrupted.kind === 'evaluation' && interrupted.generatedSiteId && interrupted.siteRevision && siteState && siteState.revision !== interrupted.siteRevision;
         if (!hasOtherBusy && controller?.optimization?.state !== 'completed' && !staleEval) {

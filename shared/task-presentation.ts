@@ -5,8 +5,27 @@ import type { SiteDeliveryTarget } from './site-delivery.js';
 export interface OptimizationSummary { state: OptimizationRun['state']; policy: Omit<OptimizationPolicy,'sop'>; round: number; activeTaskId: string; reportId: string | null; reason: string; nextStep: string }
 
 export type TaskTab = 'overview' | 'report' | 'execution' | 'usage' | 'input' | 'delivery';
-export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { kind?: AutomationTask['kind']; canAdjustSiteNames?: boolean };
-export type TaskRecoveryAction = 'resume' | 'force-resume' | 'confirm-stopped' | 'adjust-site-names';
+export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { kind?: AutomationTask['kind']; canAdjustSiteNames?: boolean; canHandoffConversation?: boolean };
+export type TaskRecoveryAction = 'resume' | 'force-resume' | 'confirm-stopped' | 'adjust-site-names' | 'handoff-conversation';
+
+export const CONVERSATION_PAYLOAD_TOO_LARGE_PATTERN =
+  /RequestEntityTooLarge|413\s+Request\s+Entity\s+Too\s+Large|payload_too_large_error|Failed to buffer the request body:\s*length limit exceeded|生成助手会话过载|会话已超载|历史中的多张.*图片已使该会话无法接收/i;
+
+export function isConversationPayloadTooLarge(...texts: Array<string | null | undefined>): boolean {
+  return CONVERSATION_PAYLOAD_TOO_LARGE_PATTERN.test(texts.filter(Boolean).join('\n'));
+}
+
+export function canHandoffGenerationConversation(task: AutomationTask): boolean {
+  const generation = task.generation;
+  return task.kind === 'generation'
+    && task.stopped === true
+    && ['failed', 'interrupted'].includes(task.status)
+    && Boolean(task.generatedSiteId)
+    && Boolean(generation?.prepared)
+    && Boolean(generation?.conversationId)
+    && isConversationPayloadTooLarge(task.interruption?.reason, task.error, task.context);
+}
+
 export function canAdjustTaskSiteNames(task: AutomationTask): boolean {
   const generation = task.generation;
   return task.kind === 'generation' && task.stopped === true && ['pending', 'failed', 'interrupted'].includes(task.status)
@@ -18,6 +37,7 @@ export function canAdjustTaskSiteNames(task: AutomationTask): boolean {
 export function taskRecoveryAction(task?: TaskRecoveryTarget): TaskRecoveryAction | null {
   if (!task) return null;
   if (task.stopped === true && task.canAdjustSiteNames && ['pending', 'failed', 'interrupted'].includes(task.status)) return 'adjust-site-names';
+  if (task.stopped === true && task.canHandoffConversation && ['failed', 'interrupted'].includes(task.status)) return 'handoff-conversation';
   if (task.stopped === true && ['pending', 'failed', 'interrupted', 'cancelled'].includes(task.status)) return 'resume';
   if (task.stopped === false && ['pending', 'interrupted'].includes(task.status)) return 'confirm-stopped';
   return null;
@@ -32,6 +52,7 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   humanAttention?: HumanNotice;
   nextStep: string;
   canAdjustSiteNames?: boolean;
+  canHandoffConversation?: boolean;
   autoEvaluate?: boolean;
   autoDelivery?: boolean;
   deliveryStatus?: string;
@@ -61,6 +82,7 @@ export function taskSummary(task: AutomationTask): TaskSummary {
   const { id, kind, resourceId, resourceName, scenario, scope, environmentId, generatedSiteId, parentId, evaluationTaskId, stage, status, stopped, createdAt, updatedAt, siteUrl, usage } = task;
   const needsAttention = ['pending', 'failed', 'interrupted'].includes(status);
   const adjustNames = canAdjustTaskSiteNames(task);
+  const handoffConversation = canHandoffGenerationConversation(task);
   const humanAttention = needsAttention
     ? deriveHumanNotice({
         reason: task.interruption?.reason,
@@ -80,8 +102,9 @@ export function taskSummary(task: AutomationTask): TaskSummary {
     report: task.report ? { quality: task.report.quality, scores: task.report.scores, issueCount: task.report.issues.length, unverifiedCount: task.report.coverage.unverified.length } : null,
     attention: humanAttention ? brief(humanAttention.headline) : '',
     ...(humanAttention ? { attentionCategory: humanAttention.category, humanAttention } : {}),
-    nextStep: adjustNames ? '自动调整被占用的站点名称或子域名后继续原任务。' : brief(humanAttention?.userActions[0] || task.interruption?.nextSteps[0] || ''),
+    nextStep: adjustNames ? '自动调整被占用的站点名称或子域名后继续原任务。' : handoffConversation ? '保留当前站点和资料，自动切换干净新会话继续完成任务。' : brief(humanAttention?.userActions[0] || task.interruption?.nextSteps[0] || ''),
     canAdjustSiteNames: adjustNames,
+    canHandoffConversation: handoffConversation,
     ...(task.autoEvaluate !== undefined ? { autoEvaluate: task.autoEvaluate } : {}),
     ...(task.autoDelivery !== undefined ? { autoDelivery: task.autoDelivery } : {}),
     deliveryStatus: task.delivery?.status,

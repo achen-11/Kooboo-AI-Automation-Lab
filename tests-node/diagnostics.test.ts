@@ -131,7 +131,23 @@ test('unfinished export is marked failed after restart and expired packages cann
     assert.equal(exports.get(job.id)!.status, 'failed'); assert.match(exports.get(job.id)!.error!, /重启/); assert.throws(() => exports!.download(job.id), /未就绪/); await exports.close();
     writeFileSync(path, JSON.stringify({ ...job, expiresAt: Date.now() - 1 }));
     exports = new DiagnosticExports(f.store, f.vault, f.dir); assert.equal(exports.get(job.id), undefined); assert.equal(exports.latest(task.id), undefined);
+    assert.equal(existsSync(resolve(f.dir, 'diagnostic-exports', job.id)), false);
     assert.equal(JSON.stringify(f.store.task(task.id)), before);
+  } finally { await exports?.close(); await f.close(); }
+});
+
+test('periodic diagnostic cleanup removes newly expired exports without a new export request', async () => {
+  const f = await fixture(); let exports: DiagnosticExports | undefined;
+  try {
+    const task = f.create('');
+    exports = new DiagnosticExports(f.store, f.vault, f.dir, { cleanupIntervalMs: 20 });
+    const created = await exports.create(task.id), job = await finish(exports, created.id);
+    const dir = resolve(f.dir, 'diagnostic-exports', job.id);
+    assert.ok(existsSync(dir));
+    (exports as any).jobs.get(job.id).expiresAt = Date.now() - 1;
+    for (let i = 0; i < 40 && existsSync(dir); i++) await new Promise(resolve => setTimeout(resolve, 15));
+    assert.equal(existsSync(dir), false);
+    await exports.close();
   } finally { await exports?.close(); await f.close(); }
 });
 

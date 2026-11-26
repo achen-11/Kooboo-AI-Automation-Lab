@@ -3,13 +3,17 @@ import { z } from 'zod';
 import { brief, taskRecoveryAction } from '../../shared/task-presentation.js';
 import type { TaskHeader } from './task-index.js';
 import { mergeUsage } from './billing.js';
-import { hasAccessibleSiteUrl, siteDeliveryAddressFilters, siteDeliveryStates, usageStageNames, type SiteDeliveryAddressFilter, type SiteDeliveryRecovery, type SiteDeliverySummary } from '../../shared/site-delivery.js';
-import { matchesDispositionFilter } from '../../shared/dispositions.js';
+import { hasAccessibleSiteUrl, siteDeliveryAddressFilters, siteDeliveryDeliveryFilters, siteDeliveryStates, usageStageNames, type SiteDeliveryAction, type SiteDeliveryAddressFilter, type SiteDeliveryDeliveryFilter, type SiteDeliveryRecovery, type SiteDeliverySummary } from '../../shared/site-delivery.js';
+import { matchesDispositionFilter, type ItemDisposition } from '../../shared/dispositions.js';
 import type { UsageBreakdownStage } from '../../shared/billing.js';
+import type { GeneratedSite } from '../../shared/automation.js';
+import type { RuntimeSettings } from '../../shared/types.js';
 import { generationStage } from '../../shared/generation-stage.js';
 import type { AutomationStore } from './store.js';
 import { targetReached } from './optimization.js';
 import { registerSiteReportApi, selectSiteReport } from './site-reports.js';
+import { resolveEnvironmentDelivery } from '../lib/delivery-config.js';
+import { reportPassedDeliveryGate } from './delivery.js';
 
 const active = (task: TaskHeader) => !task.stopped || ['queued', 'following-up', 'running', 'cancelling'].includes(task.status);
 const optimizing = (task: TaskHeader) => task.optimization && !['completed', 'stopped'].includes(task.optimization.state);
@@ -20,8 +24,73 @@ function matchesDeliveryAddress(siteUrl: string, address?: SiteDeliveryAddressFi
   return address === 'accessible' ? accessible : !accessible;
 }
 
+function isUndeliveredFinished(row: SiteDeliverySummary): boolean {
+  return row.deliveryAction?.eligible === true || (!row.delivery && Boolean(row.generatedSiteId) && !['running', 'queued', 'attention'].includes(row.state));
+}
+
+function computeSiteDeliveryAction(params: {
+  store: AutomationStore;
+  members: TaskHeader[];
+  site: GeneratedSite | undefined;
+  environmentId: string;
+  disposition: ItemDisposition | undefined;
+  report: TaskHeader | undefined;
+  threshold: number;
+  settings: Pick<RuntimeSettings, 'deliveryDefaults' | 'environments'>;
+}): SiteDeliveryAction {
+  const { store, members, site, environmentId, disposition, report, threshold, settings } = params;
+  if (members.some(task => Boolean(task.delivery))) {
+    return { eligible: false, code: 'already-delivered', reason: '该生成站已有跨环境交付记录' };
+  }
+  if (disposition) {
+    return { eligible: false, code: 'archived', reason: '已归档，请先移回在列后再发起交付' };
+  }
+  const config = resolveEnvironmentDelivery(settings, environmentId);
+  if (!config?.enabled) {
+    return { eligible: false, code: 'unsupported-env', reason: '当前环境未启用跨环境交付' };
+  }
+  if (!config.token) {
+    return { eligible: false, code: 'missing-token', reason: '当前环境缺少迁移服务令牌' };
+  }
+  if (site && store.domainReserved(site.id)) {
+    return { eligible: false, code: 'domain-reserved', reason: '站点正在换绑域名，请稍后安排交付' };
+  }
+  if (members.some(task => !task.stopped || ['queued', 'following-up'].includes(task.status))) {
+    return { eligible: false, code: 'in-progress', reason: '同一个源站还有执行任务，请等待结束' };
+  }
+  const evalCandidate = report?.kind === 'evaluation' && report.status === 'completed' && report.stopped && Boolean(report.report)
+    ? report
+    : undefined;
+  const evalStaleDomain = Boolean(evalCandidate && site?.preferredDomain && store.currentReportHeader(evalCandidate)?.id !== evalCandidate.id);
+  const genCandidate = members.find(task => task.kind === 'generation' && task.status === 'completed' && task.stopped && Boolean(task.generatedSiteId));
+  const candidate = (!evalStaleDomain ? evalCandidate : undefined) || genCandidate;
+  if (!candidate) {
+    return {
+      eligible: false,
+      code: 'not-ready',
+      reason: evalStaleDomain ? '站点域名已变更，请先完成当前地址的独立评测再交付' : '请先完成站点生成后再发起交付',
+    };
+  }
+  if (!site || !site.url) {
+    return { eligible: false, code: 'missing-site-url', reason: '缺少生成站身份或地址' };
+  }
+  if (config.requirePassed) {
+    const reportOwnerHeader = candidate.kind === 'evaluation'
+      ? candidate
+      : (report?.kind === 'evaluation' ? report : store.currentReportHeader(candidate));
+    if (reportOwnerHeader) {
+      const fullReportOwner = store.task(reportOwnerHeader.id, false);
+      const gateThreshold = (fullReportOwner ? store.root(fullReportOwner)?.optimization?.threshold : undefined) ?? threshold;
+      if (fullReportOwner && !reportPassedDeliveryGate(fullReportOwner, gateThreshold)) {
+        return { eligible: false, code: 'require-passed', reason: '当前交付策略要求源站评测通过' };
+      }
+    }
+  }
+  return { eligible: true, taskId: candidate.id, code: 'ready' };
+}
+
 /** Aggregate ledger rows once per actual site, including independent reviews and later continuations. */
-export function siteDeliveries(store: AutomationStore, threshold: number, siteId?: string): SiteDeliverySummary[] {
+export function siteDeliveries(store: AutomationStore, threshold: number, siteId?: string, settings?: Pick<RuntimeSettings, 'deliveryDefaults' | 'environments'>): SiteDeliverySummary[] {
   const tasks = store.headers(siteId), groups = new Map<string, TaskHeader[]>();
   if(siteId&&!tasks.length){const pending=store.header(siteId);if(pending&&!pending.generatedSiteId)tasks.push(pending);}
   const sites=store.sites().filter(site=>!siteId||site.id===siteId), resources=new Map(store.resources().map(resource=>[resource.id,resource]));
@@ -32,6 +101,7 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
     const group = groups.get(key) || []; group.push(task); groups.set(key, group);
   }
   for (const site of sites) if (!groups.has(site.id)) groups.set(site.id, []);
+  const envNameMap = settings ? new Map(settings.environments.map(env => [env.id, env.name])) : undefined;
   return [...groups].map(([id, members]) => {
     // Headers retain newest-created ordering; updatedAt may belong to an older recovery heartbeat.
     const latest = members[0], site = siteMap.get(id), resource = resources.get(site?.resourceId || latest!.resourceId);
@@ -97,11 +167,18 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
     const detail = controller?.optimization ? controller : latest?.kind === 'evaluation' && latestGeneration?.evaluationTaskId !== latest.id ? latest : latestGeneration || latest;
     const disposition = dispositions.get(id), resourceDisposition = resource?.disposition;
     if (disposition) recovery = undefined;
+    const environmentId = site?.environmentId || latest?.environmentId || '';
+    const environmentName = envNameMap?.get(environmentId);
+    const deliveryAction = settings
+      ? computeSiteDeliveryAction({ store, members, site, environmentId, disposition, report, threshold, settings })
+      : undefined;
     return { id, generatedSiteId: site?.id || latest?.generatedSiteId || null, resourceId: resource?.id || latest!.resourceId,
       resourceName: resource?.name || latest?.resourceName || site?.name || '生成站', siteUrl: site?.url || latest?.siteUrl || '',
-      environmentId: site?.environmentId || latest?.environmentId || '',
+      environmentId,
+      ...(environmentName ? { environmentName } : {}),
       scenario: latest?.scenario || resource!.scenario, scope, detailTaskId: busy?.id && !controller?.optimization ? (busy.optimizationRootId || busy.id) : detail?.id || null,
       state, reason: brief(reason, 220), targetScore, ...(recovery ? { recovery } : {}),
+      ...(deliveryAction ? { deliveryAction } : {}),
       ...(deliveryTask && delivery ? { delivery: { taskId: deliveryTask.id, status: delivery.status, ...(delivery.targetUrl ? { targetUrl: delivery.targetUrl } : {}) } } : {}),
       report: report ? { ...report.summary, usage:mergeUsage(report.workflowIds.flatMap(taskId=>[...(ledger.get(taskId)?.values()||[])]),report.workflowIds.filter(taskId=>taskId!==report.id)), reportCurrent: true } : null,
       usage, stages, ...(disposition ? { disposition } : {}), ...(resourceDisposition ? { resourceDisposition } : {}), taskCount: members.length, createdAt: site?.createdAt || latest!.createdAt,
@@ -110,24 +187,33 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
   }).sort((a, b) => b.updatedAt - a.updatedAt || a.id.localeCompare(b.id));
 }
 
-export function registerSiteDeliveryApi(app: FastifyInstance, store: AutomationStore, threshold: () => number) {
+export function registerSiteDeliveryApi(app: FastifyInstance, store: AutomationStore, threshold: () => number, getSettings?: () => Pick<RuntimeSettings, 'deliveryDefaults' | 'environments'>) {
   registerSiteReportApi(app, store, threshold);
   const pagination = z.object({ page: z.coerce.number().int().min(1).default(1), pageSize: z.coerce.number().int().min(1).max(100).default(20) });
   app.get('/api/automation/site-deliveries', async request => {
     const addressKeys = Object.keys(siteDeliveryAddressFilters) as [SiteDeliveryAddressFilter, ...SiteDeliveryAddressFilter[]];
-    const query = pagination.extend({ q: z.string().max(300).default(''), state: z.enum(Object.keys(siteDeliveryStates) as [keyof typeof siteDeliveryStates, ...Array<keyof typeof siteDeliveryStates>]).optional(), address: z.enum(addressKeys).optional(), disposition: z.enum(['active', 'completed', 'discarded', 'all']).default('active'), site: z.string().uuid().optional() }).parse(request.query);
+    const deliveryKeys = Object.keys(siteDeliveryDeliveryFilters) as [SiteDeliveryDeliveryFilter, ...SiteDeliveryDeliveryFilter[]];
+    const query = pagination.extend({ q: z.string().max(300).default(''), state: z.enum(Object.keys(siteDeliveryStates) as [keyof typeof siteDeliveryStates, ...Array<keyof typeof siteDeliveryStates>]).optional(), address: z.enum(addressKeys).optional(), delivery: z.enum(deliveryKeys).optional(), disposition: z.enum(['active', 'completed', 'discarded', 'all']).default('active'), site: z.string().uuid().optional() }).parse(request.query);
     const needle = query.q.toLowerCase();
-    const allRows = siteDeliveries(store, threshold(), query.site);
+    const allRows = siteDeliveries(store, threshold(), query.site, getSettings?.());
     const activeTotal = allRows.filter(row => !row.disposition).length;
-    const scopedRows = allRows.filter(row => matchesDispositionFilter(row.disposition, query.disposition) && (!query.site || row.generatedSiteId === query.site) && (!needle || [row.resourceName, row.siteUrl, row.delivery?.targetUrl || '', row.id].join(' ').toLowerCase().includes(needle)));
+    const matchesQuery = (row: SiteDeliverySummary) => (!query.site || row.generatedSiteId === query.site) && (!needle || [row.resourceName, row.siteUrl, row.delivery?.targetUrl || '', row.id].join(' ').toLowerCase().includes(needle));
+    const activeMatchingRows = allRows.filter(row => !row.disposition && matchesQuery(row));
+    const deliverableCount = activeMatchingRows.filter(row => row.deliveryAction?.eligible === true).length;
+    const undeliveredCount = activeMatchingRows.filter(isUndeliveredFinished).length;
+    const scopedRows = allRows.filter(row => matchesDispositionFilter(row.disposition, query.disposition) && matchesQuery(row));
     const attentionMissingAddress = scopedRows.filter(row => row.state === 'attention' && !hasAccessibleSiteUrl(row.siteUrl)).length;
-    const rows = scopedRows.filter(row => (!query.state || row.state === query.state) && matchesDeliveryAddress(row.siteUrl, query.address));
+    const rows = scopedRows.filter(row =>
+      (!query.state || row.state === query.state)
+      && matchesDeliveryAddress(row.siteUrl, query.address)
+      && (!query.delivery || (query.delivery === 'deliverable' ? row.deliveryAction?.eligible === true : isUndeliveredFinished(row))),
+    );
     const pages = Math.max(1, Math.ceil(rows.length / query.pageSize)), page = Math.min(query.page, pages);
-    return { items: rows.slice((page - 1) * query.pageSize, page * query.pageSize), page, pages, pageSize: query.pageSize, total: rows.length, activeTotal, attentionMissingAddress };
+    return { items: rows.slice((page - 1) * query.pageSize, page * query.pageSize), page, pages, pageSize: query.pageSize, total: rows.length, activeTotal, attentionMissingAddress, deliverableCount, undeliveredCount };
   });
   app.get('/api/automation/site-deliveries/:id', async (request, reply) => {
     const { id } = z.object({ id: z.string().uuid() }).parse(request.params);
-    const item = siteDeliveries(store, threshold(),id).find(row => row.id === id);
+    const item = siteDeliveries(store, threshold(), id, getSettings?.()).find(row => row.id === id);
     return item || reply.code(404).send({ error: '生成站不存在' });
   });
   app.get('/api/automation/site-deliveries/:id/tasks', async (request, reply) => {

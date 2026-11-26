@@ -5,7 +5,7 @@ import { mkdtempSync, rmSync } from 'node:fs';
 import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { createApp } from '../server/app.js';
-import { defaultAutomationSettings, type AutomationTask, type AutomationReport } from '../shared/automation.js';
+import { defaultAutomationSettings, defaultDeliveryPolicy, type AutomationTask, type AutomationReport } from '../shared/automation.js';
 import { siteDeliveries } from '../server/automation/site-delivery.js';
 import type { UsageStage } from '../shared/billing.js';
 import { dashboardAnalytics } from '../server/automation/dashboard-analytics.js';
@@ -371,6 +371,279 @@ test('site deliveries project generated state when autoEvaluate is disabled and 
     f.store.put(genWithEval);
     const rowAwaiting = siteDeliveries(f.store, 80, f.site.id)[0];
     assert.equal(rowAwaiting.state, 'awaiting-evaluation');
+  } finally {
+    await f.close();
+  }
+});
+
+test('GET /api/automation/site-deliveries projects deliveryAction eligibility, environmentName, counts, and delivery filters', async () => {
+  const f = await fixture();
+  try {
+    const delivEnvId = randomUUID();
+    const noTokenEnvId = randomUUID();
+    const plainEnvId = randomUUID();
+    const requirePassEnvId = randomUUID();
+    f.vault.update({
+      threshold: 80,
+      paused: true,
+      model: { endpoint: 'https://model.test/v1', name: 'deepseek-flash-1017', apiKey: 'model-key' },
+      environments: [
+        {
+          id: delivEnvId,
+          name: '香港 kooboo',
+          origin: 'https://hk.test',
+          apiOrigin: 'https://hk.test',
+          token: 'hk-tok',
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: true, requirePassed: false, token: 'deliv-tok' },
+        },
+        {
+          id: noTokenEnvId,
+          name: '缺令牌环境',
+          origin: 'https://notok.test',
+          apiOrigin: 'https://notok.test',
+          token: 'tok',
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: false, token: '' },
+        },
+        {
+          id: plainEnvId,
+          name: '德国 kooboo',
+          origin: 'https://de.test',
+          apiOrigin: 'https://de.test',
+          token: 'de-tok',
+        },
+        {
+          id: requirePassEnvId,
+          name: '严格环境',
+          origin: 'https://strict.test',
+          apiOrigin: 'https://strict.test',
+          token: 'strict-tok',
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: false, requirePassed: true, token: 'strict-deliv-tok' },
+        },
+      ],
+    });
+    f.store.publish({
+      name: 'Site rule',
+      kind: 'site',
+      sop: 'Inspect',
+      references: '',
+      criteria: [{ id: 'hero', label: 'Hero', weight: 100, instruction: 'Check', required: true, viewports: ['desktop', 'mobile'], scopes: ['homepage', 'site'] }],
+    });
+
+    const addSiteTask = (opts: {
+      name: string;
+      envId: string;
+      autoEvaluate?: boolean;
+      evalScore?: number;
+      delivered?: boolean;
+      archived?: boolean;
+      running?: boolean;
+    }) => {
+      const res = f.store.saveResource({ name: opts.name, scenario: 'upgrade', description: '', contentUrl: 'https://src.test', referenceUrl: '', files: [], externalSource: '', externalId: '' });
+      const site = { id: randomUUID(), resourceId: res.id, versionId: f.store.versions(res.id)[0].id, environmentId: opts.envId, siteId: randomUUID(), name: opts.name.replace(/\s+/g, '_').toLowerCase(), url: `https://${opts.name.replace(/\s+/g, '-').toLowerCase()}.test/`, createdAt: Date.now() };
+      f.store.saveSite(site);
+      const gen = f.store.create({ resourceIds: [res.id], generatedSiteId: site.id, kind: 'generation', scope: 'homepage', environmentId: opts.envId, autoEvaluate: opts.autoEvaluate ?? false, requirements: '' }, { ...f.settings, autoEvaluate: opts.autoEvaluate ?? false })[0];
+      f.store.beginSiteChange(gen);
+      if (opts.running) {
+        gen.status = 'running';
+        gen.stopped = false;
+        f.store.put(gen);
+        return { gen, evalTask: undefined };
+      }
+      gen.status = 'completed';
+      gen.stopped = true;
+      let evalTask: AutomationTask | undefined;
+      if (opts.evalScore !== undefined) {
+        evalTask = f.store.ensureEvaluation(gen, f.settings);
+        evalTask.status = 'completed';
+        evalTask.stopped = true;
+        evalTask.report = {
+          summary: 'Eval',
+          quality: opts.evalScore >= 80 ? 'passed' : 'failed',
+          scores: [{ viewport: 'desktop', value: opts.evalScore }, { viewport: 'mobile', value: opts.evalScore }],
+          assessments: evalTask.rule!.criteria.flatMap(c => c.viewports.map(viewport => ({ criterionId: c.id, viewport, score: opts.evalScore!, passed: opts.evalScore! >= 80, reason: 'ok', evidence: [] }))),
+          issues: opts.evalScore >= 80 ? [] : [{ severity: 'major', title: 'Gap', detail: 'Fix', evidence: [] }],
+          coverage: { verified: ['首页'], unverified: [], outOfScope: [] },
+          artifacts: [],
+        };
+        f.store.publishSiteReport(evalTask);
+        f.store.put(evalTask);
+      }
+      if (opts.delivered) {
+        gen.delivery = {
+          id: randomUUID(),
+          policy: { ...defaultDeliveryPolicy, enabled: true, verifyWithAi: false },
+          status: 'completed',
+          sourceEnvironmentId: opts.envId,
+          sourceSiteId: site.siteId,
+          sourceUrl: site.url,
+          evaluationTaskId: evalTask?.id || '',
+          target: { siteId: randomUUID(), siteUrl: 'https://de-target.test/' },
+          updatedAt: Date.now(),
+          error: '',
+          checks: [],
+        };
+      }
+      f.store.put(gen);
+      if (opts.archived) {
+        f.store.dispositions.set('delivery', [site.id], 'completed', '');
+      }
+      return { gen, evalTask };
+    };
+
+    const sGenOk = addSiteTask({ name: 'GenOk', envId: delivEnvId, autoEvaluate: false });
+    const sEvalOk = addSiteTask({ name: 'EvalOk', envId: delivEnvId, autoEvaluate: true, evalScore: 92 });
+    addSiteTask({ name: 'PlainEnv', envId: plainEnvId, autoEvaluate: false });
+    addSiteTask({ name: 'NoToken', envId: noTokenEnvId, autoEvaluate: false });
+    addSiteTask({ name: 'LowScore', envId: requirePassEnvId, autoEvaluate: true, evalScore: 60 });
+    addSiteTask({ name: 'Delivered', envId: delivEnvId, autoEvaluate: false, delivered: true });
+    addSiteTask({ name: 'Archived', envId: delivEnvId, autoEvaluate: false, archived: true });
+    addSiteTask({ name: 'Running', envId: delivEnvId, autoEvaluate: false, running: true });
+
+    const allRes = (await f.app.inject({ url: '/api/automation/site-deliveries?disposition=all&pageSize=50', headers: f.headers })).json();
+    const byName = (name: string) => allRes.items.find((item: any) => item.resourceName === name);
+
+    assert.equal(byName('GenOk').environmentName, '香港 kooboo');
+    assert.deepEqual(byName('GenOk').deliveryAction, { eligible: true, taskId: sGenOk.gen.id, code: 'ready' });
+    assert.deepEqual(byName('EvalOk').deliveryAction, { eligible: true, taskId: sEvalOk.evalTask!.id, code: 'ready' });
+    assert.equal(byName('PlainEnv').environmentName, '德国 kooboo');
+    assert.equal(byName('PlainEnv').deliveryAction.eligible, false);
+    assert.equal(byName('PlainEnv').deliveryAction.code, 'unsupported-env');
+    assert.equal(byName('NoToken').deliveryAction.eligible, false);
+    assert.equal(byName('NoToken').deliveryAction.code, 'missing-token');
+    assert.equal(byName('LowScore').deliveryAction.eligible, false);
+    assert.equal(byName('LowScore').deliveryAction.code, 'require-passed');
+    assert.equal(byName('Delivered').deliveryAction.code, 'already-delivered');
+    assert.equal(byName('Archived').deliveryAction.code, 'archived');
+    assert.equal(byName('Running').deliveryAction.code, 'in-progress');
+
+    assert.equal(allRes.deliverableCount, 2);
+    assert.equal(allRes.undeliveredCount, 6); // GenOk, EvalOk, PlainEnv, NoToken, LowScore + fixture default Migration site
+
+    // delivery=undelivered shows finished undelivered active sites (both deliverable & ineligible envs)
+    const undeliveredRes = (await f.app.inject({ url: '/api/automation/site-deliveries?disposition=active&delivery=undelivered&pageSize=50', headers: f.headers })).json();
+    assert.deepEqual(
+      undeliveredRes.items.map((i: any) => i.resourceName).sort(),
+      ['EvalOk', 'GenOk', 'LowScore', 'Migration', 'NoToken', 'PlainEnv'],
+    );
+
+    // delivery=deliverable shows only eligible sites
+    const deliverableRes = (await f.app.inject({ url: '/api/automation/site-deliveries?disposition=active&delivery=deliverable&pageSize=50', headers: f.headers })).json();
+    assert.deepEqual(
+      deliverableRes.items.map((i: any) => i.resourceName).sort(),
+      ['EvalOk', 'GenOk'],
+    );
+
+    // Confirm queueing delivery on returned taskId works cleanly via existing endpoint
+    const queueRes = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${sGenOk.gen.id}/delivery`, headers: f.headers });
+    assert.equal(queueRes.statusCode, 200);
+  } finally {
+    await f.close();
+  }
+});
+
+test('site deliveries requirePassed matches queueDelivery frozen threshold and includes stopped-optimization deliverable sites in undelivered filter', async () => {
+  const f = await fixture();
+  try {
+    const strictEnvId = randomUUID();
+    const relaxedEnvId = randomUUID();
+    f.vault.update({
+      threshold: 80,
+      paused: true,
+      model: { endpoint: 'https://model.test/v1', name: 'deepseek-flash-1017', apiKey: 'model-key' },
+      environments: [
+        {
+          id: strictEnvId,
+          name: 'StrictPass',
+          origin: 'https://strict-pass.test',
+          apiOrigin: 'https://strict-pass.test',
+          token: 'tok-1',
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: false, requirePassed: true, token: 'deliv-1' },
+        },
+        {
+          id: relaxedEnvId,
+          name: 'RelaxedOpt',
+          origin: 'https://relaxed-opt.test',
+          apiOrigin: 'https://relaxed-opt.test',
+          token: 'tok-2',
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: false, requirePassed: false, token: 'deliv-2' },
+        },
+      ],
+    });
+    const rule = f.store.publish({
+      name: 'Site rule',
+      kind: 'site',
+      sop: 'Inspect',
+      references: '',
+      criteria: [{ id: 'hero', label: 'Hero', weight: 100, instruction: 'Check', required: true, viewports: ['desktop', 'mobile'], scopes: ['homepage', 'site'] }],
+    });
+
+    const createUnverifiedOptSite = (opts: { name: string; envId: string; frozenThreshold: number; targetScore: number; score: number }) => {
+      const res = f.store.saveResource({ name: opts.name, scenario: 'materials', description: '', contentUrl: '', referenceUrl: '', files: [], externalSource: '', externalId: '' });
+      const site = { id: randomUUID(), resourceId: res.id, versionId: f.store.versions(res.id)[0].id, environmentId: opts.envId, siteId: randomUUID(), name: opts.name.toLowerCase(), url: `https://${opts.name.toLowerCase()}.test/`, createdAt: Date.now() };
+      f.store.saveSite(site);
+      const root = f.store.create({
+        resourceIds: [res.id],
+        generatedSiteId: site.id,
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: opts.envId,
+        ruleId: rule.id,
+        optimization: { targetScore: opts.targetScore, maxRounds: 2, maxCostCny: null },
+        requirements: '',
+      }, f.settings)[0];
+      f.store.beginSiteChange(root);
+      root.status = 'completed';
+      root.stopped = true;
+      const evalTask = f.store.ensureEvaluation(root, f.settings);
+      evalTask.status = 'completed';
+      evalTask.stopped = true;
+      evalTask.report = {
+        summary: 'Unverified report',
+        quality: 'unverified',
+        scores: [{ viewport: 'desktop', value: opts.score }, { viewport: 'mobile', value: opts.score }],
+        assessments: evalTask.rule!.criteria.flatMap(c => c.viewports.map(viewport => ({ criterionId: c.id, viewport, score: opts.score, passed: true, reason: 'ok', evidence: [] }))),
+        issues: [],
+        coverage: { verified: ['首页'], unverified: ['动画待人工复核'], outOfScope: [] },
+        artifacts: [],
+      };
+      f.store.publishSiteReport(evalTask);
+      f.store.put(evalTask);
+      root.optimization = {
+        ...root.optimization!,
+        state: 'stopped',
+        threshold: opts.frozenThreshold,
+        rounds: [{ number: 0, generationTaskId: root.id, evaluationTaskId: evalTask.id, revision: root.siteRevision || 'rev-1', startedAt: Date.now() }],
+        activeTaskId: evalTask.id,
+        reportId: evalTask.id,
+        reason: '达到轮次上限已停止',
+        nextSteps: [],
+        stoppedAt: Date.now(),
+      };
+      f.store.put(root);
+      return { root, evalTask };
+    };
+
+    // 1. Frozen threshold 80 < targetScore 85 with score 82 -> eligible & queueDelivery accepts (200)
+    const passByFrozen = createUnverifiedOptSite({ name: 'OptPassFrozen', envId: strictEnvId, frozenThreshold: 80, targetScore: 85, score: 82 });
+    // 2. Frozen threshold 80 > targetScore 70 with score 75 -> ineligible (require-passed) & queueDelivery rejects (409)
+    const failByFrozen = createUnverifiedOptSite({ name: 'OptFailFrozen', envId: strictEnvId, frozenThreshold: 80, targetScore: 70, score: 75 });
+    // 3. Stopped optimization with state='attention' and requirePassed=false -> eligible and visible in delivery=undelivered
+    const optAttentionDeliverable = createUnverifiedOptSite({ name: 'OptAttentionOk', envId: relaxedEnvId, frozenThreshold: 80, targetScore: 95, score: 70 });
+
+    const all = (await f.app.inject({ url: '/api/automation/site-deliveries?disposition=active&pageSize=50', headers: f.headers })).json();
+    const byName = (name: string) => all.items.find((item: any) => item.resourceName === name);
+
+    assert.equal(byName('OptPassFrozen').deliveryAction.eligible, true);
+    assert.equal(byName('OptFailFrozen').deliveryAction.eligible, false);
+    assert.equal(byName('OptFailFrozen').deliveryAction.code, 'require-passed');
+    assert.equal(byName('OptAttentionOk').state, 'attention');
+    assert.equal(byName('OptAttentionOk').deliveryAction.eligible, true);
+
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${passByFrozen.evalTask.id}/delivery`, headers: f.headers })).statusCode, 200);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${failByFrozen.evalTask.id}/delivery`, headers: f.headers })).statusCode, 409);
+
+    const undelivered = (await f.app.inject({ url: '/api/automation/site-deliveries?disposition=active&delivery=undelivered&pageSize=50', headers: f.headers })).json();
+    assert.ok(undelivered.items.some((item: any) => item.resourceName === 'OptAttentionOk'), 'deliverable stopped-optimization site must be visible in batch delivery mode');
   } finally {
     await f.close();
   }

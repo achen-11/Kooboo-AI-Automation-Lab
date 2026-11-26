@@ -6,9 +6,10 @@ import { join } from 'node:path';
 import { tmpdir } from 'node:os';
 import { randomUUID } from 'node:crypto';
 import { createApp } from '../server/app.js';
-import { defaultAutomationSettings } from '../shared/automation.js';
+import { defaultAutomationSettings, defaultDeliveryPolicy } from '../shared/automation.js';
 import { deriveHumanNotice } from '../shared/human-diagnostics.js';
 import { executeGeneration } from '../server/automation/generator.js';
+import { AutomationWorker } from '../server/automation/worker.js';
 import { FollowupRuntimeError, Pending } from '../server/automation/errors.js';
 import { settingsSchema } from '../server/lib/validation.js';
 import { Vault } from '../server/lib/vault.js';
@@ -1160,6 +1161,7 @@ test('3-hop fallback chain DE -> HK -> XM -> skipSourceTransfer materials fallba
   }
 });
 
+
 test('3-hop fallback continues from HK GetStatus timeout to XM clone success without short-circuiting', async () => {
   const de = startMockKooboo({ domainName: 'de.kooboo.io', pages: 0, singleSyncFail: true });
   const hk = startMockKooboo({ domainName: 'hk.kooboo.io', pages: 0, singleSyncFail: true, hangGetStatus: true });
@@ -1230,6 +1232,7 @@ test('3-hop fallback continues from HK GetStatus timeout to XM clone success wit
   }
 });
 
+
 test('3-hop chain stops at HK when HK clone succeeds without touching XM', async () => {
   const de = startMockKooboo({ domainName: 'de.kooboo.io', pages: 0, singleSyncFail: true });
   const hk = startMockKooboo({ domainName: 'hk.kooboo.io', pages: 4 });
@@ -1289,6 +1292,335 @@ test('3-hop chain stops at HK when HK clone succeeds without touching XM', async
     assert.equal(saved.generation?.transferComplete, true);
     assert.equal(xm.calls.length, 0, 'XM must not be called once HK succeeds');
   } finally {
+    await f.app.close();
+    rmSync(directory, { recursive: true, force: true });
+    await closeServer(de.server);
+    await closeServer(hk.server);
+    await closeServer(xm.server);
+  }
+});
+
+
+test('clone fallback DE (no delivery) -> HK (auto=false) -> XM (auto=true) syncs autoDelivery and auto-queues delivery for homepage task, while respecting explicit false and clearing stale true on plain env', async () => {
+  const de = startMockKooboo({ domainName: 'de.kooboo.io', pages: 0, singleSyncFail: true });
+  const hk = startMockKooboo({ domainName: 'hk.kooboo.io', pages: 0, singleSyncFail: true });
+  const xm = startMockKooboo({ domainName: 'xm.kooboo.io', pages: 4 });
+  const deOrigin = await de.start();
+  const hkOrigin = await hk.start();
+  const xmOrigin = await xm.start();
+  const directory = mkdtempSync(join(tmpdir(), 'fallback-autodelivery-'));
+  const f = await createApp({ directory, serveWeb: false, startWorker: false });
+  const deEnvId = randomUUID();
+  const hkEnvId = randomUUID();
+  const xmEnvId = randomUUID();
+  let worker: AutomationWorker | undefined;
+
+  try {
+    f.vault.update({
+      threshold: 80,
+      paused: true,
+      model: { endpoint: 'https://api.deepseek.com', name: 'deepseek-flash-1017', apiKey: 'test-key' },
+      environments: [
+        { id: deEnvId, name: '德国 kooboo', origin: deOrigin, apiOrigin: deOrigin, token: 'de-tok', defaultRootDomain: 'de.kooboo.io', cloneFallbackEnvironmentId: hkEnvId },
+        {
+          id: hkEnvId,
+          name: '香港 kooboo',
+          origin: hkOrigin,
+          apiOrigin: hkOrigin,
+          token: 'hk-tok',
+          defaultRootDomain: 'hk.kooboo.io',
+          cloneFallbackEnvironmentId: xmEnvId,
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: false, token: 'hk-del-tok' },
+        },
+        {
+          id: xmEnvId,
+          name: '厦门 kooboo',
+          origin: xmOrigin,
+          apiOrigin: xmOrigin,
+          token: 'xm-tok',
+          defaultRootDomain: 'xm.kooboo.io',
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: true, token: 'xm-del-tok' },
+        },
+      ],
+    });
+    f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true, autoEvaluate: false });
+
+    const res = f.automationStore.saveResource({
+      name: 'Kinetic Fallback Delivery',
+      scenario: 'upgrade',
+      description: 'DE -> HK -> XM auto delivery',
+      contentUrl: 'https://source.example.nl',
+      referenceUrl: 'https://ref.test/',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+
+    // 1. Task created on DE (no delivery) -> falls back through HK (auto=false) to XM (auto=true)
+    const task1 = f.automationStore.create(
+      { resourceIds: [res.id], kind: 'generation', scope: 'homepage', environmentId: deEnvId, autoEvaluate: false, requirements: '' },
+      f.vault.automation(),
+    )[0];
+    delete task1.autonomy;
+    task1.requirementsEnabled = false;
+    assert.equal(task1.autoDelivery, undefined);
+    f.automationStore.put(task1);
+
+    worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      directory,
+      {
+        generation: async (t, store, vault, dir, signal) => {
+          await executeGeneration(t, store, vault, dir, signal, mockGenerationSession(t.id, () => (t.environmentId === xmEnvId ? xm.siteId : hk.siteId)), passPreflight);
+          f.vault.updateAutomation({ ...f.vault.automation(), enabled: false });
+        },
+        evaluation: async () => {},
+      },
+      () => true,
+    );
+
+    await worker.tick();
+    let saved1 = f.automationStore.task(task1.id)!;
+    for (let i = 0; i < 400; i++) {
+      saved1 = f.automationStore.task(task1.id)!;
+      if (saved1.status === 'completed' && saved1.delivery) break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.equal(saved1.status, 'completed');
+    assert.equal(saved1.environmentId, xmEnvId);
+    assert.equal(saved1.autoDelivery, true);
+    assert.equal(saved1.delivery?.status, 'queued');
+    assert.ok(f.automationStore.events(task1.id).some((e) => e.message.includes('已按回退环境默认策略启用完成后自动跨环境交付')));
+    await worker.stop();
+    worker = undefined;
+
+    // 2. Explicit autoDelivery=false on HK stays false even when falling back to XM (auto=true)
+    const hk2 = startMockKooboo({ domainName: 'hk2.kooboo.io', pages: 0, singleSyncFail: true });
+    const xm2 = startMockKooboo({ domainName: 'xm2.kooboo.io', pages: 4 });
+    const hk2Origin = await hk2.start();
+    const xm2Origin = await xm2.start();
+    try {
+      const hk2EnvId = randomUUID();
+      const xm2EnvId = randomUUID();
+      f.vault.update({
+        threshold: 80,
+        paused: true,
+        model: { endpoint: 'https://api.deepseek.com', name: 'deepseek-flash-1017', apiKey: 'test-key' },
+        environments: [
+          {
+            id: hk2EnvId,
+            name: '香港2 kooboo',
+            origin: hk2Origin,
+            apiOrigin: hk2Origin,
+            token: 'hk2-tok',
+            defaultRootDomain: 'hk2.kooboo.io',
+            cloneFallbackEnvironmentId: xm2EnvId,
+            delivery: { ...defaultDeliveryPolicy, enabled: true, auto: false, token: 'hk2-del-tok' },
+          },
+          {
+            id: xm2EnvId,
+            name: '厦门2 kooboo',
+            origin: xm2Origin,
+            apiOrigin: xm2Origin,
+            token: 'xm2-tok',
+            defaultRootDomain: 'xm2.kooboo.io',
+            delivery: { ...defaultDeliveryPolicy, enabled: true, auto: true, token: 'xm2-del-tok' },
+          },
+        ],
+      });
+      f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true, autoEvaluate: false });
+      const task2 = f.automationStore.create(
+        { resourceIds: [res.id], kind: 'generation', scope: 'homepage', environmentId: hk2EnvId, autoEvaluate: false, autoDelivery: false, requirements: '' },
+        f.vault.automation(),
+      )[0];
+      delete task2.autonomy;
+      task2.requirementsEnabled = false;
+      f.automationStore.put(task2);
+
+      worker = new AutomationWorker(
+        f.automationStore,
+        f.vault,
+        directory,
+        {
+          generation: async (t, store, vault, dir, signal) => {
+            await executeGeneration(t, store, vault, dir, signal, mockGenerationSession(t.id, () => xm2.siteId), passPreflight);
+            f.vault.updateAutomation({ ...f.vault.automation(), enabled: false });
+          },
+          evaluation: async () => {},
+        },
+        () => true,
+      );
+
+      await worker.tick();
+      let saved2 = f.automationStore.task(task2.id)!;
+      for (let i = 0; i < 400; i++) {
+        saved2 = f.automationStore.task(task2.id)!;
+        if (saved2.status === 'completed') break;
+        await new Promise((r) => setTimeout(r, 25));
+      }
+      assert.equal(saved2.status, 'completed');
+      assert.equal(saved2.environmentId, xm2EnvId);
+      assert.equal(saved2.autoDelivery, false);
+      assert.equal(saved2.delivery, undefined);
+      await worker.stop();
+      worker = undefined;
+    } finally {
+      await closeServer(hk2.server);
+      await closeServer(xm2.server);
+    }
+
+    // 3. Explicit autoDelivery=true on XM falling back to plain DE clears stale autoDelivery flag
+    const dePlain = startMockKooboo({ domainName: 'de-plain.kooboo.io', pages: 4 });
+    const xmFail = startMockKooboo({ domainName: 'xm-fail.kooboo.io', pages: 0, singleSyncFail: true });
+    const dePlainOrigin = await dePlain.start();
+    const xmFailOrigin = await xmFail.start();
+    try {
+      const xmFailEnvId = randomUUID();
+      const dePlainEnvId = randomUUID();
+      f.vault.update({
+        threshold: 80,
+        paused: true,
+        model: { endpoint: 'https://api.deepseek.com', name: 'deepseek-flash-1017', apiKey: 'test-key' },
+        environments: [
+          {
+            id: xmFailEnvId,
+            name: 'XM Fail',
+            origin: xmFailOrigin,
+            apiOrigin: xmFailOrigin,
+            token: 'xm-tok',
+            defaultRootDomain: 'xm-fail.kooboo.io',
+            cloneFallbackEnvironmentId: dePlainEnvId,
+            delivery: { ...defaultDeliveryPolicy, enabled: true, auto: true, token: 'xm-del-tok' },
+          },
+          { id: dePlainEnvId, name: 'DE Plain', origin: dePlainOrigin, apiOrigin: dePlainOrigin, token: 'de-tok', defaultRootDomain: 'de-plain.kooboo.io' },
+        ],
+      });
+      const task3 = f.automationStore.create(
+        { resourceIds: [res.id], kind: 'generation', scope: 'homepage', environmentId: xmFailEnvId, autoEvaluate: false, autoDelivery: true, requirements: '' },
+        f.vault.automation(),
+      )[0];
+      delete task3.autonomy;
+      task3.requirementsEnabled = false;
+      f.automationStore.put(task3);
+
+      await executeGeneration(
+        task3,
+        f.automationStore,
+        f.vault,
+        directory,
+        AbortSignal.timeout(10000),
+        mockGenerationSession(task3.id, () => dePlain.siteId),
+        passPreflight,
+      );
+      const saved3 = f.automationStore.task(task3.id)!;
+      assert.equal(saved3.environmentId, dePlainEnvId);
+      assert.equal(saved3.autoDelivery, undefined);
+      assert.ok(f.automationStore.events(task3.id).some((e) => e.message.includes('回退环境未启用跨环境交付，已关闭自动交付标记')));
+    } finally {
+      await closeServer(dePlain.server);
+      await closeServer(xmFail.server);
+    }
+  } finally {
+    await worker?.stop();
+    await f.app.close();
+    rmSync(directory, { recursive: true, force: true });
+    await closeServer(de.server);
+    await closeServer(hk.server);
+    await closeServer(xm.server);
+  }
+});
+
+test('3-hop fallback DE (no delivery) -> HK (auto=true, 0 pages) -> XM (auto=false, ok) does not leak HK auto=true onto XM', async () => {
+  const de = startMockKooboo({ domainName: 'de.kooboo.io', pages: 0, singleSyncFail: true });
+  const hk = startMockKooboo({ domainName: 'hk.kooboo.io', pages: 0, singleSyncFail: true });
+  const xm = startMockKooboo({ domainName: 'xm.kooboo.io', pages: 4 });
+  const deOrigin = await de.start();
+  const hkOrigin = await hk.start();
+  const xmOrigin = await xm.start();
+  const directory = mkdtempSync(join(tmpdir(), 'fallback-no-leak-'));
+  const f = await createApp({ directory, serveWeb: false, startWorker: false });
+  const deEnvId = randomUUID();
+  const hkEnvId = randomUUID();
+  const xmEnvId = randomUUID();
+  let worker: AutomationWorker | undefined;
+
+  try {
+    f.vault.update({
+      threshold: 80,
+      paused: true,
+      model: { endpoint: 'https://api.deepseek.com', name: 'deepseek-flash-1017', apiKey: 'test-key' },
+      environments: [
+        { id: deEnvId, name: 'DE', origin: deOrigin, apiOrigin: deOrigin, token: 'de-tok', defaultRootDomain: 'de.kooboo.io', cloneFallbackEnvironmentId: hkEnvId },
+        {
+          id: hkEnvId,
+          name: 'HK',
+          origin: hkOrigin,
+          apiOrigin: hkOrigin,
+          token: 'hk-tok',
+          defaultRootDomain: 'hk.kooboo.io',
+          cloneFallbackEnvironmentId: xmEnvId,
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: true, token: 'hk-del-tok' },
+        },
+        {
+          id: xmEnvId,
+          name: 'XM',
+          origin: xmOrigin,
+          apiOrigin: xmOrigin,
+          token: 'xm-tok',
+          defaultRootDomain: 'xm.kooboo.io',
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: false, token: 'xm-del-tok' },
+        },
+      ],
+    });
+    f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true, autoEvaluate: false });
+
+    const res = f.automationStore.saveResource({
+      name: 'No Leak Fallback',
+      scenario: 'upgrade',
+      description: 'DE -> HK(auto=true) -> XM(auto=false)',
+      contentUrl: 'https://source.example.nl',
+      referenceUrl: 'https://ref.test/',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+    const task = f.automationStore.create(
+      { resourceIds: [res.id], kind: 'generation', scope: 'homepage', environmentId: deEnvId, autoEvaluate: false, requirements: '' },
+      f.vault.automation(),
+    )[0];
+    delete task.autonomy;
+    task.requirementsEnabled = false;
+    assert.equal(task.autoDelivery, undefined);
+    f.automationStore.put(task);
+
+    worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      directory,
+      {
+        generation: async (t, store, vault, dir, signal) => {
+          await executeGeneration(t, store, vault, dir, signal, mockGenerationSession(t.id, () => xm.siteId), passPreflight);
+          f.vault.updateAutomation({ ...f.vault.automation(), enabled: false });
+        },
+        evaluation: async () => {},
+      },
+      () => true,
+    );
+
+    await worker.tick();
+    let saved = f.automationStore.task(task.id)!;
+    for (let i = 0; i < 400; i++) {
+      saved = f.automationStore.task(task.id)!;
+      if (saved.status === 'completed') break;
+      await new Promise((r) => setTimeout(r, 25));
+    }
+    assert.equal(saved.status, 'completed');
+    assert.equal(saved.environmentId, xmEnvId);
+    assert.equal(saved.autoDelivery, undefined);
+    assert.equal(saved.delivery, undefined);
+  } finally {
+    await worker?.stop();
     await f.app.close();
     rmSync(directory, { recursive: true, force: true });
     await closeServer(de.server);

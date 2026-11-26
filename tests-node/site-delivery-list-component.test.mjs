@@ -34,7 +34,7 @@ before(async () => {
         builder.onResolve({ filter: /\.vue$/ }, args => ({ path: args.path, namespace: 'site-delivery-test' }));
         builder.onLoad({ filter: /.*/, namespace: 'site-delivery-test' }, args => {
           if (args.path === 'lucide') {
-            const icons = ['ArrowUpRight', 'Check', 'Columns2', 'Copy', 'ExternalLink', 'Search', 'RefreshCw', 'Play', 'Clock3', 'LoaderCircle', 'RotateCcw', 'Trash2', 'X'];
+            const icons = ['ArrowUpRight', 'Check', 'Columns2', 'Copy', 'ExternalLink', 'Search', 'RefreshCw', 'Play', 'Clock3', 'LoaderCircle', 'RotateCcw', 'Send', 'Trash2', 'X'];
             return {
               contents: `import { h } from 'vue'; const Icon = () => h('svg'); export { ${icons.map(i => `Icon as ${i}`).join(', ')} };`,
               loader: 'js',
@@ -583,6 +583,191 @@ test('SiteDeliveryList quick views sync filters, surface row reason, support sin
     assert.equal(lastParams.get('disposition'), 'active');
   } finally {
     if (prevClipboard) Object.defineProperty(globalThis.navigator, 'clipboard', prevClipboard);
+    f.close();
+  }
+});
+
+test('SiteDeliveryList batch delivery mode disables non-delivery environment checkboxes, selects only eligible rows, and delivers in batch with partial issue reporting', async () => {
+  const rowTemplate = (id, name, extra = {}) => ({
+    id,
+    generatedSiteId: `site-${id}`,
+    resourceId: `res-${id}`,
+    resourceName: name,
+    siteUrl: `https://${id}.kooboo.io/`,
+    environmentId: 'env-hk',
+    environmentName: '香港 kooboo',
+    scenario: 'upgrade',
+    scope: 'homepage',
+    detailTaskId: `task-${id}`,
+    state: 'generated',
+    reason: '生成已完成',
+    targetScore: 85,
+    report: null,
+    usage: { priced: false, knownCny: 0, missing: 0, requests: 0, input: 0, output: 0, cached: 0 },
+    stages: [],
+    taskCount: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    ...extra,
+  });
+
+  const f = await fixture((path, options) => {
+    if (options.method === 'POST') {
+      if (path.includes('/task-fail/delivery')) return Promise.reject(new Error('目标迁移接口暂不可用'));
+      return { ok: true };
+    }
+    const res = pageResponse(path);
+    res.deliverableCount = 2;
+    res.undeliveredCount = 3;
+    res.items = [
+      rowTemplate('ok', 'HK Site OK', {
+        deliveryAction: { eligible: true, taskId: 'task-ok', code: 'ready' },
+      }),
+      rowTemplate('fail', 'HK Site Fail', {
+        deliveryAction: { eligible: true, taskId: 'task-fail', code: 'ready' },
+      }),
+      rowTemplate('de', 'DE Plain Site', {
+        environmentId: 'env-de',
+        environmentName: '德国 kooboo',
+        deliveryAction: { eligible: false, code: 'unsupported-env', reason: '当前环境未启用跨环境交付' },
+      }),
+    ];
+    res.total = 3;
+    return res;
+  });
+
+  try {
+    // 1. Normal mode keeps all row checkboxes enabled; selecting only unsupported-env row disables 一键交付 button
+    const deCheckboxNormal = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择 DE Plain Site')[0];
+    assert.equal(deCheckboxNormal.props.disabled, false);
+    deCheckboxNormal.props['onUpdate:modelValue'](['de']);
+    await settle();
+    const disabledDeliverBtn = f.buttonStartsWith('一键交付');
+    assert.ok(disabledDeliverBtn);
+    assert.equal(disabledDeliverBtn.props.disabled, true);
+    assert.equal(disabledDeliverBtn.props.title, '当前环境未启用跨环境交付');
+    f.button('清空选择').props.onClick();
+    await settle();
+
+    // 2. Normal mode mixed selection skips ineligible rows and shows count
+    const selectAllNormal = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择本页全部生成站')[0];
+    selectAllNormal.props.onChange({ target: { checked: true } });
+    await settle();
+    assert.ok(f.button('一键交付 (2)'));
+    assert.ok(f.text().includes('另有 1 项暂不支持交付，将自动跳过'));
+
+    // 3. Enter batch delivery mode via quick-delivery button
+    const batchModeBtn = f.nodes(n => n.tag === 'button' && String(n.props.class || '').includes('quick-delivery-btn'))[0];
+    assert.ok(batchModeBtn);
+    assert.ok(text(batchModeBtn).includes('批量交付2'));
+    batchModeBtn.props.onClick();
+    await settle();
+
+    const params = new URL('http://local' + f.calls.at(-1).path).searchParams;
+    assert.equal(params.get('delivery'), 'undelivered');
+    assert.equal(batchModeBtn.props['aria-pressed'], true);
+
+    // Unsupported-env row checkbox must be disabled (置灰) in batch delivery mode with reason tag & title
+    const okCheckbox = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择 HK Site OK')[0];
+    const deCheckbox = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择 DE Plain Site')[0];
+    assert.equal(okCheckbox.props.disabled, false);
+    assert.equal(deCheckbox.props.disabled, true);
+    assert.equal(deCheckbox.props.title, '当前环境未启用跨环境交付');
+    assert.ok(f.text().includes('当前环境未启用跨环境交付'));
+
+    // Select All in batch delivery mode only selects the 2 eligible rows
+    const selectAllBatch = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择本页全部生成站')[0];
+    selectAllBatch.props.onChange({ target: { checked: true } });
+    await settle();
+    assert.ok(text(f.nodes(n => n.props.class === 'selection-bar')[0]).includes('已选 2 项'));
+
+    const deliverBtn = f.button('一键交付');
+    assert.ok(deliverBtn);
+    assert.equal(deliverBtn.props.disabled, false);
+    deliverBtn.props.onClick();
+    await settle();
+
+    const posts = f.calls.filter(c => c.options?.method === 'POST');
+    assert.deepEqual(posts.map(c => c.path), [
+      '/automation/tasks/task-ok/delivery',
+      '/automation/tasks/task-fail/delivery',
+    ]);
+    assert.deepEqual(f.notified.at(-1), { type: 'warning', text: '已排队交付 1 个站点，另有 1 项未发起交付' });
+    const issuesText = text(f.nodes(n => n.props.class === 'batch-issues')[0]);
+    assert.ok(issuesText.includes('以下 1 项未能发起交付'));
+    assert.ok(issuesText.includes('HK Site Fail'));
+    assert.ok(issuesText.includes('目标迁移接口暂不可用'));
+    const issueLink = f.nodes(n => n.tag === 'a' && text(n) === 'HK Site Fail')[0];
+    assert.equal(issueLink.props.href, '#/tasks/task-fail?tab=delivery');
+  } finally {
+    f.close();
+  }
+});
+
+test('SiteDeliveryList batch delivery mode prunes selections that lose delivery eligibility after reload', async () => {
+  const rowTemplate = (id, name, eligible) => ({
+    id,
+    generatedSiteId: `site-${id}`,
+    resourceId: `res-${id}`,
+    resourceName: name,
+    siteUrl: `https://${id}.kooboo.io/`,
+    environmentId: eligible ? 'env-hk' : 'env-de',
+    environmentName: eligible ? '香港 kooboo' : '德国 kooboo',
+    scenario: 'upgrade',
+    scope: 'homepage',
+    detailTaskId: `task-${id}`,
+    state: 'generated',
+    reason: '生成已完成',
+    targetScore: 85,
+    report: null,
+    usage: { priced: false, knownCny: 0, missing: 0, requests: 0, input: 0, output: 0, cached: 0 },
+    stages: [],
+    taskCount: 1,
+    createdAt: 1,
+    updatedAt: 1,
+    deliveryAction: eligible
+      ? { eligible: true, taskId: `task-${id}`, code: 'ready' }
+      : { eligible: false, code: 'unsupported-env', reason: '当前环境未启用跨环境交付' },
+  });
+
+  let secondEligible = true;
+  const f = await fixture((path) => {
+    const res = pageResponse(path);
+    res.deliverableCount = secondEligible ? 2 : 1;
+    res.undeliveredCount = 2;
+    res.items = [
+      rowTemplate('alpha', 'Alpha Site', true),
+      rowTemplate('beta', 'Beta Site', secondEligible),
+    ];
+    res.total = 2;
+    return res;
+  });
+
+  try {
+    const batchModeBtn = f.nodes(n => n.tag === 'button' && String(n.props.class || '').includes('quick-delivery-btn'))[0];
+    batchModeBtn.props.onClick();
+    await settle();
+
+    const selectAll = () => f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择本页全部生成站')[0];
+    selectAll().props.onChange({ target: { checked: true } });
+    await settle();
+    assert.ok(text(f.nodes(n => n.props.class === 'selection-bar')[0]).includes('已选 2 项'));
+
+    // Simulate beta losing delivery eligibility on reload
+    secondEligible = false;
+    f.nodes(n => n.tag === 'button' && n.props['aria-label'] === '刷新生成站')[0].props.onClick();
+    await settle();
+
+    // Beta must be pruned from selection automatically; unchecking Select All clears remaining selection
+    assert.ok(text(f.nodes(n => n.props.class === 'selection-bar')[0]).includes('已选 1 项'));
+    const betaCheckbox = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择 Beta Site')[0];
+    assert.equal(betaCheckbox.props.disabled, true);
+    assert.equal(betaCheckbox.checked, false);
+
+    selectAll().props.onChange({ target: { checked: false } });
+    await settle();
+    assert.equal(f.nodes(n => n.props.class === 'selection-bar').length, 0);
+  } finally {
     f.close();
   }
 });

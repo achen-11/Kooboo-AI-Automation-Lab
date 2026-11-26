@@ -36,3 +36,19 @@ export async function trimTaskGenerationBrowserCache(directory: string, taskId: 
   try { return await trimGenerationBrowserCache(resolve(directory, 'generation-browsers', taskId)); }
   catch { onError?.(); return 0; }
 }
+
+/** Call only after a task reaches a confirmed terminal state; locked profiles and symlinks are skipped. */
+export async function removeGenerationBrowserProfile(profile: string): Promise<boolean> {
+  try {
+    if ((await lstat(profile)).isSymbolicLink()) return false;
+    try { await lstat(resolve(profile, 'SingletonLock')); return false; } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
+  } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return false; throw error; }
+  await rm(profile, { recursive: true, force: true });
+  return true;
+}
+
+export async function removeTaskGenerationBrowserProfile(directory: string, taskId: string, onError?: () => void): Promise<boolean> {
+  if (!/^[a-f0-9-]{36}$/i.test(taskId)) return false;
+  try { return await removeGenerationBrowserProfile(resolve(directory, 'generation-browsers', taskId)); }
+  catch { onError?.(); return false; }
+}

@@ -24,7 +24,7 @@ import { registerMigrationApi } from './migration-api.js';
 import { assertWorkflowStopped, retainStoppedFollowupReservations, correctUnsentPlanningAttempts, workflowBlockers, workflowActiveReason } from './budget-recovery.js';
 import { prepareManualFollowupResume } from './autonomy.js';
 import { retainRequestReservation } from './request-budget.js';
-import { trimTaskGenerationBrowserCache } from './generation-cache.js';
+import { removeTaskGenerationBrowserProfile } from './generation-cache.js';
 import { registerGenerationContextApi } from './generation-context-api.js';
 import { registerCollectionApi } from './collection/api.js';
 import { CollectionStore } from './collection/store.js';
@@ -100,7 +100,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerTaskSupplementApi(app,store,vault,directory);
   registerWorkflowGraphApi(app,store,vault,directory,owns,workerReady);
   registerExecutionLogApi(app,store);
-  registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
+  registerSiteDeliveryApi(app,store,()=>vault.get().threshold,()=>vault.get());
   registerTimingApi(app,store);
   registerDashboardApi(app,store);
   registerMigrationApi(app,store,vault,directory,owns);
@@ -462,14 +462,14 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     if(['completed','failed','cancelled','interrupted'].includes(task.status))throw new Conflict('任务已经结束');
     if(!task.stopped&&!owns(id))throw new Conflict('原执行状态未确认，请先检查并确认原执行已停止');
     task.status=task.stopped?'cancelled':'cancelling';store.put(task);store.event(id,task.stopped?'任务已取消':'已请求停止，确认执行端结束后释放名额');cancel(id);
-    if(task.stopped&&task.kind==='generation')void trimTaskGenerationBrowserCache(directory,id);
+    if(task.stopped)void removeTaskGenerationBrowserProfile(directory,id);
     return task;
   });
   app.post('/api/automation/tasks/:id/optimization/stop',async(request)=>{
     const {id}=params.parse(request.params),root=store.task(id);if(!root?.optimization)throw new Conflict('任务未启用自动优化');
     const active=store.task(root.optimization.activeTaskId);
     if(active&&!active.stopped&&!owns(active.id))throw new Conflict('原执行状态未确认，请先检查并确认停止');
-    if(active&&(!active.stopped||['queued','following-up'].includes(active.status))){active.status=active.stopped?'cancelled':'cancelling';store.put(active);cancel(active.id);if(active.stopped&&active.kind==='generation')void trimTaskGenerationBrowserCache(directory,active.id);}
+    if(active&&(!active.stopped||['queued','following-up'].includes(active.status))){active.status=active.stopped?'cancelled':'cancelling';store.put(active);cancel(active.id);if(active.stopped)void removeTaskGenerationBrowserProfile(directory,active.id);}
     stopOptimization(root,store,'操作者停止了自动优化。',['查看当前版本状态与最后有效报告。']);return {ok:true};
   });
   app.post('/api/automation/tasks/:id/optimize',async(request)=>{

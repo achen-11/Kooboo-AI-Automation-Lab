@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, nextTick, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ArrowUpRight, Check, Columns2, Copy, ExternalLink, Search, RefreshCw, Play, Clock3, LoaderCircle, RotateCcw, Trash2, X } from '@lucide/vue';
+import { ArrowUpRight, Check, Columns2, Copy, ExternalLink, Search, RefreshCw, Play, Clock3, LoaderCircle, RotateCcw, Send, Trash2, X } from '@lucide/vue';
 import BaseSelect from '../../components/BaseSelect.vue';
 import TablePagination from '../../components/TablePagination.vue';
 import LiveSiteComparisonDialog from '../../components/LiveSiteComparisonDialog.vue';
@@ -10,13 +10,14 @@ import { api, formatDate, message } from '../../api';
 import { notify } from '../../lib/notifications';
 import { scoreTone } from '../../lib/task-list';
 import { siteReportLink } from '../../lib/site-reports';
-import { deliveryStatusNames, listSiteLinks, siteDeliveryAddressFilters, siteDeliveryStates, type SiteDeliveryAddressFilter, type SiteDeliveryPage, type SiteDeliverySummary } from '../../../../shared/site-delivery';
+import { deliveryStatusNames, listSiteLinks, siteDeliveryAddressFilters, siteDeliveryStates, type SiteDeliveryAddressFilter, type SiteDeliveryDeliveryFilter, type SiteDeliveryPage, type SiteDeliverySummary } from '../../../../shared/site-delivery';
 import { dispositionFilterOptions, dispositionStateNames, type DispositionFilter, type DispositionState } from '../../../../shared/dispositions';
 import { scenarios } from '../../../../shared/automation';
 import { refresh, refreshStatus, workspace, scopeName } from './common';
 import { useTaskSection } from './use-task-section';
 
-const query = ref(''), search = ref(''), state = ref(''), address = ref<SiteDeliveryAddressFilter | ''>(''), disposition = ref<DispositionFilter>('active'), page = ref(1);
+const query = ref(''), search = ref(''), state = ref(''), address = ref<SiteDeliveryAddressFilter | ''>(''), deliveryFilter = ref<SiteDeliveryDeliveryFilter | ''>(''), disposition = ref<DispositionFilter>('active'), page = ref(1);
+const batchDeliveryMode = ref(false);
 const selected = ref<string[]>([]);
 const dispositionDialog = ref<InstanceType<typeof DispositionDialog>>();
 const liveComparisonDialog = ref<InstanceType<typeof LiveSiteComparisonDialog>>();
@@ -38,6 +39,7 @@ const quickViews: Array<{ key: QuickViewKey; label: string; disposition: Disposi
   { key: 'completed', label: '已归档', disposition: 'completed', state: '' },
 ];
 const activeQuickView = computed<QuickViewKey | null>(() => {
+  if (batchDeliveryMode.value || deliveryFilter.value) return null;
   if (disposition.value === 'active' && !state.value && !address.value) return 'all';
   if (disposition.value === 'active' && state.value === 'running') return 'running';
   if (disposition.value === 'active' && state.value === 'attention' && !address.value) return 'attention';
@@ -46,6 +48,8 @@ const activeQuickView = computed<QuickViewKey | null>(() => {
   return null;
 });
 function applyQuickView(view: (typeof quickViews)[number]) {
+  batchDeliveryMode.value = false;
+  deliveryFilter.value = '';
   disposition.value = view.disposition;
   state.value = view.state;
   address.value = '';
@@ -53,12 +57,50 @@ function applyQuickView(view: (typeof quickViews)[number]) {
   selected.value = [];
   batchIssues.value = [];
 }
+function exitBatchDeliveryMode() {
+  if (!batchDeliveryMode.value && !deliveryFilter.value) return;
+  batchDeliveryMode.value = false;
+  deliveryFilter.value = '';
+}
+function toggleBatchDeliveryMode() {
+  if (batchDeliveryMode.value) {
+    batchDeliveryMode.value = false;
+    deliveryFilter.value = '';
+  } else {
+    batchDeliveryMode.value = true;
+    disposition.value = 'active';
+    state.value = '';
+    address.value = '';
+    deliveryFilter.value = 'undelivered';
+  }
+  page.value = 1;
+  selected.value = [];
+  batchIssues.value = [];
+}
 const { data, loading, error, load } = useTaskSection<SiteDeliveryPage>(() =>
-  `/automation/site-deliveries?page=${page.value}&pageSize=20&disposition=${disposition.value}&q=${encodeURIComponent(search.value)}${state.value ? '&state=' + state.value : ''}${address.value ? '&address=' + address.value : ''}${site ? '&site=' + encodeURIComponent(site) : ''}`);
+  `/automation/site-deliveries?page=${page.value}&pageSize=20&disposition=${disposition.value}&q=${encodeURIComponent(search.value)}${state.value ? '&state=' + state.value : ''}${address.value ? '&address=' + address.value : ''}${deliveryFilter.value ? '&delivery=' + deliveryFilter.value : ''}${site ? '&site=' + encodeURIComponent(site) : ''}`);
 const rows = computed(() => data.value?.items || []);
+function isRowDeliverable(row: SiteDeliverySummary) {
+  return row.deliveryAction?.eligible === true;
+}
+function rowCheckboxDisabled(row: SiteDeliverySummary) {
+  return batchBusy.value || (batchDeliveryMode.value && !isRowDeliverable(row));
+}
+function rowCheckboxTitle(row: SiteDeliverySummary) {
+  return batchDeliveryMode.value && !isRowDeliverable(row)
+    ? (row.deliveryAction?.reason || '当前任务暂不支持跨环境交付')
+    : undefined;
+}
+const selectableRows = computed(() => batchDeliveryMode.value ? rows.value.filter(isRowDeliverable) : rows.value);
+watch([batchDeliveryMode, selectableRows], ([inBatchMode, allowed]) => {
+  if (!inBatchMode || !selected.value.length) return;
+  const allowedIds = new Set(allowed.map(row => row.id));
+  const next = selected.value.filter(id => allowedIds.has(id));
+  if (next.length !== selected.value.length) selected.value = next;
+});
 const selectedRows = computed(() => rows.value.filter(row => selected.value.includes(row.id)));
-const checked = computed(() => rows.value.length > 0 && rows.value.every(row => selected.value.includes(row.id)));
-const partial = computed(() => !checked.value && rows.value.some(row => selected.value.includes(row.id)));
+const checked = computed(() => selectableRows.value.length > 0 && selectableRows.value.every(row => selected.value.includes(row.id)));
+const partial = computed(() => !checked.value && selectableRows.value.some(row => selected.value.includes(row.id)));
 const canBatchComplete = computed(() => selectedRows.value.some(row => row.disposition?.state !== 'completed' && !['running', 'queued'].includes(row.state)));
 const canBatchDiscard = computed(() => selectedRows.value.some(row => row.disposition?.state !== 'discarded' && row.state !== 'running'));
 const canBatchRestore = computed(() => selectedRows.value.some(row => Boolean(row.disposition)));
@@ -69,8 +111,12 @@ interface BatchResumeIssue {
   reason: string;
 }
 const batchResuming = ref(false);
+const batchDelivering = ref(false);
+const batchBusy = computed(() => batchResuming.value || batchDelivering.value);
 const batchResumeProgress = ref({ done: 0, total: 0 });
+const batchDeliverProgress = ref({ done: 0, total: 0 });
 const batchIssues = ref<BatchResumeIssue[]>([]);
+const batchIssueKind = ref<'resume' | 'delivery'>('resume');
 const resumableSelectedRows = computed(() => selectedRows.value.filter(row => !row.disposition && (row.recovery?.action === 'resume' || row.recovery?.action === 'adjust-site-names')));
 const unconfirmedSelectedRows = computed(() => selectedRows.value.filter(row => !row.disposition && row.recovery?.action === 'confirm-stopped'));
 const canBatchResume = computed(() => resumableSelectedRows.value.length > 0);
@@ -80,11 +126,22 @@ const batchResumeLabel = computed(() => {
     ? `一键恢复 (${resumableSelectedRows.value.length})`
     : '一键恢复';
 });
+const deliverableSelectedRows = computed(() => selectedRows.value.filter(isRowDeliverable));
+const nonDeliverableSelectedRows = computed(() => selectedRows.value.filter(row => !isRowDeliverable(row)));
+const canBatchDeliver = computed(() => deliverableSelectedRows.value.length > 0);
+const showDisabledBatchDeliver = computed(() => !batchDeliveryMode.value && selectedRows.value.length > 0 && !canBatchDeliver.value && selectedRows.value.some(row => row.deliveryAction && ['unsupported-env', 'missing-token', 'require-passed'].includes(row.deliveryAction.code)));
+const disabledBatchDeliverTitle = computed(() => selectedRows.value.find(row => row.deliveryAction?.reason)?.deliveryAction?.reason || '当前所选站点暂不支持跨环境交付');
+const batchDeliverLabel = computed(() => {
+  if (batchDelivering.value) return `正在排队交付 (${batchDeliverProgress.value.done}/${batchDeliverProgress.value.total})…`;
+  return deliverableSelectedRows.value.length < selectedRows.value.length
+    ? `一键交付 (${deliverableSelectedRows.value.length})`
+    : '一键交付';
+});
 function canDirectResumeRow(row: SiteDeliverySummary) {
   return !row.disposition && (row.recovery?.action === 'resume' || row.recovery?.action === 'adjust-site-names' || row.recovery?.action === 'handoff-conversation');
 }
 async function runSingleResume(row: SiteDeliverySummary) {
-  if (batchResuming.value || resumingRowId.value || !canDirectResumeRow(row) || !row.recovery) return;
+  if (batchBusy.value || resumingRowId.value || !canDirectResumeRow(row) || !row.recovery) return;
   resumingRowId.value = row.id;
   const endpoint = row.recovery.action === 'adjust-site-names'
     ? `/automation/tasks/${row.recovery.taskId}/adjust-site-names`
@@ -124,7 +181,7 @@ async function openCompare(row: SiteDeliverySummary) {
   await liveComparisonDialog.value?.open(reportId);
 }
 async function runBatchResume() {
-  if (batchResuming.value) return;
+  if (batchBusy.value) return;
   const targets = [...selectedRows.value];
   const eligible: Array<{ row: SiteDeliverySummary; action: 'resume' | 'adjust-site-names' | 'handoff-conversation'; taskId: string }> = [];
   const issues: BatchResumeIssue[] = [];
@@ -153,11 +210,13 @@ async function runBatchResume() {
     });
   }
   if (!eligible.length) {
+    batchIssueKind.value = 'resume';
     batchIssues.value = issues;
     notify.warning('所选任务暂不支持直接批量恢复，请查看原因');
     return;
   }
   batchResuming.value = true;
+  batchIssueKind.value = 'resume';
   batchIssues.value = [];
   batchResumeProgress.value = { done: 0, total: eligible.length };
   let succeeded = 0;
@@ -199,7 +258,75 @@ async function runBatchResume() {
   await load();
   void refreshStatus();
 }
+async function runBatchDeliver() {
+  if (batchBusy.value) return;
+  const targets = [...selectedRows.value];
+  const eligible: Array<{ row: SiteDeliverySummary; taskId: string }> = [];
+  const issues: BatchResumeIssue[] = [];
+  const seenTaskIds = new Set<string>();
+  for (const row of targets) {
+    const action = row.deliveryAction;
+    if (action?.eligible && action.taskId) {
+      if (!seenTaskIds.has(action.taskId)) {
+        seenTaskIds.add(action.taskId);
+        eligible.push({ row, taskId: action.taskId });
+      }
+      continue;
+    }
+    issues.push({
+      id: row.id,
+      detailTaskId: row.detailTaskId,
+      resourceName: row.resourceName,
+      reason: action?.reason || '当前任务暂不支持跨环境交付',
+    });
+  }
+  if (!eligible.length) {
+    batchIssueKind.value = 'delivery';
+    batchIssues.value = issues;
+    notify.warning('所选站点暂不支持跨环境交付，请查看原因');
+    return;
+  }
+  batchDelivering.value = true;
+  batchIssueKind.value = 'delivery';
+  batchIssues.value = [];
+  batchDeliverProgress.value = { done: 0, total: eligible.length };
+  let succeeded = 0;
+  const succeededIds = new Set<string>();
+  try {
+    for (const item of eligible) {
+      try {
+        await api(`/automation/tasks/${item.taskId}/delivery`, { method: 'POST' });
+        succeeded++;
+        succeededIds.add(item.row.id);
+      } catch (reason) {
+        issues.push({
+          id: item.row.id,
+          detailTaskId: item.row.detailTaskId,
+          resourceName: item.row.resourceName,
+          reason: message(reason),
+        });
+      } finally {
+        batchDeliverProgress.value.done++;
+      }
+    }
+  } finally {
+    batchDelivering.value = false;
+  }
+  selected.value = selected.value.filter(id => !succeededIds.has(id));
+  batchIssues.value = issues;
+  if (succeeded > 0 && issues.length === 0) {
+    notify.success(`已排队交付 ${succeeded} 个站点`);
+  } else if (succeeded > 0) {
+    notify.warning(`已排队交付 ${succeeded} 个站点，另有 ${issues.length} 项未发起交付`);
+  } else if (issues.length > 0) {
+    notify.error(`${issues.length} 个站点未能发起交付，请查看原因`);
+  }
+  await load();
+  void refreshStatus();
+}
 function toggleAttentionMissingAddress() {
+  batchDeliveryMode.value = false;
+  deliveryFilter.value = '';
   if (state.value === 'attention' && address.value === 'missing') {
     state.value = '';
     address.value = '';
@@ -216,7 +343,7 @@ function siteLinks(row: SiteDeliverySummary) {
 }
 function toggleAll(event: Event) {
   const isChecked = (event.target as HTMLInputElement).checked;
-  const visible = new Set(rows.value.map(row => row.id));
+  const visible = new Set(selectableRows.value.map(row => row.id));
   selected.value = isChecked ? [...new Set([...selected.value, ...visible])] : selected.value.filter(id => !visible.has(id));
 }
 function dispositionTitle(row: SiteDeliverySummary) {
@@ -252,7 +379,7 @@ watch(query, value => { clearTimeout(debounce); debounce = setTimeout(() => { se
 watch([state, address, disposition], () => { page.value = 1; selected.value = []; batchIssues.value = []; });
 watch(page, () => { selected.value = []; });
 function reload() { if(!loading.value)void load(); void refreshStatus(); }
-onMounted(() => { void refreshStatus(); timer = setInterval(() => { if (!document.hidden && !batchResuming.value) reload(); }, 4000); });
+onMounted(() => { void refreshStatus(); timer = setInterval(() => { if (!document.hidden && !batchBusy.value) reload(); }, 4000); });
 onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
 </script>
 
@@ -280,46 +407,75 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
           {{ view.label }}
         </button>
       </div>
-      <button
-        type="button"
-        class="quick-attention-filter"
-        :class="{ selected: state === 'attention' && address === 'missing' }"
-        :aria-pressed="state === 'attention' && address === 'missing'"
-        title="一键筛选「需要处理」且尚无可访问地址的任务"
-        @click="toggleAttentionMissingAddress"
-      >
-        需处理 · 尚无可访问地址<span :class="{ 'count-attention': (data?.attentionMissingAddress ?? 0) > 0 }">{{ data?.attentionMissingAddress ?? 0 }}</span>
-      </button>
+      <div class="quick-bar-right">
+        <button
+          type="button"
+          class="quick-delivery-btn"
+          :class="{ selected: batchDeliveryMode }"
+          :aria-pressed="batchDeliveryMode"
+          title="筛选未跨环境交付的站点，批量选择后一键交付；不支持交付的环境将置灰"
+          @click="toggleBatchDeliveryMode"
+        >
+          <Send :size="13" />批量交付<span :class="{ 'count-ready': (data?.deliverableCount ?? 0) > 0 }">{{ data?.deliverableCount ?? 0 }}</span>
+        </button>
+        <button
+          type="button"
+          class="quick-attention-filter"
+          :class="{ selected: state === 'attention' && address === 'missing' }"
+          :aria-pressed="state === 'attention' && address === 'missing'"
+          title="一键筛选「需要处理」且尚无可访问地址的任务"
+          @click="toggleAttentionMissingAddress"
+        >
+          需处理 · 尚无可访问地址<span :class="{ 'count-attention': (data?.attentionMissingAddress ?? 0) > 0 }">{{ data?.attentionMissingAddress ?? 0 }}</span>
+        </button>
+      </div>
     </div>
     <div class="table-toolbar"><label class="search-field"><Search :size="18" /><input v-model="query" placeholder="搜索资源或生成站" aria-label="搜索生成站" /></label><div class="toolbar-actions">
-      <BaseSelect v-model="disposition" size="small" aria-label="归档状态" :options="dispositionFilterOptions" />
-      <BaseSelect v-model="state" size="small" aria-label="交付状态" :options="[{value:'',label:'全部交付状态'},...Object.entries(siteDeliveryStates).map(([value,label])=>({value,label}))]" />
+      <BaseSelect v-model="disposition" size="small" aria-label="归档状态" :options="dispositionFilterOptions" @update:model-value="exitBatchDeliveryMode" />
+      <BaseSelect v-model="state" size="small" aria-label="交付状态" :options="[{value:'',label:'全部交付状态'},...Object.entries(siteDeliveryStates).map(([value,label])=>({value,label}))]" @update:model-value="exitBatchDeliveryMode" />
       <BaseSelect v-if="state === 'attention'" v-model="address" size="small" aria-label="可访问地址" :options="attentionAddressOptions" />
       <button class="icon-button" :disabled="loading" aria-label="刷新生成站" @click="reload"><RefreshCw :size="17" /></button>
     </div></div>
+    <div v-if="batchDeliveryMode && !selectedRows.length" class="batch-delivery-banner">
+      <span>批量交付模式：仅支持跨环境交付的未交付站点可勾选，未配置交付环境或暂不满足条件的站点已置灰。</span>
+      <button type="button" class="text-action" :disabled="batchBusy" @click="toggleBatchDeliveryMode">退出批量交付</button>
+    </div>
     <div v-if="selectedRows.length" class="selection-bar">
       <span>已选 {{ selectedRows.length }} 项</span>
-      <button type="button" class="text-action" :disabled="batchResuming" @click="selected = []">清空选择</button>
-      <span v-if="unconfirmedSelectedRows.length && !canBatchResume" class="selection-hint">所选任务尚未确认原执行停止，请进入详情核查确认后再恢复</span>
+      <button type="button" class="text-action" :disabled="batchBusy" @click="selected = []">清空选择</button>
+      <button v-if="batchDeliveryMode" type="button" class="text-action" :disabled="batchBusy" @click="toggleBatchDeliveryMode">退出批量交付</button>
+      <span v-if="!batchDeliveryMode && canBatchDeliver && nonDeliverableSelectedRows.length" class="selection-hint">另有 {{ nonDeliverableSelectedRows.length }} 项暂不支持交付，将自动跳过</span>
+      <span v-else-if="!batchDeliveryMode && unconfirmedSelectedRows.length && !canBatchResume" class="selection-hint">所选任务尚未确认原执行停止，请进入详情核查确认后再恢复</span>
       <div class="selection-actions">
-        <button v-if="canBatchResume" type="button" class="button primary small" :disabled="batchResuming" @click="runBatchResume">
-          <LoaderCircle v-if="batchResuming" class="spin" :size="15" />
-          <Play v-else :size="15" />
-          {{ batchResumeLabel }}
+        <button v-if="canBatchDeliver" type="button" class="button primary small" :disabled="batchBusy" @click="runBatchDeliver">
+          <LoaderCircle v-if="batchDelivering" class="spin" :size="15" />
+          <Send v-else :size="15" />
+          {{ batchDeliverLabel }}
         </button>
-        <button v-if="canBatchRestore" type="button" class="button secondary small" :disabled="batchResuming" @click="openDisposition(selectedRows, 'active')"><RotateCcw :size="15" />移回在列</button>
-        <button v-if="canBatchDiscard" type="button" class="button secondary small" :disabled="batchResuming" @click="openDisposition(selectedRows, 'discarded')"><Trash2 :size="15" />舍弃</button>
-        <button v-if="canBatchComplete" type="button" class="button small" :class="canBatchResume ? 'secondary' : 'primary'" :disabled="batchResuming" @click="openDisposition(selectedRows, 'completed')"><Check :size="15" />标为已完成</button>
+        <button v-else-if="showDisabledBatchDeliver" type="button" class="button primary small" :disabled="true" :title="disabledBatchDeliverTitle">
+          <Send :size="15" />
+          一键交付
+        </button>
+        <template v-if="!batchDeliveryMode">
+          <button v-if="canBatchResume" type="button" class="button small" :class="canBatchDeliver ? 'secondary' : 'primary'" :disabled="batchBusy" @click="runBatchResume">
+            <LoaderCircle v-if="batchResuming" class="spin" :size="15" />
+            <Play v-else :size="15" />
+            {{ batchResumeLabel }}
+          </button>
+          <button v-if="canBatchRestore" type="button" class="button secondary small" :disabled="batchBusy" @click="openDisposition(selectedRows, 'active')"><RotateCcw :size="15" />移回在列</button>
+          <button v-if="canBatchDiscard" type="button" class="button secondary small" :disabled="batchBusy" @click="openDisposition(selectedRows, 'discarded')"><Trash2 :size="15" />舍弃</button>
+          <button v-if="canBatchComplete" type="button" class="button small" :class="(canBatchResume || canBatchDeliver) ? 'secondary' : 'primary'" :disabled="batchBusy" @click="openDisposition(selectedRows, 'completed')"><Check :size="15" />标为已完成</button>
+        </template>
       </div>
     </div>
     <div v-if="batchIssues.length" class="batch-issues" role="alert">
       <div class="batch-issues-head">
-        <strong>以下 {{ batchIssues.length }} 项未自动恢复</strong>
+        <strong>{{ batchIssueKind === 'delivery' ? `以下 ${batchIssues.length} 项未能发起交付` : `以下 ${batchIssues.length} 项未自动恢复` }}</strong>
         <button type="button" class="icon-button" aria-label="关闭提示" @click="batchIssues = []"><X :size="16" /></button>
       </div>
       <ul class="batch-issues-list">
         <li v-for="item in batchIssues" :key="item.id">
-          <a v-if="item.detailTaskId" class="task-title" :href="`#/tasks/${item.detailTaskId}?tab=execution`">{{ item.resourceName }}</a>
+          <a v-if="item.detailTaskId" class="task-title" :href="`#/tasks/${item.detailTaskId}?tab=${batchIssueKind === 'delivery' ? 'delivery' : 'execution'}`">{{ item.resourceName }}</a>
           <span v-else class="batch-issue-name">{{ item.resourceName }}</span>
           <span>{{ item.reason }}</span>
         </li>
@@ -327,13 +483,14 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
     </div>
     <p v-if="error" class="alert error" role="alert">{{ error }}<button class="text-action" @click="reload">重试</button></p>
     <p v-if="loading && !data" class="section-loading"><LoaderCircle class="spin" :size="18" />正在加载生成站…</p>
-    <div v-if="data" class="table-scroll" :aria-busy="loading"><table class="task-table site-table"><thead><tr><th class="checkbox-cell"><input type="checkbox" aria-label="选择本页全部生成站" :checked="checked" :indeterminate.prop="partial" :disabled="!rows.length || batchResuming" @change="toggleAll" /></th><th>任务与站点</th><th>任务状态</th><th>评分</th><th>总成本</th><th>最近更新</th><th>快捷操作</th></tr></thead><tbody>
-      <tr v-for="row in data.items" :key="row.id" :class="{ 'row-selected': selected.includes(row.id) }">
-        <td class="checkbox-cell"><input v-model="selected" type="checkbox" :value="row.id" :disabled="batchResuming" :aria-label="`选择 ${row.resourceName}`" /></td>
+    <div v-if="data" class="table-scroll" :aria-busy="loading"><table class="task-table site-table"><thead><tr><th class="checkbox-cell"><input type="checkbox" aria-label="选择本页全部生成站" :checked="checked" :indeterminate.prop="partial" :disabled="!selectableRows.length || batchBusy" @change="toggleAll" /></th><th>任务与站点</th><th>任务状态</th><th>评分</th><th>总成本</th><th>最近更新</th><th>快捷操作</th></tr></thead><tbody>
+      <tr v-for="row in data.items" :key="row.id" :class="{ 'row-selected': selected.includes(row.id), 'row-delivery-disabled': batchDeliveryMode && !isRowDeliverable(row) }">
+        <td class="checkbox-cell"><input v-model="selected" type="checkbox" :value="row.id" :disabled="rowCheckboxDisabled(row)" :title="rowCheckboxTitle(row)" :aria-label="`选择 ${row.resourceName}`" /></td>
         <td>
           <div class="site-title-row">
             <a class="task-title" :href="row.detailTaskId ? '#/tasks/' + row.detailTaskId : '#/resources/' + row.resourceId">{{ row.resourceName }}</a>
-            <span class="site-meta-inline">{{ scenarios[row.scenario] }} · {{ scopeName(row.scope) }}</span>
+            <span class="site-meta-inline">{{ scenarios[row.scenario] }} · {{ scopeName(row.scope) }}{{ row.environmentName ? ' · ' + row.environmentName : '' }}</span>
+            <span v-if="batchDeliveryMode && !isRowDeliverable(row)" class="delivery-ineligible-tag" :title="row.deliveryAction?.reason">{{ row.deliveryAction?.reason || '不支持交付' }}</span>
             <span v-if="row.disposition" class="disposition-badge" :class="row.disposition.state" :title="dispositionTitle(row)">{{ dispositionStateNames[row.disposition.state] }}</span>
           </div>
           <div v-if="siteLinks(row).primary" class="site-address-row">
@@ -361,7 +518,7 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
               v-if="canDirectResumeRow(row)"
               type="button"
               class="button primary small row-action-btn"
-              :disabled="batchResuming || resumingRowId === row.id"
+              :disabled="batchBusy || resumingRowId === row.id"
               @click="runSingleResume(row)"
             >
               <LoaderCircle v-if="resumingRowId === row.id" class="spin" :size="13" />
@@ -398,12 +555,22 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
 <style scoped>
 .quick-view-bar{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:16px 24px 0}
 .quick-view-pills{flex-wrap:wrap}
-.quick-attention-filter{min-height:34px;padding:5px 12px;display:inline-flex;align-items:center;gap:7px;border-radius:9px;border:1px solid #e2e8f2;background:#fff;color:#526079;font-size:12px;font-weight:600;white-space:nowrap;transition:border-color .15s,background .15s,color .15s,box-shadow .15s}
+.quick-bar-right{display:flex;align-items:center;gap:8px;flex-wrap:wrap}
+.quick-attention-filter,.quick-delivery-btn{min-height:34px;padding:5px 12px;display:inline-flex;align-items:center;gap:7px;border-radius:9px;border:1px solid #e2e8f2;background:#fff;color:#526079;font-size:12px;font-weight:600;white-space:nowrap;transition:border-color .15s,background .15s,color .15s,box-shadow .15s}
 .quick-attention-filter:hover:not(.selected){border-color:#d6b68a;background:#fffaf2;color:#995608}
 .quick-attention-filter.selected{border-color:#e7be80;background:#fff4e5;color:#995608;box-shadow:0 1px 3px #9956081a}
-.quick-attention-filter>span{font-size:11px;padding:1px 6px;min-width:20px;text-align:center;border-radius:5px;background:#e8eef7;color:#71809b;font-weight:600;font-variant-numeric:tabular-nums}
+.quick-delivery-btn:hover:not(.selected){border-color:#93c5fd;background:#f4f8ff;color:#1d4ed8}
+.quick-delivery-btn.selected{border-color:#3b82f6;background:#eff6ff;color:#1d4ed8;box-shadow:0 1px 3px #1d4ed81a}
+.quick-attention-filter>span,.quick-delivery-btn>span{font-size:11px;padding:1px 6px;min-width:20px;text-align:center;border-radius:5px;background:#e8eef7;color:#71809b;font-weight:600;font-variant-numeric:tabular-nums}
 .quick-attention-filter>span.count-attention{background:#fce8c8;color:#995608}
 .quick-attention-filter.selected>span.count-attention{background:#fff;color:#995608}
+.quick-delivery-btn>span.count-ready{background:#dbeafe;color:#1d4ed8}
+.quick-delivery-btn.selected>span.count-ready{background:#fff;color:#1d4ed8}
+.batch-delivery-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 24px;background:#f4f8ff;border-top:1px solid #dce8fd;color:#274472;font-size:12.5px}
+.row-delivery-disabled{background:#fafbfd}
+.row-delivery-disabled td:not(:first-child){opacity:.62}
+.row-delivery-disabled input[type="checkbox"]:disabled{cursor:not-allowed}
+.delivery-ineligible-tag{display:inline-flex;align-items:center;padding:2px 7px;border-radius:999px;background:#eef2f7;color:#64748b;font-size:11px;font-weight:500;line-height:1.4;white-space:nowrap}
 .selection-actions{margin-left:auto;display:flex;align-items:center;gap:10px;flex-wrap:wrap}
 .selection-hint{font-size:12px;color:#995608}
 .batch-issues{padding:12px 24px;background:#fffaf2;border-top:1px solid #f4dfb8;color:#6e4714;font-size:12px}

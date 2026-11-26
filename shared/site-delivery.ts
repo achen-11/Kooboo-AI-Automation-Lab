@@ -28,6 +28,28 @@ export const siteDeliveryAddressFilters = {
   accessible: '已有可访问地址',
 } as const;
 export type SiteDeliveryAddressFilter = keyof typeof siteDeliveryAddressFilters;
+export const siteDeliveryDeliveryFilters = {
+  undelivered: '尚未跨环境交付',
+  deliverable: '当前可一键交付',
+} as const;
+export type SiteDeliveryDeliveryFilter = keyof typeof siteDeliveryDeliveryFilters;
+export type SiteDeliveryActionCode =
+  | 'ready'
+  | 'already-delivered'
+  | 'unsupported-env'
+  | 'missing-token'
+  | 'archived'
+  | 'in-progress'
+  | 'not-ready'
+  | 'require-passed'
+  | 'missing-site-url'
+  | 'domain-reserved';
+export interface SiteDeliveryAction {
+  eligible: boolean;
+  taskId?: string;
+  code: SiteDeliveryActionCode;
+  reason?: string;
+}
 export type SiteDeliveryRecoveryAction = 'resume' | 'adjust-site-names' | 'confirm-stopped' | 'handoff-conversation';
 export interface SiteDeliveryRecovery {
   action: SiteDeliveryRecoveryAction;
@@ -88,9 +110,10 @@ export const usageStageNames: Record<UsageBreakdownStage, string> = {
 };
 export interface SiteDeliverySummary {
   id: string; generatedSiteId: string | null; resourceId: string; resourceName: string;
-  siteUrl: string; environmentId: string; scenario: Scenario; scope: Scope; detailTaskId: string | null;
+  siteUrl: string; environmentId: string; environmentName?: string; scenario: Scenario; scope: Scope; detailTaskId: string | null;
   state: keyof typeof siteDeliveryStates; reason: string; targetScore: number;
   recovery?: SiteDeliveryRecovery;
+  deliveryAction?: SiteDeliveryAction;
   delivery?: SiteDeliveryTarget;
   report: TaskSummary | null; usage: UsageSummary;
   stages: { stage: UsageBreakdownStage; usage: UsageSummary }[];
@@ -98,4 +121,4 @@ export interface SiteDeliverySummary {
   resourceDisposition?: ItemDisposition;
   taskCount: number; createdAt: number; updatedAt: number;
 }
-export interface SiteDeliveryPage { items: SiteDeliverySummary[]; page: number; pages: number; total: number; pageSize: number; activeTotal?: number; attentionMissingAddress?: number }
+export interface SiteDeliveryPage { items: SiteDeliverySummary[]; page: number; pages: number; total: number; pageSize: number; activeTotal?: number; attentionMissingAddress?: number; deliverableCount?: number; undeliveredCount?: number }

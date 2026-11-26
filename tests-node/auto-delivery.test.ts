@@ -1653,3 +1653,65 @@ test('worker followup evaluate action respects autoEvaluate=false and queues dir
     await f.close();
   }
 });
+
+test('shouldAutoDeliver supports homepage tasks with autoDelivery=undefined when environment auto delivery is enabled', async () => {
+  const f = await fixture();
+  let worker: AutomationWorker | undefined;
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(env =>
+        env.id === f.envId
+          ? { ...env, delivery: { ...env.delivery!, enabled: true, auto: true, requirePassed: false, token: 'secret-migrate-token' } }
+          : env,
+      ),
+    });
+    f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true, autoEvaluate: false });
+
+    const site1 = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'HomepageUndefined', url: 'https://hk-home-undef.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(site1);
+    const gen1 = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: site1.id, autoEvaluate: false, requirements: '' }, f.vault.automation())[0];
+    assert.equal(gen1.autoDelivery, undefined);
+
+    const site2 = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'HomepageFalse', url: 'https://hk-home-false.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(site2);
+    const gen2 = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: site2.id, autoEvaluate: false, autoDelivery: false, requirements: '' }, f.vault.automation())[0];
+    assert.equal(gen2.autoDelivery, false);
+
+    let completedCount = 0;
+    worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      f.directory,
+      {
+        generation: async (task, store) => {
+          store.beginSiteChange(task);
+          completedCount++;
+          if (completedCount >= 2) {
+            f.vault.updateAutomation({ ...f.vault.automation(), enabled: false });
+          }
+        },
+        evaluation: async () => {},
+      },
+      () => true,
+    );
+
+    await worker.tick();
+    for (let i = 0; i < 80; i++) {
+      const t1 = f.automationStore.task(gen1.id)!;
+      const t2 = f.automationStore.task(gen2.id)!;
+      if (t1.status === 'completed' && t1.delivery && t2.status === 'completed') break;
+      await new Promise(r => setTimeout(r, 15));
+    }
+    const done1 = f.automationStore.task(gen1.id)!;
+    const done2 = f.automationStore.task(gen2.id)!;
+    assert.equal(done1.status, 'completed');
+    assert.equal(done1.delivery?.status, 'queued');
+    assert.equal(done2.status, 'completed');
+    assert.equal(done2.delivery, undefined);
+  } finally {
+    await worker?.stop();
+    await f.close();
+  }
+});

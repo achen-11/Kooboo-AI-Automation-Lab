@@ -3,11 +3,13 @@ import { ensureTemplateAnalysis } from './template-analysis.js';
 import {
   effectiveTemplateUsageMode,
   requiredKoobooSandboxCapability,
+  shouldEvaluateAfterGeneration,
   type AutomationTask,
   type InputVersion,
   type MaterialFile,
   type RequiredKoobooSandboxCapability,
 } from '../../shared/automation.js';
+import { resolveEnvironmentDelivery } from '../lib/delivery-config.js';
 import {
   buildSiteUiHardRulesPrompt,
   buildClonedContentImageGuidance,
@@ -549,6 +551,20 @@ export async function executeGeneration(
       );
       store.put(task);
     };
+    const syncAutoDeliveryAfterCloneFallback=()=>{
+      if(!task.generation?.cloneEnvironmentFallback)return;
+      const currentDelivery=resolveEnvironmentDelivery(vault.get(),task.environmentId);
+      const effectiveAutoEval=shouldEvaluateAfterGeneration(task,vault.automation());
+      if(currentDelivery?.enabled){
+        if(task.autoDelivery===undefined&&currentDelivery.token&&currentDelivery.auto&&(!effectiveAutoEval||Boolean(task.rule))){
+          task.autoDelivery=true;
+          store.event(task.id,'已按回退环境默认策略启用完成后自动跨环境交付');
+        }
+      }else if(task.autoDelivery===true){
+        delete task.autoDelivery;
+        store.event(task.id,'回退环境未启用跨环境交付，已关闭自动交付标记');
+      }
+    };
     const tryDegradeToMaterialsOnCloneFailure=():boolean=>{
       const currentGen=task.generation!;
       if(!currentGen.fallbackToMaterialsOnCloneFailure)return false;
@@ -556,7 +572,10 @@ export async function executeGeneration(
       if(!availableMaterials.length)return false;
       currentGen.skipSourceTransfer=true;
       currentGen.transferComplete=true;
-      if(currentGen.cloneEnvironmentFallback)currentGen.cloneEnvironmentFallback.outcome='degraded-to-materials';
+      if(currentGen.cloneEnvironmentFallback){
+        currentGen.cloneEnvironmentFallback.outcome='degraded-to-materials';
+        syncAutoDeliveryAfterCloneFallback();
+      }
       if(currentGen.sourceSandbox)currentGen.sourceSandbox.complete=true;
       const degradeMarker='原站克隆已自动降级为跳过：请直接以已导入的资料包作为业务事实来源，不要依赖原站克隆页面。';
       if(!task.message.includes(degradeMarker)){
@@ -711,7 +730,10 @@ export async function executeGeneration(
         throw zeroPageTransferError(input.contentUrl,site.id,sourceSandbox.sandbox,Boolean(task.generation.cloneEnvironmentFallback));
       }
       sourceSandbox.complete=true;task.generation.sourceSandbox=sourceSandbox;task.generation.transferComplete=true;
-      if(task.generation.cloneEnvironmentFallback)task.generation.cloneEnvironmentFallback.outcome='succeeded';
+      if(task.generation.cloneEnvironmentFallback){
+        task.generation.cloneEnvironmentFallback.outcome='succeeded';
+        syncAutoDeliveryAfterCloneFallback();
+      }
       store.put(task);
       store.event(
         task.id,
@@ -747,7 +769,10 @@ export async function executeGeneration(
             throw zeroPageTransferError(input.contentUrl,site.id,undefined,Boolean(task.generation.cloneEnvironmentFallback));
           }
           task.generation.transferComplete=true;
-          if(task.generation.cloneEnvironmentFallback)task.generation.cloneEnvironmentFallback.outcome='succeeded';
+          if(task.generation.cloneEnvironmentFallback){
+            task.generation.cloneEnvironmentFallback.outcome='succeeded';
+            syncAutoDeliveryAfterCloneFallback();
+          }
           store.put(task);
           store.event(task.id,'已确认目标站存在导入页面，继续准备参考站');
         }else{
@@ -769,7 +794,10 @@ export async function executeGeneration(
             throw zeroPageTransferError(input.contentUrl,site.id,undefined,Boolean(task.generation.cloneEnvironmentFallback));
           }
           task.generation.transferComplete=true;
-          if(task.generation.cloneEnvironmentFallback)task.generation.cloneEnvironmentFallback.outcome='succeeded';
+          if(task.generation.cloneEnvironmentFallback){
+            task.generation.cloneEnvironmentFallback.outcome='succeeded';
+            syncAutoDeliveryAfterCloneFallback();
+          }
           store.put(task);
           store.event(
             task.id,

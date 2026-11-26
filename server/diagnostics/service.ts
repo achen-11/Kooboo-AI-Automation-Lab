@@ -1,6 +1,6 @@
 import { createHash, randomUUID } from 'node:crypto';
 import { DatabaseSync } from 'node:sqlite';
-import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, writeFileSync } from 'node:fs';
+import { existsSync, mkdirSync, readFileSync, readdirSync, renameSync, rmSync, statSync, writeFileSync } from 'node:fs';
 import { readdir, rename, rm } from 'node:fs/promises';
 import { dirname, resolve } from 'node:path';
 import { platform, release, arch } from 'node:os';
@@ -32,7 +32,7 @@ function packageVersion(name: string) {
   }
   return 'unavailable';
 }
-export interface DiagnosticDependencies { siteExport?: (request: SiteExportRequest) => Promise<number> }
+export interface DiagnosticDependencies { siteExport?: (request: SiteExportRequest) => Promise<number>; cleanupIntervalMs?: number }
 
 /** Export work is independent of generation workers. No task state or budget is modified. */
 export class DiagnosticExports {
@@ -40,18 +40,33 @@ export class DiagnosticExports {
   private pending: { job: DiagnosticExport; snapshot: DiagnosticSnapshot }[] = [];
   private controllers = new Map<string, AbortController>();
   private running?: Promise<void>; private closing = false;
+  private cleanupTimer?: ReturnType<typeof setInterval>;
   readonly root: string;
   get busy() { return Boolean(this.running) || this.pending.length > 0; }
   constructor(readonly store: AutomationStore, readonly vault: Vault, readonly directory: string, private deps: DiagnosticDependencies = {}) {
     this.root = resolve(directory, 'diagnostic-exports'); mkdirSync(this.root, { recursive: true, mode: 0o700 });
+    const now = Date.now();
     for (const entry of readdirSync(this.root, { withFileTypes: true })) {
       if (!entry.isDirectory() || entry.isSymbolicLink() || !uuid.test(entry.name)) continue;
+      const dir = resolve(this.root, entry.name);
       try {
-        const job = JSON.parse(readFileSync(resolve(this.root, entry.name, 'state.json'), 'utf8')) as DiagnosticExport;
+        const job = JSON.parse(readFileSync(resolve(dir, 'state.json'), 'utf8')) as DiagnosticExport;
         if (job.id !== entry.name) continue;
         if (diagnosticActive(job.status)) { job.status = 'failed'; job.error = '服务重启，原导出未完成；请重新导出。原任务未受影响。'; job.phase = '导出中断'; this.save(job); }
+        if (terminal(job) && job.expiresAt <= now) {
+          try { rmSync(dir, { recursive: true, force: true }); continue; } catch { /* Retain metadata if removal fails on startup. */ }
+        }
         this.jobs.set(job.id, job);
-      } catch { /* Incomplete export metadata is never served as an archive. */ }
+      } catch {
+        try {
+          if (now - statSync(dir).mtimeMs >= lifetime) rmSync(dir, { recursive: true, force: true });
+        } catch { /* Incomplete export metadata is never served as an archive. */ }
+      }
+    }
+    const interval = deps.cleanupIntervalMs ?? 60 * 60_000;
+    if (interval > 0) {
+      this.cleanupTimer = setInterval(() => { void this.cleanup().catch(() => {}); }, interval);
+      this.cleanupTimer.unref();
     }
   }
   private path(job: DiagnosticExport, file: string) { return resolve(this.root, job.id, file); }
@@ -236,10 +251,17 @@ export class DiagnosticExports {
     finally { await rm(siteZip, { force: true }).catch(() => {}); }
   }
   private async cleanup() {
-    for (const job of this.jobs.values()) if (terminal(job) && job.expiresAt <= Date.now()) { await rm(this.path(job, ''), { recursive: true, force: true }); this.jobs.delete(job.id); }
+    const now = Date.now();
+    for (const job of this.jobs.values()) {
+      if (!terminal(job) || job.expiresAt > now) continue;
+      const dir = this.path(job, '');
+      await rm(dir, { recursive: true, force: true }).catch(() => {});
+      if (!existsSync(dir)) this.jobs.delete(job.id);
+    }
   }
   async close() {
     this.closing = true;
+    if (this.cleanupTimer) { clearInterval(this.cleanupTimer); this.cleanupTimer = undefined; }
     for (const item of this.pending) { item.job.status = 'cancelled'; item.job.phase = '服务停止，排障包未导出'; this.save(item.job); }
     this.pending = []; for (const controller of this.controllers.values()) controller.abort(new Error('导出服务停止')); await this.running;
   }

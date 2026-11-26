@@ -14,7 +14,7 @@ import { executeFollowup, type FollowupExecute } from './followup.js';
 import { advanceOptimization, applyOptimizationAction, optimizationBudgetReason, stopOptimization } from './optimization.js';
 import { ModelBudgetExceeded, retainAccountReservations } from './request-budget.js';
 import { cleanupGenerationContext } from './generation-context.js';
-import { trimTaskGenerationBrowserCache } from './generation-cache.js';
+import { removeTaskGenerationBrowserProfile } from './generation-cache.js';
 import { koobooClient } from './kooboo.js';
 import { autonomousActionStrategy, autonomousReady, autonomousWindowRemaining, canReplayGeneration, followupAccountState, isAutonomousRetry, isConfirmedCloneFailure, isModelBillingOrAuthError, nextAutonomousWindow, recordAutonomousAttempt } from './autonomy.js';
 import { inMaintenance } from '../updates/maintenance.js';
@@ -101,7 +101,7 @@ export class AutomationWorker{
     if(!config?.enabled)return false;
     const explicit=evalTask.autoDelivery??root?.autoDelivery;
     if(explicit!==undefined)return explicit;
-    return Boolean(config.auto&&evalTask.scope==='site'&&['migration','upgrade'].includes(evalTask.scenario));
+    return Boolean(config.auto);
   }
   private maybeQueueAutoDelivery(evalTask:AutomationTask,root?:AutomationTask){
     if(!this.shouldAutoDeliver(evalTask,root))return;
@@ -246,8 +246,8 @@ export class AutomationWorker{
     }finally{
       clearInterval(heartbeat);
       if(timer)clearTimeout(timer);
-      if(task.kind==='generation'&&task.stopped&&['completed','cancelled'].includes(task.status))
-        await trimTaskGenerationBrowserCache(this.directory,task.id,()=>this.store.event(task.id,'生成浏览器已关闭；可再生缓存未能全部清理，将在后续维护时重试。'));
+      if(task.stopped&&['completed','cancelled'].includes(task.status))
+        await removeTaskGenerationBrowserProfile(this.directory,task.id,()=>this.store.event(task.id,'执行浏览器已关闭；临时浏览器目录未能全部清理，将在后续维护时重试。'));
       // A confirmed cancellation may clean only this task's registered copies.
       // Interruptions retain files; they may still be needed for recovery.
       if(task.kind==='generation'&&task.status==='cancelled'&&task.stopped&&task.generatedSiteId){
@@ -306,16 +306,16 @@ export class AutomationWorker{
       if(task.optimization?.state==='planning')optimizationEvidence(task,this.store,this.directory);
       followup.attempts++;this.store.put(task);this.store.event(task.id,`AI 跟进第 ${followup.attempts} 次，阶段：${task.stage||task.kind}`);
       const action=await this.followupExecute(task,this.store,this.vault,this.directory,controller.signal);
-      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){task.stopped=followup.executionStopped;if(task.stopped){task.status='cancelled';this.store.put(task);if(task.kind==='generation')await trimTaskGenerationBrowserCache(this.directory,task.id);}else this.interrupt(task,'取消时原执行仍未确认停止。',['检查原执行并确认停止后释放名额。']);return;}
+      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){task.stopped=followup.executionStopped;if(task.stopped){task.status='cancelled';this.store.put(task);await removeTaskGenerationBrowserProfile(this.directory,task.id);}else this.interrupt(task,'取消时原执行仍未确认停止。',['检查原执行并确认停止后释放名额。']);return;}
       controller.signal.throwIfAborted();task.stopped=followup.executionStopped;followup.consecutiveTransportFailures=0;delete followup.manualResume;followup.lastAction=action;
       this.applyAction(task,action);
-      if(task.kind==='generation'&&task.stopped&&task.status==='completed')await trimTaskGenerationBrowserCache(this.directory,task.id);
+      if(task.stopped&&task.status==='completed')await removeTaskGenerationBrowserProfile(this.directory,task.id);
     }catch(error){
       task.stopped=error instanceof UnconfirmedStop?false:followup.executionStopped;
       const reason=controller.signal.reason||error;const detail=reason instanceof Error?reason.message:'跟进 Agent 执行失败';
       this.store.event(task.id,'AI 跟进未完成：'+detail);
       const zeroTokenTransport=!controller.signal.aborted&&isFollowupTransportDisconnect(reason)&&followup.tokens===tokensBefore&&followup.observations.length===observationsBefore;
-      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')&&task.stopped){task.status='cancelled';this.store.put(task);if(task.kind==='generation')await trimTaskGenerationBrowserCache(this.directory,task.id);}
+      if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')&&task.stopped){task.status='cancelled';this.store.put(task);await removeTaskGenerationBrowserProfile(this.directory,task.id);}
       else if(['cancelling','cancelled'].includes(this.store.task(task.id)?.status||'')){this.interrupt(task,'取消时原执行仍未确认停止：'+detail,['检查原执行并确认停止后释放名额。']);}
       else if(error instanceof UnconfirmedStop){followup.executionStopped=false;this.interrupt(task,detail,['确认原浏览器已停止后释放名额，再恢复本任务。'],followup.observations);}
       else if(this.retainCollectionShutdown(task)){}

@@ -654,7 +654,7 @@ export function buildTaskWorkflowGraph(
     envDeliveryEnabled &&
       (autoDeliveryFlag !== undefined
         ? autoDeliveryFlag
-        : envConfig?.delivery?.auto && root.scope === 'site' && ['migration', 'upgrade'].includes(root.scenario)),
+        : envConfig?.delivery?.auto),
   );
   const showDelivery = Boolean(del || autoDeliveryFlag || autoDeliveryExpected);
 

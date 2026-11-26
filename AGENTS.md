@@ -1,9 +1,8 @@
 # 项目协作约定
 
 - 当前目录是正在维护的 Kooboo AI Automation Lab，由 Vue 前端、独立 Node.js API 和后台 Worker 组成。统一自动化平台的功能在此维护。同级目录 `../site_evaluator_impl` 是原独立评测平台，不要为 Automation Lab 的功能修改它；更早的 `../ai_site_evaluator` 仅供历史参考。
-- 修改运行方式、部署方式或资源目录结构前，先阅读 `README.md` 和 `.kooboo-ai/specs/frontend.md`。
+- 修改运行方式、部署方式或资源目录结构前，先阅读 `README.md`。
 - 服务端代码直接维护在 `server/`，共享接口与数据约定放在 `shared/`，针对性测试放在 `tests-node/`，评测 SOP 文档放在 `sop/`。旧评测模块保留可配置的 OpenAI 兼容执行器；统一自动化模块使用用户已确认的 Codex SDK，支持配置 Responses 接口基础地址、模型和加密保存的 API Key，默认模型为 `deepseek-flash-1017`。禁止修改全局 Codex 配置。
-- 原有 `src/api/`、`src/code/`、`src/job/` 下的 Kooboo 运行资源、原生绑定类型和过时的站点发布脚本均已移除。旧实现请查阅 Git 历史，不要恢复这些资源，也不要使用 `kb push` 部署。
 - 运行数据、API Key、环境令牌、`.env`、`.data/`、密钥库密钥及生成的 `kooboo.d.ts` 不得进入 Git 或日志。从临时工作区复制源码时，必须保留本地已有的 `.data/` 及其主密钥。
 - 本地配置加密保存在 `.data/` 中；备份必须同时包含数据和主密钥。构建时不得覆盖已有运行配置或重新生成密钥。
 - 前端自动建立本地 HttpOnly 会话，不要为这个仅供本机使用的工作区增加手动进入页或登录页。服务默认绑定 `127.0.0.1:4180`；生产网络部署和用户身份认证需要另行设计。

@@ -20,6 +20,7 @@ import { deliveryStatusNames } from '../../shared/site-delivery.js';
 import type { TaskSupplementBatch } from '../../shared/supplement.js';
 import {
   canAdjustTaskSiteNames,
+  canAnswerPendingInput,
   canHandoffGenerationConversation,
   taskRecoveryAction,
 } from '../../shared/task-presentation.js';
@@ -273,6 +274,7 @@ function buildHumanBlocker(
       kind: task.kind,
       canAdjustSiteNames: false,
       canHandoffConversation: canHandoffGenerationConversation(task),
+      canAnswerPendingInput: canAnswerPendingInput(task),
     }),
     needsStopConfirm: !task.stopped && ['pending', 'interrupted'].includes(task.status),
   };

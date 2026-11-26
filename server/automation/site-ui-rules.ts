@@ -83,7 +83,7 @@ export interface SiteUiHardRulesOptions {
 }
 
 const CONTINUATION_REMINDER =
-  '【站点 UI 与去重防回归提示（v1.2）】继续遵守首屏完整（含浮层卡）、图文等高（relative 外壳 + absolute object-fit:cover，覆写参考站失衡）、可见字≥12px（覆写10–11px小字）、<html lang>匹配目标语种（禁原生 <input type="date">）、禁假素材/编造及同页去重（H32，内容图≤1、按场景换词）与防404锚点约束；严禁改动已达标稳定区段。';
+  '【站点 UI 防回归（v1.2）】遵守首屏完整、图文等高（relative+absolute cover）、可见字≥12px（覆写10–11px小字）、<html lang>匹配（禁 <input type="date">）、禁编造、H32 去重与锚点；严禁改动已达标稳定区段；收尾禁调 ask_user_input 询问打开浏览器/页面做视觉验收。';
 
 /**
  * Builds compact, high-signal UI layout and deduplication hard rules (v1.2)
@@ -113,15 +113,16 @@ export function buildSiteUiHardRulesPrompt(options: SiteUiHardRulesOptions): str
         : '保留参考视觉 DNA（字体气质、色板、圆角、图像风格与签名元素），先在内部规划各 section 的图文高度关系与联系信息落点，直接一次完成代码落地（不要停在分析阶段）。';
 
   return [
-    `【企业官网 UI 与版式硬约束（${SITE_UI_RULES_VERSION}，优先级：可读性>结构>平衡>一致性>视觉还原>动效）】`,
-    `1. 单首页与清理：唯一首页 /，禁将旧 / 改名备份（应原位改或删后重建防默认页漂移），删 Home 2/3、Demos、All Pages 及 Lorem ipsum/Edit me/Your text here；${scopeLine}`,
-    '2. 首屏安全线（1440×900/1280×800/390×844）：eyebrow+H1+副文+主CTA+主图完整；CTA底 ≤ vh−40（860/760）、主图与浮层卡片底 ≤ vh、文本 ≤640/560px、H1顶 ≥ 导航底+32；文字中心落 44–56%（grid;align-content:center，禁 flex-end/100vh 底对齐）；首屏同年/定位标签最多1次；超限精炼副文或微缩 H1（≥40px）。',
-    '3. 标题行数与断行：H1 ≤3 行（优先2），H2/H3/卡题 ≤2 行，标签 1 行；末行禁单英词/单汉字（text-wrap:balance + max-width + &nbsp;），4 行即缩字号/加宽/精简，禁 line-clamp 截断。',
-    '4. 图文等高与纵排多图：双栏高差 ≤ max(48px,短列8%)；媒体列 position:relative;min-height:100% + img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}，禁仅 height:100%；文高÷单图高（4:3按0.75×列宽）>1.4 拆2图、>2.2 拆3图（≥180px、gap:16–24px），>2.8 用 sticky/拆节，禁小图配长文；参考站失衡仍须按此重构。',
-    '5. 图文可见及选图：正文/按钮对比 ≥4.5:1、大字 ≥3:1；压字用方向性遮罩（文字侧55–70%、主体侧≤20%，禁全图>70%压黑），全屏图文占宽 ≤52%；图 opacity ≥0.6 且 object-fit:cover；Hero 主图匹配定位，<600px 老图禁铺大横幅/大卡（改小卡/图文横排），资源本地化禁外部/http://热链。',
-    '6. 反空旷与保真：空白 ≤40%、短列 ≥75%、内容占高 ≥50%、连续空白 ≤240px；缺 Logo/指标素材删槽位或改文字信任条，禁灰白实拍图充 Logo 墙及硬凑数字；多电话（座机+24/7热线）全保留标用途并用 tel:/mailto:；按「旧站/资料事实→补原站/资料实图（无图再用 imagePlaceholder）→调版式→减高度」修复，禁捏造统计数字或客户证言。',
-    '7. 组件与本地化：可见字≥12px（覆写参考站10–11px小字；正文≥14、按钮≥14、页脚≥13文本列）；≥1024吸顶导航（64–80px、禁汉堡）；卡等高 CTA 贴底、网格无空洞、空数据隐藏；价格表≥1024横3列；按钮≤3类、每屏主CTA≤1；表单含说明、label在上、框高44–48px；暗色设 color-scheme:dark；8pt间距全站一档（96/120/160）；无横溢；动效仅 transform/opacity（≤800ms、≤24px、prefers-reduced-motion 且无JS可见）；<html lang>匹配主语种，非中文站禁中文及原生 <input type="date">。',
-    '8. 同页去重（H32，轮播加 aria-hidden）：一次完整+一次精简——电话/邮箱≤3（正文≤1）、地址/时间≤2（正文≤1）、相同 CTA≤3（正文≤2，按区块换场景词）、同段/标题 0 重复、内容图≤1（禁 Hero 与下方复用同图）、首屏同标签≤1；Header 有号 Hero 不放号；Contact 完整 Footer 仅精简行。',
+    `【企业官网 UI 与版式硬约束（${SITE_UI_RULES_VERSION}：可读性>结构>平衡>一致性>视觉还原>动效）】`,
+    `1. 单首页与清理：唯一首页 /，禁将旧 / 改名备份（原位改或删后重建防默认页漂移），删 Home 2/3、Demos、All Pages 及 Lorem ipsum/Edit me/Your text here；${scopeLine}`,
+    '2. 首屏安全线（1440×900/1280×800/390×844）：eyebrow+H1+副文+主CTA+主图完整；CTA底 ≤ vh−40（860/760）、主图与浮层卡片底 ≤ vh、文本 ≤640/560px、H1顶 ≥ 导航底+32；文字中心落 44–56%（grid;align-content:center，禁底对齐/100vh）；首屏同年/定位标签最多1次；超限精炼副文或缩H1（≥40px）。',
+    '3. 标题与断行：H1 ≤3 行（优先2），H2/H3/卡题 ≤2 行，标签1行；末行禁单英词/单汉字（text-wrap:balance + max-width + &nbsp;），4行即缩字号/加宽/精简，禁 line-clamp 截断。',
+    '4. 图文等高与纵排：双栏高差 ≤ max(48px,短列8%)；媒体列 position:relative;min-height:100% + img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}（禁仅 height:100%）；文高÷单图高（4:3≈0.75宽）>1.4拆2图、>2.2拆3图（≥180px、gap16–24），>2.8用sticky/拆节，禁小图配长文；参考站失衡仍须按此重构。',
+    '5. 图文可见及选图：正文/按钮对比 ≥4.5:1、大字 ≥3:1；压字用方向性遮罩（文字侧55–70%、主体侧≤20%），全屏图文占宽 ≤52%；图 opacity ≥0.6 且 object-fit:cover；Hero 主图匹配定位，<600px 老图禁铺大横幅/大卡（改小卡/图文横排），资源本地化禁外部/http://热链。',
+    '6. 反空旷与保真：空白≤40%、短列≥75%、内容≥50%、连续空白≤240px；缺Logo/指标删槽位或改文字条，禁灰白实拍图充 Logo 墙及硬凑数字；多电话（座机+24/7热线）全保留标用途并用 tel:/mailto:；按「事实→补实图（无图再用 imagePlaceholder）→调版式→减高度」修复，禁捏造统计数字或客户证言。',
+    '7. 组件与本地化：可见字≥12px（覆写参考站10–11px小字；正文/按钮≥14、页脚≥13文本列）；≥1024吸顶导航（64–80px、禁汉堡）；卡等高CTA贴底、网格无空洞、空数据隐藏；价格表≥1024横3列；按钮≤3类、每屏主CTA≤1；表单含说明、label在上、框高44–48px；暗色设 color-scheme:dark；8pt间距统一档（96/120/160）；无横溢；动效仅 transform/opacity（≤800ms、≤24px、reduced-motion 且无JS可见）；<html lang>匹配主语种，非中文站禁中文及原生 <input type="date">。',
+    '8. 同页去重（H32，轮播加 aria-hidden）：一次完整+一次精简——电话/邮箱≤3（正文≤1）、地址/时间≤2（正文≤1）、相同 CTA≤3（正文≤2，按区块换场景词）、同段/标题0重复、内容图≤1（禁 Hero 与下方复用同图）、首屏同标签≤1；Header 有号 Hero 不放；Contact 完整 Footer 仅精简行。',
     `9. 模板适配：${templateLine}`,
+    '10. 无人值守边界：页面落盘且基础检查通过后直接汇报结束，严禁调用 ask_user_input 询问是否允许打开浏览器或页面进行视觉验收（双端视觉检查由外部评测或人工接管）。',
   ].join('\n');
 }

@@ -139,7 +139,7 @@ function openDisposition(nextState: DispositionState) {
 async function onDispositionSaved() { await load(); siteRefresh.value++; }
 const canSupplementCurrent = computed(() => !disposition.value && Boolean(current.value && current.value.kind === 'generation' && current.value.stopped && ['interrupted', 'pending', 'failed', 'cancelled'].includes(current.value.status)));
 async function onSupplementApplied() { await load(); await execution.value?.refresh(); }
-const canRecover = computed(() => !disposition.value && ['resume', 'adjust-site-names', 'handoff-conversation'].includes(taskRecoveryAction(current.value) || ''));
+const canRecover = computed(() => !disposition.value && ['resume', 'adjust-site-names', 'handoff-conversation', 'answer-pending-input'].includes(taskRecoveryAction(current.value) || ''));
 const workflowActive = computed(() => data.value?.workflowActive);
 const workflowRecoveryBlocked = computed(() => Boolean(taskRecoveryAction(current.value)) && Boolean(workflowActive.value));
 const canForceResume = computed(() => !disposition.value && Boolean(taskRecoveryAction(current.value)) && (Boolean(workflowActive.value) || /同工作流仍有活动执行|仍有未停止的执行|已确认停止/.test(actionError.value)));
@@ -250,6 +250,7 @@ async function tabKey(event: KeyboardEvent, index: number) {
 }
 async function action(suffix: string, id = current.value?.id) {
   if (suffix === 'force-resume') { await forceResume(id); return; }
+  if (suffix === 'answer-pending-input') { supplementDialog.value?.open?.('manual'); return; }
   if (!id || busy.value) return;
   const restarting = suffix === 'resume' && current.value?.id === id && current.value?.status === 'cancelled';
   const endpoint = suffix === 'handoff-conversation' ? `/automation/tasks/${id}/generation-context/handoff` : `/automation/tasks/${id}/${suffix}`;
@@ -334,7 +335,7 @@ onUnmounted(() => {
         <button v-if="canCompareLive" type="button" class="button secondary" @click="liveComparisonDialog?.open()"><Columns2 :size="16" />实时对比</button>
         <button v-if="disposition" class="button secondary" :disabled="busy" @click="openDisposition('active')"><RotateCcw :size="16" />移回在列</button>
         <TaskRecoveryActions v-if="!disposition || current?.stopped === false" :task="current" :busy="busy" :workflow-active="Boolean(workflowActive)" @action="action" />
-        <button v-if="canSupplementCurrent && Boolean(current?.attention)" type="button" class="button secondary" :disabled="busy" @click="supplementDialog?.open()"><Upload :size="16" />补充资料 / AI 收集</button>
+        <button v-if="canSupplementCurrent && Boolean(current?.attention) && taskRecoveryAction(current) !== 'answer-pending-input'" type="button" class="button secondary" :disabled="busy" @click="supplementDialog?.open()"><Upload :size="16" />补充资料 / AI 收集</button>
         <button v-if="canContinue" class="button primary" :disabled="busy" @click="openContinuation"><LoaderCircle v-if="busy" class="spin" :size="16" /><Send v-else :size="16" />{{ task.scope === 'homepage' ? '补全全站' : '继续生成' }}</button>
         <button v-if="optimizationActive" class="button secondary" :disabled="busy||current?.status==='cancelling'" @click="action('optimization/stop',task.id)"><Ban :size="16" />停止优化</button>
         <button v-else-if="canCancel" class="button secondary" :disabled="busy || current?.status === 'cancelling'" @click="action('cancel')"><Ban :size="16" />{{ current?.status === 'cancelling' ? '正在停止' : '取消任务' }}</button>

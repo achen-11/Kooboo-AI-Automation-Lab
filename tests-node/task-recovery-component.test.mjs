@@ -24,6 +24,7 @@ before(async () => {
         : 'export const notify={success:(t)=>globalThis.__recoveryServices.notified?.push({type:"success",text:t}),info:(t)=>globalThis.__recoveryServices.notified?.push({type:"info",text:t})};', loader: 'js' }));
       builder.onLoad({ filter: /\.vue$/ }, args => {
         if (args.path.endsWith('/ExecutionLog.vue')) return { contents: "import {h} from 'vue';export default {emits:['stage-change'],setup:(_, {emit})=>()=>h('button',{'data-stage':true,onClick:()=>emit('stage-change','child')},'选择评测轮次')};", loader: 'js' };
+        if (args.path.endsWith('/TaskSupplementDialog.vue')) return { contents: "import {h} from 'vue';export default {setup:(_, {slots,expose})=>{expose({open:(mode)=>globalThis.__recoveryServices.openedSupplement?.push(mode??'default')});return ()=>h('div',slots.default?.());}};", loader: 'js' };
         if (!/\/(TaskDetail|TaskExecution|TaskRecoveryActions)\.vue$/.test(args.path)) return { contents: "import {h} from 'vue';export default {setup:(_, {slots})=>()=>h('div',slots.default?.())};", loader: 'js' };
         const { descriptor } = parse(readFileSync(args.path, 'utf8'), { filename: args.path });
         return { contents: compileScript(descriptor, { id: args.path, inlineTemplate: true }).content, loader: 'ts', resolveDir: dirname(args.path) };
@@ -54,19 +55,20 @@ const descendants = node => node.children.flatMap(child => [child, ...descendant
 const text = node => ((node.tag === '#comment' ? '' : node.text) + node.children.map(text).join('')).trim();
 async function settle() { for (let i = 0; i < 4; i++) { await new Promise(resolve => setImmediate(resolve)); await nextTick(); } }
 const summary = (id, kind = 'evaluation') => ({ id, kind, resourceId: 'resource', resourceName: 'Car Repair', scenario: 'site-template', scope: 'site', environmentId: '', generatedSiteId: 'site', status: 'interrupted', stopped: false, createdAt: 1, updatedAt: 1, siteUrl: '', report: null, attention: '原评测执行尚未确认停止', nextStep: '确认停止后恢复' });
-async function fixture({ pair = false, fail = false, legacy = false, cancelled = false, namingConflict = false, workflowActive = false, windowedFollowup = false, taskStatus, retainActiveOnResume = false } = {}) {
+async function fixture({ pair = false, fail = false, legacy = false, cancelled = false, namingConflict = false, pendingConfirm = false, workflowActive = false, windowedFollowup = false, taskStatus, retainActiveOnResume = false } = {}) {
   const previous = new Map(['window', 'document', '__recoveryServices'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const document = Object.assign(new EventTarget(), { hidden: false });
   const window = Object.assign(new EventTarget(), { location: { hash: cancelled ? '#/tasks/root' : '#/tasks/root?tab=execution' }, history: { replaceState() {} } });
-  const root = summary('root', pair || cancelled || namingConflict ? 'generation' : 'evaluation'), child = summary('child');
+  const root = summary('root', pair || cancelled || namingConflict || pendingConfirm ? 'generation' : 'evaluation'), child = summary('child');
   if (pair) Object.assign(root, { status: 'completed', stopped: true, attention: '', evaluationTaskId: child.id });
   if (cancelled) Object.assign(root, { generatedSiteId: null, status: 'cancelled', stopped: true, attention: '', nextStep: '' });
   if (namingConflict) Object.assign(root, { generatedSiteId: null, stopped: true, canAdjustSiteNames: true, attention: '自定义站点名或子域名已被占用' });
+  if (pendingConfirm) Object.assign(root, { stopped: true, canAnswerPendingInput: true, attention: 'AI 需要人工确认或补充资料后才能继续' });
   if (workflowActive) Object.assign(root, { stopped: true, attention: 'AI 跟进已达到配置的次数、时间或 token 预算，当前流程仍未完成。' });
   if (taskStatus) Object.assign(root, { status: taskStatus, stopped: !['running', 'cancelling'].includes(taskStatus), attention: '', nextStep: '' });
   let activeBlocker = workflowActive ? { tasks: 1, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' }
     : taskStatus ? { tasks: 1, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' } : undefined;
-  const calls = [], notified = [];
+  const calls = [], notified = [], openedSupplement = [];
   const request = async (path, options = {}) => {
     calls.push({ path, method: options.method || 'GET', body: options.body });
     if (options.method === 'POST') {
@@ -87,7 +89,7 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
     if (path.includes('/sections/execution')) {
       const task = path.includes('taskId=child') ? child : root;
       const followup = windowedFollowup ? { state: 'interrupted', attempts: 6, elapsedMs: 42000, startedAt: 1, nextAt: 1, tokens: 500, threadId: 't-1', executionStopped: true, observations: [], policy: { enabled: true, maxAttempts: 5, maxMinutes: 20, maxTokens: 10000000, maxRequests: 80, concurrency: 1, sop: 'sop' }, window: { index: 1, startedAt: 2, attemptsBase: 5, tokensBase: 400, elapsedMsBase: 36000 } } : undefined;
-      return structuredClone({ task: legacy ? undefined : { id: task.id, status: task.status, stopped: task.stopped, canAdjustSiteNames: task.canAdjustSiteNames }, context: '', error: '', followup, interruption: task.status === 'interrupted' ? { reason: task.attention, evidence: [], nextSteps: ['先确认停止再恢复'], resumeFrom: '保留证据', attempted: [] } : undefined });
+      return structuredClone({ task: legacy ? undefined : { id: task.id, kind: task.kind, status: task.status, stopped: task.stopped, canAdjustSiteNames: task.canAdjustSiteNames, canAnswerPendingInput: task.canAnswerPendingInput }, context: '', error: '', followup, interruption: task.status === 'interrupted' ? { reason: task.attention, evidence: [], nextSteps: ['先确认停止再恢复'], resumeFrom: '保留证据', attempted: [] } : undefined });
     }
     throw Error(`Unexpected request ${path}`);
   };
@@ -109,7 +111,7 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
     globalThis.setInterval = originalSetInterval;
     globalThis.clearInterval = originalClearInterval;
   };
-  for (const [key, value] of Object.entries({ window, document, __recoveryServices: { request, notified } })) Object.defineProperty(globalThis, key, { value, configurable: true });
+  for (const [key, value] of Object.entries({ window, document, __recoveryServices: { request, notified, openedSupplement } })) Object.defineProperty(globalThis, key, { value, configurable: true });
   const container = new HostNode('root'), app = renderer.createApp({ render: () => h(TaskDetail, { id: root.id }) });
   try {
     app.mount(container); await settle();
@@ -119,7 +121,7 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
     for (const [key, value] of previous) { if (value) Object.defineProperty(globalThis, key, value); else delete globalThis[key]; }
     throw error;
   }
-  return { calls, notified, root, child, text: () => text(container), nodes: () => descendants(container),
+  return { calls, notified, openedSupplement, root, child, text: () => text(container), nodes: () => descendants(container),
     buttons: label => descendants(container).filter(n => n.tag === 'button' && text(n) === label),
     close() {
       try { app.unmount(); }
@@ -262,5 +264,17 @@ test('successful recovery removes the blocker warning even while the resumed tas
     assert.equal(f.buttons('强制中断并恢复').length, 0);
     assert.equal(f.buttons('取消任务').length, 1);
     assert.equal(f.calls.filter(c => c.method === 'POST').length, 1);
+  } finally { f.close(); }
+});
+
+test('pending ask_user_input promotes primary recovery button to 回答 AI 确认 instead of 恢复任务 and avoids POST /resume', async () => {
+  const f = await fixture({ pendingConfirm: true });
+  try {
+    assert.equal(f.buttons('恢复任务').length, 0);
+    assert.equal(f.buttons('补充资料 / AI 收集').length, 0);
+    assert.equal(f.buttons('回答 AI 确认').length, 2, 'header and execution panel expose answer-pending-input');
+    await f.buttons('回答 AI 确认')[0].props.onClick(); await settle();
+    assert.deepEqual(f.openedSupplement, ['manual']);
+    assert.equal(f.calls.filter(c => c.method === 'POST').length, 0, 'clicking answer button opens dialog without sending POST /resume');
   } finally { f.close(); }
 });

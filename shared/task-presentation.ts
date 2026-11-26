@@ -5,8 +5,8 @@ import type { SiteDeliveryTarget } from './site-delivery.js';
 export interface OptimizationSummary { state: OptimizationRun['state']; policy: Omit<OptimizationPolicy,'sop'>; round: number; activeTaskId: string; reportId: string | null; reason: string; nextStep: string }
 
 export type TaskTab = 'overview' | 'report' | 'execution' | 'usage' | 'input' | 'delivery';
-export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { kind?: AutomationTask['kind']; canAdjustSiteNames?: boolean; canHandoffConversation?: boolean };
-export type TaskRecoveryAction = 'resume' | 'force-resume' | 'confirm-stopped' | 'adjust-site-names' | 'handoff-conversation';
+export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { kind?: AutomationTask['kind']; canAdjustSiteNames?: boolean; canHandoffConversation?: boolean; canAnswerPendingInput?: boolean };
+export type TaskRecoveryAction = 'resume' | 'force-resume' | 'confirm-stopped' | 'adjust-site-names' | 'handoff-conversation' | 'answer-pending-input';
 
 export const CONVERSATION_PAYLOAD_TOO_LARGE_PATTERN =
   /RequestEntityTooLarge|413\s+Request\s+Entity\s+Too\s+Large|payload_too_large_error|Failed to buffer the request body:\s*length limit exceeded|生成助手会话过载|会话已超载|历史中的多张.*图片已使该会话无法接收/i;
@@ -26,6 +26,25 @@ export function canHandoffGenerationConversation(task: AutomationTask): boolean 
     && isConversationPayloadTooLarge(task.interruption?.reason, task.error, task.context);
 }
 
+export function hasPendingAskUserInput(task: Pick<AutomationTask, 'generation'>): boolean {
+  const pending = task.generation?.pending as { callId?: unknown; name?: unknown } | null | undefined;
+  return Boolean(
+    pending
+    && typeof pending === 'object'
+    && pending.name === 'ask_user_input'
+    && typeof pending.callId === 'string'
+    && pending.callId.trim(),
+  );
+}
+
+export function canAnswerPendingInput(task: AutomationTask): boolean {
+  return task.kind === 'generation'
+    && task.stopped === true
+    && ['pending', 'failed', 'interrupted'].includes(task.status)
+    && Boolean(task.generatedSiteId)
+    && hasPendingAskUserInput(task);
+}
+
 export function canAdjustTaskSiteNames(task: AutomationTask): boolean {
   const generation = task.generation;
   return task.kind === 'generation' && task.stopped === true && ['pending', 'failed', 'interrupted'].includes(task.status)
@@ -38,6 +57,7 @@ export function taskRecoveryAction(task?: TaskRecoveryTarget): TaskRecoveryActio
   if (!task) return null;
   if (task.stopped === true && task.canAdjustSiteNames && ['pending', 'failed', 'interrupted'].includes(task.status)) return 'adjust-site-names';
   if (task.stopped === true && task.canHandoffConversation && ['failed', 'interrupted'].includes(task.status)) return 'handoff-conversation';
+  if (task.stopped === true && task.canAnswerPendingInput && ['pending', 'failed', 'interrupted'].includes(task.status)) return 'answer-pending-input';
   if (task.stopped === true && ['pending', 'failed', 'interrupted', 'cancelled'].includes(task.status)) return 'resume';
   if (task.stopped === false && ['pending', 'interrupted'].includes(task.status)) return 'confirm-stopped';
   return null;
@@ -53,6 +73,7 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   nextStep: string;
   canAdjustSiteNames?: boolean;
   canHandoffConversation?: boolean;
+  canAnswerPendingInput?: boolean;
   autoEvaluate?: boolean;
   autoDelivery?: boolean;
   deliveryStatus?: string;
@@ -83,6 +104,7 @@ export function taskSummary(task: AutomationTask): TaskSummary {
   const needsAttention = ['pending', 'failed', 'interrupted'].includes(status);
   const adjustNames = canAdjustTaskSiteNames(task);
   const handoffConversation = canHandoffGenerationConversation(task);
+  const answerPendingInput = canAnswerPendingInput(task);
   const humanAttention = needsAttention
     ? deriveHumanNotice({
         reason: task.interruption?.reason,
@@ -102,9 +124,10 @@ export function taskSummary(task: AutomationTask): TaskSummary {
     report: task.report ? { quality: task.report.quality, scores: task.report.scores, issueCount: task.report.issues.length, unverifiedCount: task.report.coverage.unverified.length } : null,
     attention: humanAttention ? brief(humanAttention.headline) : '',
     ...(humanAttention ? { attentionCategory: humanAttention.category, humanAttention } : {}),
-    nextStep: adjustNames ? '自动调整被占用的站点名称或子域名后继续原任务。' : handoffConversation ? '保留当前站点和资料，自动切换干净新会话继续完成任务。' : brief(humanAttention?.userActions[0] || task.interruption?.nextSteps[0] || ''),
+    nextStep: adjustNames ? '自动调整被占用的站点名称或子域名后继续原任务。' : handoffConversation ? '保留当前站点和资料，自动切换干净新会话继续完成任务。' : answerPendingInput ? '打开回答窗口直接确认或补充输入，回复 Kooboo 挂起请求后继续执行。' : brief(humanAttention?.userActions[0] || task.interruption?.nextSteps[0] || ''),
     canAdjustSiteNames: adjustNames,
     canHandoffConversation: handoffConversation,
+    canAnswerPendingInput: answerPendingInput,
     ...(task.autoEvaluate !== undefined ? { autoEvaluate: task.autoEvaluate } : {}),
     ...(task.autoDelivery !== undefined ? { autoDelivery: task.autoDelivery } : {}),
     deliveryStatus: task.delivery?.status,

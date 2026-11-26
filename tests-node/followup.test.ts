@@ -12,7 +12,7 @@ import type { ThreadEvent } from '@openai/codex-sdk';
 import { createApp } from '../server/app.js';
 import { defaultAutomationSettings, type AutomationTask, type FollowupAction } from '../shared/automation.js';
 import { AutomationWorker, type Execute } from '../server/automation/worker.js';
-import { executeFollowup, validateFollowupAction, type FollowupExecute, type RecoveryInspection } from '../server/automation/followup.js';
+import { executeFollowup, validateFollowupAction, isBrowserVerificationConfirmAskUserInput, type FollowupExecute, type RecoveryInspection } from '../server/automation/followup.js';
 import { httpRead, koobooClient, probeSite, siteIdentity, summarizeMessages } from '../server/automation/kooboo.js';
 import { selectFollowupTaskEvents, followupTaskContext } from '../server/automation/followup-context.js';
 import { executeGeneration } from '../server/automation/generator.js';
@@ -265,7 +265,7 @@ test('host validation rejects invented evidence, uncertain sends, wrong phases, 
       );
     }
 
-    // Routine non-reference confirmation remains answerable
+    // Routine non-reference browser-verification confirm must be auto-answered rather than interrupted
     execution.pending = {
       callId: 'browser-verify',
       name: 'ask_user_input',
@@ -274,9 +274,60 @@ test('host validation rejects invented evidence, uncertain sends, wrong phases, 
         question: '首页已在站点根路径重建完成，是否授权在右侧预览中执行一次交互验证？',
       },
     } as any;
+    assert.equal(isBrowserVerificationConfirmAskUserInput(execution.pending), false);
     assert.equal(
       validate(decision('answer', { callId: 'browser-verify', answer: { confirmed: true, kind: 'confirm', value: true } }), { execution }).action,
       'answer',
+    );
+
+    execution.pending = {
+      callId: 'browser-visual-check',
+      name: 'ask_user_input',
+      args: {
+        kind: 'confirm',
+        question: '新版首页已经生成并可正常打开，是否允许打开页面进行桌面端和手机端视觉检查？',
+      },
+    } as any;
+    assert.equal(isBrowserVerificationConfirmAskUserInput(execution.pending), true);
+    assert.throws(
+      () => validate(decision('interrupt', { reason: '等待人工确认是否允许打开页面做视觉验收', nextSteps: ['确认后恢复'] }), { execution }),
+      /ask_user_input kind=confirm.*answer/,
+    );
+    assert.equal(
+      validate(
+        decision('answer', {
+          callId: 'browser-visual-check',
+          answer: { confirmed: false, kind: 'confirm', value: false, feedback: '无人值守跳过浏览器验收' },
+        }),
+        { execution },
+      ).action,
+      'answer',
+    );
+
+    // Destructive, upload, or reference-decision prompts must NOT match browser-verification auto-close
+    assert.equal(
+      isBrowserVerificationConfirmAskUserInput({
+        callId: 'delete-confirm',
+        name: 'ask_user_input',
+        args: { kind: 'confirm', question: '是否允许打开页面并删除旧首页备份数据？' },
+      }),
+      false,
+    );
+    assert.equal(
+      isBrowserVerificationConfirmAskUserInput({
+        callId: 'upload-confirm',
+        name: 'ask_user_input',
+        args: { kind: 'upload', question: '请上传桌面和手机视觉检查截图' },
+      }),
+      false,
+    );
+    assert.equal(
+      isBrowserVerificationConfirmAskUserInput({
+        callId: 'ref-confirm',
+        name: 'ask_user_input',
+        args: { kind: 'confirm', question: '无法获取参考站画面，是否允许跳过视觉检查改为自由设计？' },
+      }),
+      false,
     );
     execution.pending={callId:'call',name:'ask_user_input',args:{}} as any;
     t.generation!.deliveryState='sending';assert.throws(()=>validate(decision('answer',{callId:'call',answer:{}}),{execution}),/不确定/);

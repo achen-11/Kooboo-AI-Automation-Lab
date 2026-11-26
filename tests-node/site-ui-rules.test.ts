@@ -51,6 +51,7 @@ test('buildSiteUiHardRulesPrompt generates bounded, scenario- and scope-aware v1
   assert.match(upgradeDirect, /多电话（座机\+24\/7热线）全保留标用途并用 tel:\/mailto:/);
   assert.match(upgradeDirect, /内容图≤1（禁 Hero 与下方复用同图）/);
   assert.match(upgradeDirect, /禁将旧 \/ 改名备份/);
+  assert.match(upgradeDirect, /严禁调用 ask_user_input 询问是否允许打开浏览器或页面进行视觉验收/);
   assert.doesNotMatch(upgradeDirect, /不要写代码/);
 
   const materialsHomepage = buildSiteUiHardRulesPrompt({
@@ -87,6 +88,7 @@ test('buildSiteUiHardRulesPrompt generates bounded, scenario- and scope-aware v1
   assert.ok(continuation.length <= 220);
   assert.match(continuation, /覆写10–11px小字/);
   assert.match(continuation, /严禁改动已达标稳定区段/);
+  assert.match(continuation, /禁调 ask_user_input 询问打开浏览器\/页面做视觉验收/);
 
   assert.equal(buildSiteUiHardRulesPrompt({ scenario: 'app-template', scope: 'site' }), '');
 });

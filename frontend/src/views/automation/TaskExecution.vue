@@ -4,7 +4,7 @@ import { Upload } from '@lucide/vue';
 import type { FollowupRun, TaskInterruption } from '../../../../shared/automation';
 import type { TaskSupplementContext } from '../../../../shared/supplement';
 import { deriveHumanNotice, diagnosticCategoryLabels, type HumanNotice } from '../../../../shared/human-diagnostics';
-import type { TaskRecoveryAction, TaskRecoveryTarget } from '../../../../shared/task-presentation';
+import { taskRecoveryAction, type TaskRecoveryAction, type TaskRecoveryTarget } from '../../../../shared/task-presentation';
 import Disclosure from '../../components/Disclosure.vue';
 import ExecutionLog from '../../components/ExecutionLog.vue';
 import TaskRecoveryActions from './TaskRecoveryActions.vue';
@@ -107,7 +107,7 @@ const actionNames: Record<string, string> = { repair: '委托站点修复',retry
       <p v-else class="task-prose">当前任务已取消并确认停止，可按原固定输入与规则重新启动。</p>
       <div class="task-actions">
         <TaskRecoveryActions :task="recoveryTask" :busy="busy" :workflow-active="workflowActive" @action="(action, id) => emit('action', action, id)" />
-        <button v-if="canSupplement" type="button" class="button secondary" :disabled="busy" @click="supplementDialog?.open()">
+        <button v-if="canSupplement && taskRecoveryAction(recoveryTask) !== 'answer-pending-input'" type="button" class="button secondary" :disabled="busy" @click="supplementDialog?.open()">
           <Upload :size="16" />{{ activeSupplementBatch?.status === 'ready' ? '查看待确认资料' : activeSupplementBatch?.status === 'collecting' ? '查看 AI 收集进度' : '补充资料 / AI 收集' }}
         </button>
       </div>

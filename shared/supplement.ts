@@ -31,6 +31,7 @@ export interface TaskSupplementBatch {
   skipSourceTransfer?: boolean;
   skipReferencePreflight?: boolean;
   allowFreeDesignWithoutReference?: boolean;
+  confirmDecision?: boolean;
   autoApply?: boolean;
   inputFiles?: MaterialFile[];
   files: SupplementalFileRef[];

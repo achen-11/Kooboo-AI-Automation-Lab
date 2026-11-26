@@ -70,6 +70,26 @@ export function isReferenceDecisionAskUserInput(
   );
 }
 
+const BROWSER_VERIFICATION_CONFIRM_PATTERN =
+  /打开页面|打开预览|打开浏览器|浏览(?:器)?(?:验收|检查|验证|预览|查看)|视觉(?:检查|验收|核验|核查)|桌面.*手机|手机.*桌面|browser\s*(?:verification|check|control|preview)|open\s*(?:the\s*)?(?:page|preview|browser)|visual\s*(?:check|verification|review|inspection)/i;
+const BROWSER_VERIFICATION_EXCLUDE_PATTERN =
+  /删除|delete|清空|覆盖|支付|payment|发送邮件|send\s*email|发布|publish|修改用户|账号|密码|登录|login|参考站|reference\s*site|放弃参考/i;
+
+export function isBrowserVerificationConfirmAskUserInput(
+  pending: GenerationObservation['pending'] | undefined,
+): boolean {
+  if (!pending || pending.name !== 'ask_user_input') return false;
+  const args = pending.args && typeof pending.args === 'object' ? (pending.args as Record<string, unknown>) : {};
+  if (args.kind !== 'confirm') return false;
+  if (isReferenceDecisionAskUserInput(pending)) return false;
+  const text = [args.question, args.description]
+    .filter((value): value is string => typeof value === 'string')
+    .join('\n');
+  if (!text.trim()) return false;
+  if (BROWSER_VERIFICATION_EXCLUDE_PATTERN.test(text)) return false;
+  return BROWSER_VERIFICATION_CONFIRM_PATTERN.test(text);
+}
+
 function hasExecutionPayloadTooLarge(task: AutomationTask, inspection: RecoveryInspection): boolean {
   const tailText = (inspection.execution?.context || [])
     .slice(-3)
@@ -94,6 +114,9 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
     if(action.action==='collect')validateRecollectionAction(task,action,inspection.reportObservations||{});
   }else if(['repair','collect'].includes(action.action))throw new Error('普通恢复不得自动改站提分或回采来源');
   if(action.action==='interrupt'&&!action.nextSteps?.length)throw new Error('中断必须给出下一步做法');
+  if(action.action==='interrupt'&&isBrowserVerificationConfirmAskUserInput(inspection.execution?.pending)){
+    throw new Error('当前待输入调用仅为收尾阶段的浏览器/页面视觉验收确认（ask_user_input kind=confirm），不属于缺料或参考站阻断；请核实页面后直接调用 answer（confirmed=false, kind="confirm", value=false）通知 Kooboo 跳过浏览器视觉验收并汇总结束本轮，不要中断。');
+  }
   if(
     action.action==='interrupt'&&
     task.kind==='generation'&&
@@ -306,7 +329,7 @@ ${PLATFORM_HARD_CONTRACTS}
 查询示例：{"tool":"get_task"}。其他查询工具：get_conversation、get_site、probe_site、inspect_execution。工具返回 evidenceId，行动必须引用本轮已取得的 evidenceId。
 行动示例：{"tool":"act","decision":{"action":"retry","reason":"依据实际错误决定重试本阶段","evidence":["工具返回的 evidenceId"]}}。
 action 可选 retry（重新执行当前阶段，保留已有站点和证据）、continue（原站原会话继续，需 message）、answer（处理待输入调用，需 callId 和符合调用要求的 answer 参数对象）、evaluate（确认交付后接入独立评测）、wait（waitSeconds 为5到300）、interrupt（必须 nextSteps 数组，并同时按 references/human-output.md 填写面向非研发用户的 userSummary）。
-continue/answer 前必须 inspect_execution；evaluate 前必须 get_site、probe_site，执行终态不明确时还必须 get_conversation 查交付及未完成调用。pending 为 ask_user_input 时，仅当答案可由冻结输入与原任务范围如实确定时才用 answer；若因参考站截图/视觉取证失败挂起等待用户决策（如协助上传参考截图、刷新环境重试或更换参考 URL）、请求文件上传（kind=upload）或需变更范围/地址，严禁代答跳过视觉证据盲写，必须用 interrupt 给出具体原因、可操作 nextSteps 与通俗 userSummary。系统会检查真实执行前提，失败后请根据工具错误继续查证。不要把原会话的可选建议当成当前任务必做项。首页外工作不在首页任务范围内。评测不达标无需生成修复。
+continue/answer 前必须 inspect_execution；evaluate 前必须 get_site、probe_site，执行终态不明确时还必须 get_conversation 查交付及未完成调用。pending 为 ask_user_input 时，仅当答案可由冻结输入与原任务范围如实确定时才用 answer；若因参考站截图/视觉取证失败挂起等待用户决策（如协助上传参考截图、刷新环境重试或更换参考 URL）、请求文件上传（kind=upload）或需变更范围/地址，严禁代答跳过视觉证据盲写，必须用 interrupt 给出具体原因、可操作 nextSteps 与通俗 userSummary。例外：若 pending 为 ask_user_input(kind=confirm) 且仅在页面已写入后询问“是否允许打开页面/浏览器做桌面或手机视图视觉验收”，在 probe_site（必要时配合 get_conversation）核实页面已落地后，应直接调用 answer 提交 {"confirmed":false,"kind":"confirm","value":false,"feedback":"当前为无人值守自动化模式，无需在 Kooboo 内打开浏览器进行视觉验收，请直接汇总本轮成果并结束。"} 推动 Kooboo 结束本轮，不要因此 interrupt。系统会检查真实执行前提，失败后请根据工具错误继续查证。不要把原会话的可选建议当成当前任务必做项。首页外工作不在首页任务范围内。评测不达标无需生成修复。
 已投递的生成任务 retry 前也必须 inspect_execution。原委托存在匹配的 failed/interrupted 终态时，系统会将 retry 转为同站同会话的新一轮投递。历史余额不足等错误只证明对应旧 run 失败；只有新 run 的回执才能证明重试再次失败，不能据旧错误判断当前余额或连接仍不可用。发送结果不确定时只查证，不重复投递。
 评测阶段的 retry 会把你本轮 decision.reason 直接传给原评测会话，请在 reason 中明确需要修正的指标、视口、证据角色等已查证要求。评测器会向同一会话反馈具体结果校验错误，最多追加两次结果修正；可以复用有效证据，不需要重新生成站点或重复采集。会话本身失效时会释放绑定供后续评测使用新会话。不要假定 retry 无法传递具体修正要求。
 成功 act 后简要说明原因即结束本轮。`;

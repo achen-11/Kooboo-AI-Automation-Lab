@@ -125,6 +125,7 @@ export function createSupplementBatch(params: {
   skipSourceTransfer?: boolean;
   skipReferencePreflight?: boolean;
   allowFreeDesignWithoutReference?: boolean;
+  confirmDecision?: boolean;
   autoApply?: boolean;
   inputFiles?: MaterialFile[];
   files?: SupplementalFileRef[];
@@ -147,6 +148,7 @@ export function createSupplementBatch(params: {
     ...(params.allowFreeDesignWithoutReference !== undefined
       ? { allowFreeDesignWithoutReference: params.allowFreeDesignWithoutReference }
       : {}),
+    ...(params.confirmDecision !== undefined ? { confirmDecision: params.confirmDecision } : {}),
     ...(params.autoApply !== undefined ? { autoApply: params.autoApply } : {}),
     ...(params.inputFiles?.length ? { inputFiles: params.inputFiles } : {}),
     files: params.files || [],
@@ -194,6 +196,7 @@ export async function applySupplementBatch(params: {
   skipSourceTransferOverride?: boolean;
   skipReferencePreflightOverride?: boolean;
   allowFreeDesignWithoutReferenceOverride?: boolean;
+  confirmDecisionOverride?: boolean;
   replacementContentUrlOverride?: string;
   replacementReferenceUrlOverride?: string;
   fetcher?: typeof fetch;
@@ -231,6 +234,12 @@ export async function applySupplementBatch(params: {
     params.allowFreeDesignWithoutReferenceOverride !== undefined
       ? params.allowFreeDesignWithoutReferenceOverride
       : batch.allowFreeDesignWithoutReference;
+  const effectiveConfirmDecision =
+    params.confirmDecisionOverride !== undefined ? params.confirmDecisionOverride : batch.confirmDecision;
+  const pending = extractPendingAskUserInput(task);
+  const hasConfirmAnswer = Boolean(
+    pending && pending.kind === 'confirm' && typeof effectiveConfirmDecision === 'boolean',
+  );
 
   if (
     !chosenFiles.length &&
@@ -239,7 +248,8 @@ export async function applySupplementBatch(params: {
     !nextReferenceUrl &&
     !requestedSkipTransfer &&
     !requestedSkipReferencePreflight &&
-    !requestedAllowFreeDesign
+    !requestedAllowFreeDesign &&
+    !hasConfirmAnswer
   ) {
     throw new Conflict('请至少上传文件、填写补充说明、提供新网址或选择明确的处理方式');
   }
@@ -300,7 +310,6 @@ export async function applySupplementBatch(params: {
     if (task.generation.sourceSandbox) task.generation.sourceSandbox.complete = true;
   }
 
-  const pending = extractPendingAskUserInput(task);
   let uploadedCount = 0;
   let answeredPending = false;
   let continuedConversation = false;
@@ -358,6 +367,7 @@ export async function applySupplementBatch(params: {
           : task.generation.skipReferencePreflight || uploadedCount > 0
             ? `已补充参考站截图/资料（共 ${uploadedCount} 个文件）并按补充截图还原${effectiveNote ? `（${effectiveNote}）` : ''}`
             : effectiveNote || `已补充 ${uploadedCount} 份资料`;
+      const confirmed = pending.kind === 'confirm' ? (effectiveConfirmDecision ?? true) : true;
       const value =
         pending.kind === 'upload'
           ? uploadResult.uploaded.map(u => ({
@@ -371,14 +381,20 @@ export async function applySupplementBatch(params: {
               storage: u.storage,
             }))
           : pending.kind === 'confirm'
-            ? true
+            ? confirmed
             : choiceText;
-      const answerFeedback = [effectiveNote, referenceDecisionNote].filter(Boolean).join('\n');
+      const defaultDeniedFeedback =
+        pending.kind === 'confirm' && confirmed === false
+          ? '操作者已拒绝/跳过该确认项，请结合当前成果直接继续或汇总结束本轮任务。'
+          : '';
+      const answerFeedback = [effectiveNote, referenceDecisionNote, !effectiveNote ? defaultDeniedFeedback : '']
+        .filter(Boolean)
+        .join('\n');
       task.generation.next = {
         action: 'answer',
         callId: pending.callId,
         answer: {
-          confirmed: true,
+          confirmed,
           kind: pending.kind,
           value,
           ...(answerFeedback ? { feedback: answerFeedback } : {}),
@@ -386,6 +402,7 @@ export async function applySupplementBatch(params: {
         reason: '已通过 Automation Lab 补充资料/确认输入并回答挂起调用',
         evidence: [`human-supplement:${batch.id}`],
       };
+      delete task.generation.pending;
       answeredPending = true;
     } else if (task.generation.deliveryId) {
       const lines = [

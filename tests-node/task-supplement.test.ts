@@ -17,6 +17,7 @@ import { createSupplementBatch, SupplementStore } from '../server/automation/sup
 import { startAiSupplementIntake } from '../server/automation/supplement-ai.js';
 import { type AutomationTask, type MaterialFile } from '../shared/automation.js';
 import type { TaskSupplementContext } from '../shared/supplement.js';
+import { taskRecoveryAction, taskSummary } from '../shared/task-presentation.js';
 
 const TINY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAYAAAAfFcSJAAAADUlEQVR42mNk+M9QDwADhgGAWjR9awAAAABJRU5ErkJggg==',
@@ -875,4 +876,75 @@ test('materialDestination and koobooSafeFilename sanitize Kooboo-normalized + ch
   assert.equal(dest.folder, 'materials/res-1/ver-1/独立站资料_备份');
   assert.equal(dest.path, '/materials/res-1/ver-1/独立站资料_备份/ef71770e-4912-42af-b19a-0a2f2b0415d2.docx');
   assert.equal(koobooSafeFilename(docxFile, 'normal-image_01.png'), 'normal-image_01.png');
+});
+
+test('Pending ask_user_input(confirm) exposes answer-pending-input recovery and accepts confirmDecision without files or note', async () => {
+  const f = await createTestApp();
+  try {
+    for (const decision of [false, true] as const) {
+      const { task } = createStoppedUpgradeTask(f, { category: 'need-human-input' });
+      task.generation = {
+        ...task.generation,
+        prepared: true,
+        transferComplete: true,
+        conversationId: randomUUID(),
+        deliveryId: randomUUID(),
+        deliveryState: 'accepted',
+        pending: {
+          callId: `confirm-call-${decision}`,
+          name: 'ask_user_input',
+          args: {
+            kind: 'confirm',
+            question: '是否允许打开页面进行桌面端和手机端视觉检查？',
+          },
+        },
+      };
+      f.automationStore.put(task);
+
+      const sum = taskSummary(task);
+      assert.equal(sum.canAnswerPendingInput, true);
+      assert.equal(taskRecoveryAction(sum), 'answer-pending-input');
+
+      const summaryRes = await f.app.inject({
+        method: 'GET',
+        url: `/api/automation/tasks/${task.id}/summary`,
+        headers: f.headers,
+      });
+      assert.equal(summaryRes.statusCode, 200);
+      assert.equal(summaryRes.json().task.canAnswerPendingInput, true);
+
+      const execRes = await f.app.inject({
+        method: 'GET',
+        url: `/api/automation/tasks/${task.id}/sections/execution`,
+        headers: f.headers,
+      });
+      assert.equal(execRes.statusCode, 200);
+      assert.equal(execRes.json().task.canAnswerPendingInput, true);
+
+      const submitRes = await f.app.inject({
+        method: 'POST',
+        url: `/api/automation/tasks/${task.id}/supplements/manual`,
+        headers: f.headers,
+        payload: {
+          files: [],
+          note: '',
+          confirmDecision: decision,
+        },
+      });
+      assert.equal(submitRes.statusCode, 200, submitRes.body);
+      const updated = f.automationStore.task(task.id)!;
+      assert.equal(updated.status, 'queued');
+      assert.equal(updated.generation?.pending, undefined);
+      assert.equal(updated.generation?.next?.action, 'answer');
+      assert.equal(updated.generation?.next?.callId, `confirm-call-${decision}`);
+      assert.equal(updated.generation?.next?.answer?.confirmed, decision);
+      assert.equal(updated.generation?.next?.answer?.kind, 'confirm');
+      assert.equal(updated.generation?.next?.answer?.value, decision);
+      if (!decision) {
+        assert.match(String(updated.generation?.next?.answer?.feedback || ''), /拒绝|跳过/);
+      }
+    }
+  } finally {
+    await f.close();
+  }
 });

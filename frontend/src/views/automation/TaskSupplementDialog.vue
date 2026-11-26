@@ -317,7 +317,7 @@ function clearDraftFiles() {
   selectedFileIds.value = [];
 }
 
-async function submitManual() {
+async function submitManual(confirmDecision?: boolean) {
   if (busy.value || !context.value?.canSupplement) return;
   actionError.value = '';
   busy.value = true;
@@ -333,6 +333,7 @@ async function submitManual() {
     const note = manualNote.value.trim();
     const contentUrl = replacementContentUrl.value.trim();
     const referenceUrl = replacementReferenceUrl.value.trim();
+    const isConfirmPending = context.value.pendingUpload?.kind === 'confirm' && typeof confirmDecision === 'boolean';
     if (
       !hasFiles &&
       !note &&
@@ -340,7 +341,8 @@ async function submitManual() {
       !referenceUrl &&
       !skipSourceTransfer.value &&
       !skipReferencePreflight.value &&
-      !allowFreeDesignWithoutReference.value
+      !allowFreeDesignWithoutReference.value &&
+      !isConfirmPending
     ) {
       actionError.value = '请至少上传资料文件、填写补充说明、提供新网址或选择明确的处理方式';
       return;
@@ -357,10 +359,17 @@ async function submitManual() {
           skipSourceTransfer: skipSourceTransfer.value,
           skipReferencePreflight: skipReferencePreflight.value,
           allowFreeDesignWithoutReference: allowFreeDesignWithoutReference.value,
+          ...(isConfirmPending ? { confirmDecision } : {}),
         }),
       },
     );
-    notify.success('补充资料已保存，任务已重新加入执行队列');
+    notify.success(
+      isConfirmPending
+        ? confirmDecision
+          ? '已提交同意确认，任务已重新加入执行队列'
+          : '已提交跳过/拒绝确认，任务已重新加入执行队列'
+        : '补充资料已保存，任务已重新加入执行队列',
+    );
     emit('applied');
     emit('changed');
     busy.value = false;
@@ -510,10 +519,10 @@ defineExpose({ open });
           当前仅支持对已停止的生成任务（中断 / 待处理 / 失败 / 已取消）补充资料；若任务正在运行，请先取消并确认停止后再操作。
         </p>
 
-        <!-- Contextual banner: Kooboo ask_user_input(upload) or source-access interruption -->
+        <!-- Contextual banner: Kooboo ask_user_input or source-access interruption -->
         <div v-if="context.pendingUpload" class="supplement-context-card">
           <div class="supplement-context-head">
-            <strong>Kooboo 建站 AI 正在等待补充文件</strong>
+            <strong>{{ context.pendingUpload.kind === 'confirm' ? 'Kooboo 建站 AI 正在等待你的确认' : context.pendingUpload.kind === 'upload' ? 'Kooboo 建站 AI 正在等待补充文件' : 'Kooboo 建站 AI 正在等待人工输入' }}</strong>
             <span v-if="context.pendingUpload.target" class="task-meta-tag">
               目标：{{ context.pendingUpload.target === 'mediaLibrary' ? '媒体库' : context.pendingUpload.target }}
             </span>
@@ -776,7 +785,7 @@ defineExpose({ open });
             </div>
           </div>
 
-          <form v-if="mode === 'manual'" class="supplement-form" @submit.prevent="submitManual">
+          <form v-if="mode === 'manual'" class="supplement-form" @submit.prevent="submitManual()">
             <div class="field">
               <span>上传资料文件 <small>支持多文件、文件夹拖拽，如图片、文案 Markdown、HTML、JSON 等</small></span>
               <MaterialUploader
@@ -794,7 +803,7 @@ defineExpose({ open });
                 class="input textarea"
                 rows="3"
                 :disabled="busy || !context.canSupplement"
-                :placeholder="context.pendingUpload ? '例如：已上传茶叶门店主视觉与商品配图到媒体库，请继续生成页面' : '说明本次补充资料的用途、页面结构要求或需特别注意的内容'"
+                :placeholder="context.pendingUpload?.kind === 'confirm' ? '可选：说明确认意见，例如“新版首页已确认，请直接结束交付”' : context.pendingUpload ? '例如：已上传茶叶门店主视觉与商品配图到媒体库，请继续生成页面' : '说明本次补充资料的用途、页面结构要求或需特别注意的内容'"
               />
             </label>
 
@@ -861,7 +870,28 @@ defineExpose({ open });
 
             <div class="modal-actions">
               <button type="button" class="button secondary" :disabled="busy" @click="close">取消</button>
+              <template v-if="context.pendingUpload?.kind === 'confirm'">
+                <button
+                  type="button"
+                  class="button secondary"
+                  :disabled="busy || manualUploaderBusy || !context.canSupplement"
+                  @click="submitManual(false)"
+                >
+                  跳过 / 拒绝并继续
+                </button>
+                <button
+                  type="button"
+                  class="button primary"
+                  :disabled="busy || manualUploaderBusy || !context.canSupplement"
+                  @click="submitManual(true)"
+                >
+                  <LoaderCircle v-if="busy" class="spin" :size="16" />
+                  <Upload v-else :size="16" />
+                  {{ busy ? '正在提交确认…' : '同意并继续' }}
+                </button>
+              </template>
               <button
+                v-else
                 type="submit"
                 class="button primary"
                 :disabled="busy || manualUploaderBusy || !context.canSupplement"

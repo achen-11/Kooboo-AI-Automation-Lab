@@ -288,6 +288,8 @@ function effectiveRecoveryAction(node: WorkflowNode): TaskRecoveryAction | null 
 
 function recoveryButtonLabel(action: TaskRecoveryAction, node: WorkflowNode): string {
   if (action === 'adjust-site-names') return '自动调整名称并继续';
+  if (action === 'handoff-conversation') return '换新会话继续';
+  if (action === 'answer-pending-input') return '回答 AI 确认';
   if (action === 'force-resume') return '强制中断并恢复';
   if (action === 'confirm-stopped') return '已检查并确认原执行停止';
   if (node.status === 'cancelled') return '重新启动';

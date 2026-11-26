@@ -83,6 +83,7 @@ export function registerTaskSupplementApi(
         skipSourceTransfer: z.boolean().optional(),
         skipReferencePreflight: z.boolean().optional(),
         allowFreeDesignWithoutReference: z.boolean().optional(),
+        confirmDecision: z.boolean().optional(),
       })
       .parse(request.body || {});
 
@@ -98,6 +99,7 @@ export function registerTaskSupplementApi(
       skipSourceTransfer: body.skipSourceTransfer,
       skipReferencePreflight: body.skipReferencePreflight,
       allowFreeDesignWithoutReference: body.allowFreeDesignWithoutReference,
+      confirmDecision: body.confirmDecision,
       files: body.files.map(f => ({ ...f, source: 'manual' })),
     });
     supplements.put(batch);
@@ -110,6 +112,7 @@ export function registerTaskSupplementApi(
       vault,
       directory,
       signal: request.raw.destroyed ? AbortSignal.abort() : AbortSignal.timeout(120000),
+      confirmDecisionOverride: body.confirmDecision,
     });
 
     return reply.send({ task: applied.task, batch: applied.batch });

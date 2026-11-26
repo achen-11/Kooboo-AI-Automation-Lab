@@ -14,7 +14,7 @@ import { defaultAutomationSettings, type AutomationTask, type FollowupAction } f
 import { AutomationWorker, type Execute } from '../server/automation/worker.js';
 import { executeFollowup, validateFollowupAction, type FollowupExecute, type RecoveryInspection } from '../server/automation/followup.js';
 import { httpRead, koobooClient, probeSite, siteIdentity, summarizeMessages } from '../server/automation/kooboo.js';
-import { selectFollowupTaskEvents } from '../server/automation/followup-context.js';
+import { selectFollowupTaskEvents, followupTaskContext } from '../server/automation/followup-context.js';
 import { executeGeneration } from '../server/automation/generator.js';
 import { codexClient, recoverEvaluationSession, reviewWithValidation } from '../server/automation/evaluator.js';
 import { applyGenerationObservation, type GenerationObservation } from '../server/automation/generation-session.js';
@@ -918,6 +918,135 @@ test('selectFollowupTaskEvents preserves initial failure and resume context past
     assert.match(receivedPrompt, /人工恢复上下文/);
     assert.match(receivedPrompt, /createAttempted=false/);
     assert.match(receivedPrompt, /严禁使用连字符（-）/);
+  } finally {
+    await f.close();
+  }
+});
+
+test('resolved cloneEnvironmentFallback is annotated for followup, cannot be interrupted as source-access, and resumes directly to queued before first delivery', async () => {
+  const f = await fixture();
+  try {
+    const task = f.create();
+    const site = {
+      id: randomUUID(),
+      resourceId: f.resource.id,
+      versionId: task.versionId,
+      environmentId: f.environmentId,
+      siteId: randomUUID(),
+      name: 'fallback_ok_site',
+      url: 'https://fallback_ok_site.kooboo.test/',
+      createdAt: Date.now(),
+    };
+    f.automationStore.saveSite(site);
+    task.scenario = 'upgrade';
+    task.stage = 'generation';
+    task.status = 'interrupted';
+    task.stopped = true;
+    task.generatedSiteId = site.id;
+    task.siteUrl = site.url;
+    task.error = 'Kooboo AI Chat 执行状态桥接尚未就绪；请确认目标环境包含 automation bridge 前端';
+    task.generation = {
+      siteName: 'fallback_ok_site',
+      subDomain: 'fallback_ok_site',
+      createAttempted: true,
+      transferComplete: true,
+      prepared: true,
+      cloneEnvironmentFallback: {
+        fromEnvironmentId: randomUUID(),
+        toEnvironmentId: f.environmentId,
+        reason: '源站克隆导入 0 页（https://source.example.test）',
+        switchedAt: Date.now() - 10000,
+        outcome: 'succeeded',
+      },
+      conversationId: randomUUID(),
+    };
+    f.automationStore.scheduleFollowup(task, f.settings.followup);
+    task.status = 'interrupted';
+    task.stopped = true;
+    task.followup!.executionStopped = true;
+    task.followup!.state = 'interrupted';
+    task.interruption = {
+      stage: 'generation',
+      reason: '桥接超时',
+      evidence: [],
+      attempted: [],
+      nextSteps: ['重试'],
+      resumeFrom: '继续',
+      time: Date.now(),
+      userSummary: {
+        headline: '原网站内容未能导入',
+        category: 'source-access',
+        explanation: '误判为 source-access',
+        userActions: ['重试'],
+      },
+    };
+    f.automationStore.put(task);
+
+    // 1. followupTaskContext annotates cloneEnvironmentFallback as resolved
+    const projected = followupTaskContext(task);
+    assert.equal((projected.generation?.cloneEnvironmentFallback as any)?.resolved, true);
+    assert.equal((projected.generation?.cloneEnvironmentFallback as any)?.outcome, 'succeeded');
+    assert.match(String((projected.generation?.cloneEnvironmentFallback as any)?.note), /不再适用源站克隆失败止损契约/);
+
+    // 2. validateFollowupAction blocks source-access interrupt citing 0-page clone when transferComplete && prepared
+    const obs = new Set(['obs-1']);
+    const execution: RecoveryInspection['execution'] = {
+      version: 1,
+      taskId: task.id,
+      siteId: site.siteId,
+      conversationId: task.generation.conversationId!,
+      runId: '',
+      ready: true,
+      running: false,
+      state: 'unknown',
+      observedAt: Date.now(),
+      pending: null,
+      canSend: true,
+      context: [],
+    };
+    assert.throws(
+      () =>
+        validateFollowupAction(
+          {
+            action: 'interrupt',
+            reason: '准备阶段记录显示 cloneEnvironmentFallback.reason 克隆导入为 0 页，按源站克隆失败止损契约中断',
+            evidence: ['obs-1'],
+            nextSteps: ['更换源站'],
+            userSummary: {
+              headline: '原网站无法导入',
+              category: 'source-access',
+              explanation: '原网站克隆失败',
+              userActions: ['检查源站'],
+            },
+          },
+          task,
+          { execution },
+          obs,
+        ),
+      /transferComplete=true 且 prepared=true/,
+    );
+
+    // retry remains valid
+    const retried = validateFollowupAction(
+      { action: 'retry', reason: '桥接已就绪且尚未投递首条委托，重新入队发送', evidence: ['obs-1'] },
+      task,
+      { execution },
+      obs,
+    );
+    assert.equal(retried.action, 'retry');
+
+    // 3. POST /resume directly requeues pre-delivery prepared task instead of routing back through followup
+    const resumed = await f.app.inject({
+      method: 'POST',
+      url: `/api/automation/tasks/${task.id}/resume`,
+      headers: f.headers,
+    });
+    assert.equal(resumed.statusCode, 200, resumed.body);
+    const saved = f.automationStore.task(task.id)!;
+    assert.equal(saved.status, 'queued');
+    assert.equal(saved.followup?.state, 'resolved');
+    assert.equal(saved.error, '');
+    assert.equal(saved.interruption, undefined);
   } finally {
     await f.close();
   }

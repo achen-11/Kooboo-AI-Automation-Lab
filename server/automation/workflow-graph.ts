@@ -482,7 +482,7 @@ function formatPrepareChecks(
       detail: g.skipSourceTransfer
         ? '已按配置跳过原站克隆'
         : 'cloneEnvironmentFallback' in g && Boolean((g as Record<string, unknown>).cloneEnvironmentFallback)
-          ? '已自动切换至备用环境完成克隆'
+          ? (cloneDone ? '已自动切换至备用环境完成克隆' : '已切换至备用环境继续克隆')
           : g.sourceSandbox?.complete
             ? '源站 Sandbox 已就绪'
             : g.referenceTemplateSandbox

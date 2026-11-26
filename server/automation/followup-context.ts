@@ -58,7 +58,23 @@ export function followupTaskContext(task:AutomationTask) {
     artifacts:task.artifacts?.filter(file=>file.type==='image/png'),
     collectionPendingReport:task.collectionPendingReport?{...task.collectionPendingReport,report:{summary:task.collectionPendingReport.report.summary,quality:task.collectionPendingReport.report.quality}}:undefined,
     migrationPendingReport:task.migrationPendingReport?{...task.migrationPendingReport,report:{summary:task.migrationPendingReport.report.summary,quality:task.migrationPendingReport.report.quality}}:undefined,
-    generation:task.generation||task.kind==='generation'?{...(task.generation||{}),createAttempted:Boolean(task.generation?.createAttempted),importedMaterials:undefined,importedMedia:undefined,importedMaterialCount:Object.keys(task.generation?.importedMaterials||{}).length}:undefined,
+    generation:task.generation||task.kind==='generation'?{
+      ...(task.generation||{}),
+      ...(task.generation?.cloneEnvironmentFallback&&(task.generation.transferComplete||task.generation.prepared)
+        ?{
+          cloneEnvironmentFallback:{
+            ...task.generation.cloneEnvironmentFallback,
+            outcome:task.generation.cloneEnvironmentFallback.outcome||(task.generation.skipSourceTransfer?'degraded-to-materials':'succeeded'),
+            resolved:true,
+            note:'原环境曾导入 0 页，但回退环境已完成克隆或已降级改用资料包，此字段仅为历史记录，不再适用源站克隆失败止损契约。',
+          },
+        }
+        :{}),
+      createAttempted:Boolean(task.generation?.createAttempted),
+      importedMaterials:undefined,
+      importedMedia:undefined,
+      importedMaterialCount:Object.keys(task.generation?.importedMaterials||{}).length,
+    }:undefined,
     context:task.context.slice(-16000),message:task.message.slice(0,20000),
     optimization:optimization?{...optimization,policy:{...optimization.policy,sop:'见 SKILL.md'},recoveryPolicy:{...optimization.recoveryPolicy,sop:'见 SKILL.md'},rounds:optimization.rounds.map(({brief,images,...round})=>round)}:undefined,
     followup:task.followup?{...task.followup,policy:{...task.followup.policy,sop:'见 SKILL.md'},lastAction:task.followup.lastAction?{action:task.followup.lastAction.action,reason:task.followup.lastAction.reason}:undefined}:undefined,

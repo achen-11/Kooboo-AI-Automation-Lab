@@ -95,6 +95,16 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
     if(action.action==='collect')validateRecollectionAction(task,action,inspection.reportObservations||{});
   }else if(['repair','collect'].includes(action.action))throw new Error('普通恢复不得自动改站提分或回采来源');
   if(action.action==='interrupt'&&!action.nextSteps?.length)throw new Error('中断必须给出下一步做法');
+  if(
+    action.action==='interrupt'&&
+    task.kind==='generation'&&
+    task.generation?.transferComplete===true&&
+    task.generation?.prepared===true&&
+    action.userSummary?.category==='source-access'&&
+    /克隆.*0\s*页|0\s*页.*克隆|cloneEnvironmentFallback|源站克隆失败止损|内容源.*0\s*页|原站克隆.*失败/i.test(action.reason)
+  ){
+    throw new Error('当前任务 transferComplete=true 且 prepared=true，克隆与资料准备已完成（cloneEnvironmentFallback 仅为原环境历史回退记录，不适用源站克隆失败止损契约）；严禁按 source-access 中断，请依据 generation 阶段实时桥接与会话状态继续推进（如桥接已就绪且尚未发出首条消息，应提交 retry）');
+  }
   if(['retry','continue','answer','evaluate'].includes(action.action)&&!task.followup?.executionStopped)throw new Error('尚未确认原执行停止，只能查证、等待或明确中断');
   if(action.action==='retry'&&isConfirmedCloneFailure(task,task.error))throw new Error('源站克隆已确认失败（导入 0 页），禁止继续自动 retry；请使用 interrupt 交由人工核查源网址、手动导入页面或跳过原站克隆');
   if(action.action==='retry'&&inspection.execution?.running)throw new Error('已观察到原会话仍在执行，不能重试');
@@ -201,6 +211,11 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
         manualResumedAt:task.followup?.manualResume?.at??null,
         createAttempted:task.kind==='generation'?Boolean(task.generation?.createAttempted):null,
         hasGeneratedSite:Boolean(task.generatedSiteId),
+        transferComplete:task.kind==='generation'?Boolean(task.generation?.transferComplete):null,
+        prepared:task.kind==='generation'?Boolean(task.generation?.prepared):null,
+        cloneResolvedAfterFallback:task.kind==='generation'
+          ?Boolean(task.generation?.cloneEnvironmentFallback&&(task.generation.transferComplete||task.generation.prepared))
+          :null,
         decisionAttempts:task.followup?.attempts??0,
         transportFailures:task.followup?.transportFailures??0,
       },

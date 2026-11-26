@@ -77,6 +77,7 @@ interface MockKoobooOptions {
   sandboxUnsupported?: boolean;
   sandboxPages?: number;
   templateId?: string;
+  hangGetStatus?: boolean;
 }
 
 function startMockKooboo(opts: MockKoobooOptions) {
@@ -162,6 +163,10 @@ function startMockKooboo(opts: MockKoobooOptions) {
       return res.end(JSON.stringify({ taskId: singleTaskId, finish: false, success: false }));
     }
     if (url.pathname === '/_api/v2/Transfer/GetStatus') {
+      if (opts.hangGetStatus) {
+        // Leave response hanging so koobooClient requestTimeoutMs triggers TimeoutError
+        return;
+      }
       const id = url.searchParams.get('id');
       if (id === sandboxTaskId) {
         const n = opts.sandboxPages ?? opts.pages ?? 0;
@@ -1058,5 +1063,250 @@ test('POST /api/automation/tasks enforces priority: explicit skipSourceTransfer 
     rmSync(directory, { recursive: true, force: true });
     await closeServer(hk.server);
     await closeServer(de.server);
+  }
+});
+
+test('3-hop fallback chain DE -> HK -> XM -> skipSourceTransfer materials fallback executes in exact order', async () => {
+  const de = startMockKooboo({ domainName: 'de.kooboo.io', pages: 0, singleSyncFail: true });
+  const hk = startMockKooboo({ domainName: 'hk.kooboo.io', pages: 0, singleSyncFail: true });
+  const xm = startMockKooboo({ domainName: 'xm.kooboo.io', pages: 0, singleSyncFail: true });
+  const deOrigin = await de.start();
+  const hkOrigin = await hk.start();
+  const xmOrigin = await xm.start();
+  const directory = mkdtempSync(join(tmpdir(), 'three-hop-fallback-'));
+  const f = await createApp({ directory, serveWeb: false, startWorker: false });
+  const login = await f.app.inject({ method: 'POST', url: '/api/login' });
+  const headers = { cookie: String(login.headers['set-cookie']).split(';')[0] };
+  const deEnvId = randomUUID();
+  const hkEnvId = randomUUID();
+  const xmEnvId = randomUUID();
+
+  try {
+    f.vault.update({
+      threshold: 80,
+      paused: true,
+      model: { endpoint: 'https://api.deepseek.com', name: 'deepseek-flash-1017', apiKey: 'test-key' },
+      environments: [
+        { id: deEnvId, name: '德国 kooboo', origin: deOrigin, apiOrigin: deOrigin, token: 'de-tok', defaultRootDomain: 'de.kooboo.io', cloneFallbackEnvironmentId: hkEnvId },
+        { id: hkEnvId, name: '香港 kooboo', origin: hkOrigin, apiOrigin: hkOrigin, token: 'hk-tok', defaultRootDomain: 'hk.kooboo.io', cloneFallbackEnvironmentId: xmEnvId },
+        { id: xmEnvId, name: '厦门 kooboo', origin: xmOrigin, apiOrigin: xmOrigin, token: 'xm-tok', defaultRootDomain: 'xm.kooboo.io' },
+      ],
+    });
+
+    const fileRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/files',
+      headers,
+      payload: {
+        name: 'README.md',
+        type: 'text/markdown',
+        content: Buffer.from('# Three Hop Facts\nCity: Xiamen', 'utf8').toString('base64'),
+      },
+    });
+    assert.equal(fileRes.statusCode, 201);
+    const uploadedFile = fileRes.json();
+
+    const res = f.automationStore.saveResource({
+      name: 'Three Hop Upgrade',
+      scenario: 'upgrade',
+      description: 'DE -> HK -> XM -> Materials',
+      contentUrl: 'https://source.example.nl',
+      referenceUrl: 'https://ref.test/',
+      externalSource: '',
+      externalId: '',
+      files: [uploadedFile],
+    });
+
+    const createRes = await f.app.inject({
+      method: 'POST',
+      url: '/api/automation/tasks',
+      headers: { ...headers, 'Idempotency-Key': randomUUID() },
+      payload: {
+        resourceIds: [res.id],
+        kind: 'generation',
+        scope: 'homepage',
+        environmentId: deEnvId,
+      },
+    });
+    assert.equal(createRes.statusCode, 201, createRes.body);
+    const taskId = createRes.json().items[0].id as string;
+    const task = f.automationStore.task(taskId)!;
+    delete task.autonomy;
+    task.requirementsEnabled = false;
+    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
+    f.automationStore.put(task);
+
+    await executeGeneration(
+      task,
+      f.automationStore,
+      f.vault,
+      directory,
+      AbortSignal.timeout(10000),
+      mockGenerationSession(task.id, () => xm.siteId),
+      passPreflight,
+    );
+
+    const saved = f.automationStore.task(taskId)!;
+    assert.equal(saved.environmentId, xmEnvId);
+    assert.deepEqual(saved.generation?.attemptedEnvironmentIds, [deEnvId, hkEnvId, xmEnvId]);
+    assert.equal(saved.generation?.cloneEnvironmentFallback?.fromEnvironmentId, hkEnvId);
+    assert.equal(saved.generation?.cloneEnvironmentFallback?.toEnvironmentId, xmEnvId);
+    assert.equal(saved.generation?.cloneEnvironmentFallback?.outcome, 'degraded-to-materials');
+    assert.equal(saved.generation?.skipSourceTransfer, true);
+    assert.equal(saved.generation?.transferComplete, true);
+    assert.equal(saved.generation?.prepared, true);
+    assert.equal(de.calls.filter((c) => c.path === '/_api/v2/Site/Delete').length, 1);
+    assert.equal(hk.calls.filter((c) => c.path === '/_api/v2/Site/Delete').length, 1);
+    assert.equal(xm.calls.filter((c) => c.path === '/_api/v2/Site/Delete').length, 0);
+    assert.equal(xm.calls.filter((c) => c.path === '/_api/v2/AI/CallFunction').length > 0, true);
+    const events = f.automationStore.events(taskId).map((e) => e.message);
+    assert.ok(events.some((m) => m.includes('已自动切换至回退环境「香港 kooboo」')));
+    assert.ok(events.some((m) => m.includes('已自动切换至回退环境「厦门 kooboo」')));
+    assert.ok(events.some((m) => m.includes('已依次尝试 3 个环境') && m.includes('已按配置自动转为跳过原站克隆，改用随附资料包')));
+  } finally {
+    await f.app.close();
+    rmSync(directory, { recursive: true, force: true });
+    await closeServer(de.server);
+    await closeServer(hk.server);
+    await closeServer(xm.server);
+  }
+});
+
+test('3-hop fallback continues from HK GetStatus timeout to XM clone success without short-circuiting', async () => {
+  const de = startMockKooboo({ domainName: 'de.kooboo.io', pages: 0, singleSyncFail: true });
+  const hk = startMockKooboo({ domainName: 'hk.kooboo.io', pages: 0, singleSyncFail: true, hangGetStatus: true });
+  const xm = startMockKooboo({ domainName: 'xm.kooboo.io', pages: 3 });
+  const deOrigin = await de.start();
+  const hkOrigin = await hk.start();
+  const xmOrigin = await xm.start();
+  const directory = mkdtempSync(join(tmpdir(), 'three-hop-timeout-'));
+  const f = await createApp({ directory, serveWeb: false, startWorker: false });
+  const deEnvId = randomUUID();
+  const hkEnvId = randomUUID();
+  const xmEnvId = randomUUID();
+
+  try {
+    f.vault.update({
+      threshold: 80,
+      paused: true,
+      model: { endpoint: 'https://api.deepseek.com', name: 'deepseek-flash-1017', apiKey: 'test-key' },
+      environments: [
+        { id: deEnvId, name: '德国 kooboo', origin: deOrigin, apiOrigin: deOrigin, token: 'de-tok', defaultRootDomain: 'de.kooboo.io', cloneFallbackEnvironmentId: hkEnvId },
+        { id: hkEnvId, name: '香港 kooboo', origin: hkOrigin, apiOrigin: hkOrigin, token: 'hk-tok', defaultRootDomain: 'hk.kooboo.io', cloneFallbackEnvironmentId: xmEnvId },
+        { id: xmEnvId, name: '厦门 kooboo', origin: xmOrigin, apiOrigin: xmOrigin, token: 'xm-tok', defaultRootDomain: 'xm.kooboo.io' },
+      ],
+    });
+    const res = f.automationStore.saveResource({
+      name: 'Timeout Mid Hop Upgrade',
+      scenario: 'upgrade',
+      description: 'DE 0 -> HK hang -> XM success',
+      contentUrl: 'https://source.example.nl',
+      referenceUrl: 'https://ref.test/',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+    const task = f.automationStore.create(
+      { resourceIds: [res.id], kind: 'generation', scope: 'homepage', environmentId: deEnvId, requirements: '' },
+      defaultAutomationSettings,
+    )[0];
+    delete task.autonomy;
+    task.requirementsEnabled = false;
+    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
+    f.automationStore.put(task);
+
+    await executeGeneration(
+      task,
+      f.automationStore,
+      f.vault,
+      directory,
+      AbortSignal.timeout(10000),
+      mockGenerationSession(task.id, () => xm.siteId),
+      { ...passPreflight, koobooRequestTimeoutMs: 60 },
+    );
+
+    const saved = f.automationStore.task(task.id)!;
+    assert.equal(saved.environmentId, xmEnvId);
+    assert.deepEqual(saved.generation?.attemptedEnvironmentIds, [deEnvId, hkEnvId, xmEnvId]);
+    assert.equal(saved.generation?.cloneEnvironmentFallback?.outcome, 'succeeded');
+    assert.equal(saved.generation?.transferComplete, true);
+    assert.equal(saved.generation?.skipSourceTransfer, undefined);
+    const events = f.automationStore.events(task.id).map((e) => e.message);
+    assert.ok(events.some((m) => m.includes('状态查询连续异常或超时')));
+    assert.ok(events.some((m) => m.includes('已自动切换至回退环境「厦门 kooboo」')));
+  } finally {
+    await f.app.close();
+    rmSync(directory, { recursive: true, force: true });
+    await closeServer(de.server);
+    await closeServer(hk.server);
+    await closeServer(xm.server);
+  }
+});
+
+test('3-hop chain stops at HK when HK clone succeeds without touching XM', async () => {
+  const de = startMockKooboo({ domainName: 'de.kooboo.io', pages: 0, singleSyncFail: true });
+  const hk = startMockKooboo({ domainName: 'hk.kooboo.io', pages: 4 });
+  const xm = startMockKooboo({ domainName: 'xm.kooboo.io', pages: 0 });
+  const deOrigin = await de.start();
+  const hkOrigin = await hk.start();
+  const xmOrigin = await xm.start();
+  const directory = mkdtempSync(join(tmpdir(), 'three-hop-hk-ok-'));
+  const f = await createApp({ directory, serveWeb: false, startWorker: false });
+  const deEnvId = randomUUID();
+  const hkEnvId = randomUUID();
+  const xmEnvId = randomUUID();
+
+  try {
+    f.vault.update({
+      threshold: 80,
+      paused: true,
+      model: { endpoint: 'https://api.deepseek.com', name: 'deepseek-flash-1017', apiKey: 'test-key' },
+      environments: [
+        { id: deEnvId, name: '德国 kooboo', origin: deOrigin, apiOrigin: deOrigin, token: 'de-tok', defaultRootDomain: 'de.kooboo.io', cloneFallbackEnvironmentId: hkEnvId },
+        { id: hkEnvId, name: '香港 kooboo', origin: hkOrigin, apiOrigin: hkOrigin, token: 'hk-tok', defaultRootDomain: 'hk.kooboo.io', cloneFallbackEnvironmentId: xmEnvId },
+        { id: xmEnvId, name: '厦门 kooboo', origin: xmOrigin, apiOrigin: xmOrigin, token: 'xm-tok', defaultRootDomain: 'xm.kooboo.io' },
+      ],
+    });
+    const res = f.automationStore.saveResource({
+      name: 'Mid Hop Success Upgrade',
+      scenario: 'upgrade',
+      description: 'DE 0 -> HK ok',
+      contentUrl: 'https://source.example.nl',
+      referenceUrl: 'https://ref.test/',
+      externalSource: '',
+      externalId: '',
+      files: [],
+    });
+    const task = f.automationStore.create(
+      { resourceIds: [res.id], kind: 'generation', scope: 'homepage', environmentId: deEnvId, requirements: '' },
+      defaultAutomationSettings,
+    )[0];
+    delete task.autonomy;
+    task.requirementsEnabled = false;
+    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
+    f.automationStore.put(task);
+
+    await executeGeneration(
+      task,
+      f.automationStore,
+      f.vault,
+      directory,
+      AbortSignal.timeout(10000),
+      mockGenerationSession(task.id, () => hk.siteId),
+      passPreflight,
+    );
+
+    const saved = f.automationStore.task(task.id)!;
+    assert.equal(saved.environmentId, hkEnvId);
+    assert.deepEqual(saved.generation?.attemptedEnvironmentIds, [deEnvId, hkEnvId]);
+    assert.equal(saved.generation?.cloneEnvironmentFallback?.outcome, 'succeeded');
+    assert.equal(saved.generation?.transferComplete, true);
+    assert.equal(xm.calls.length, 0, 'XM must not be called once HK succeeds');
+  } finally {
+    await f.app.close();
+    rmSync(directory, { recursive: true, force: true });
+    await closeServer(de.server);
+    await closeServer(hk.server);
+    await closeServer(xm.server);
   }
 });

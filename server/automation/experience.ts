@@ -16,7 +16,7 @@ export const PLATFORM_HARD_CONTRACTS = [
   '平台硬契约（最高优先级事实，不可被历史经验覆盖）：',
   '1. Kooboo 站点命名规则（对齐 shared/kooboo-domains.ts）：siteName 与 subDomain 仅允许英文字母、数字和下划线（_），最长 63 字符，严禁使用连字符（-）。不得按通用 DNS 常识建议把下划线改成连字符。',
   '2. 建站前置状态判据：当 generatedSiteId=null 且 generation.createAttempted=false 时，表示平台尚未发起任何建站请求，不属于自动化桥接卡死，也无重复建站风险；“已转交内置 AI 跟进”仅表示宿主将控制权交由跟进流程，不是建站执行回执。',
-  '3. 源站克隆失败止损契约：当准备阶段克隆内容站（Transfer/ByLevel、Transfer/Single 或 AISandbox/TransferByLevel）确认导入 0 页或已降级重试仍失败时，宿主直接以 source-access 终态中断，严禁继续自动 retry、转交 AI 跟进或发起经验复盘消耗 token；只有人工手动导入页面、更换有效源站地址或显式配置跳过原站克隆（skipSourceTransfer）后才可恢复。',
+  '3. 源站克隆失败止损契约：仅当准备阶段克隆内容站（Transfer/ByLevel、Transfer/Single 或 AISandbox/TransferByLevel）尚未完成（transferComplete !== true 且 prepared !== true）且确认导入 0 页或降级重试仍失败时，宿主才以 source-access 终态中断，严禁继续自动 retry、转交 AI 跟进或发起经验复盘消耗 token；只有人工手动导入页面、更换有效源站地址或显式配置跳过原站克隆（skipSourceTransfer）后才可恢复。反之，若 generation.transferComplete === true 或 generation.prepared === true，则 generation.cloneEnvironmentFallback 仅为原环境历史回退记录，表明回退环境已克隆成功或已按配置降级改用资料包，严禁以此历史字段为由按 source-access 中断。',
   '4. 冲突裁决规则：任何历史经验若与上述平台硬契约或工具返回的实时字段事实冲突，一律以平台硬契约和实时事实为准；筛选阶段必须跳过冲突经验，复盘阶段应将其判为 counterexample 或停用，不得继续强化错误经验。',
 ].join('\n');
 

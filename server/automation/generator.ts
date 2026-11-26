@@ -21,6 +21,7 @@ import {
   probeSite,
   fetchKoobooTemplateDetail,
   probeKoobooApiMethod,
+  isTransientKoobooReadError,
 } from './kooboo.js';
 import { readMaterial } from './materials.js';
 import { mergeTaskMaterials, resolveTaskMaterialEntry, syncMaterialManifestToSite, uploadMaterialsToKoobooSite } from './kooboo-materials.js';
@@ -67,14 +68,32 @@ function zeroPageTransferError(contentUrl:string,siteId:string|null|undefined,sa
   return new FollowupRuntimeError(techReason,nextSteps,userSummary);
 }
 
+function markCloneFallbackFailed(task:AutomationTask,store:AutomationStore){
+  if(task.generation?.cloneEnvironmentFallback){
+    task.generation.cloneEnvironmentFallback.outcome='failed';
+    store.put(task);
+  }
+}
+
+function isRecoverableTransferPollError(error:unknown,signal:AbortSignal):boolean{
+  if(signal.aborted||!error||typeof error!=='object')return false;
+  const err=error as {name?:unknown;message?:unknown};
+  const name=String(err.name||'');
+  if(name==='TimeoutError'||name==='AbortError')return true;
+  if(isTransientKoobooReadError(error))return true;
+  const message=String(err.message||'');
+  return /请求超时|operation was aborted|timeout|timed out/i.test(message);
+}
+
 async function resolveSingleTransferResult(params:{
   single:any;
   request:(path:string,body?:unknown,siteId?:string)=>Promise<any>;
   siteId:string;
   signal:AbortSignal;
   onProgress?:(info:{completedPages:number;totalPages:number;elapsedMs:number})=>void;
+  onPollError?:(info:{error:string;consecutiveErrors:number;elapsedMs:number;exhausted:boolean})=>void;
 }):Promise<TransferWaitResult>{
-  const {single,request,siteId,signal,onProgress}=params;
+  const {single,request,siteId,signal,onProgress,onPollError}=params;
   const finished=(single?.finish??single?.Finish)===true;
   const succeeded=(single?.success??single?.Success)===true;
   const failed=(single?.success??single?.Success)===false;
@@ -89,7 +108,7 @@ async function resolveSingleTransferResult(params:{
   }
   const taskId=String(single?.taskId??single?.TaskId??'').trim();
   if(taskId){
-    return await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:false,onProgress});
+    return await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:false,onProgress,onPollError});
   }
   const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
   return {pages:Number(summary?.pages||0),done:summary?.done!==false};
@@ -137,7 +156,9 @@ export async function waitForTransferPages(params:{
   stallTimeoutMs?:number;
   maxWaitMs?:number;
   progressIntervalMs?:number;
+  maxPollErrors?:number;
   onProgress?:(info:{completedPages:number;totalPages:number;elapsedMs:number})=>void;
+  onPollError?:(info:{error:string;consecutiveErrors:number;elapsedMs:number;exhausted:boolean})=>void;
 }):Promise<TransferWaitResult>{
   const {request,siteId,transferTaskId,signal,allowInitialCheck}=params;
   const pollMs=params.pollMs??2000;
@@ -147,64 +168,106 @@ export async function waitForTransferPages(params:{
   const stallTimeoutMs=params.stallTimeoutMs??120_000;
   const maxWaitMs=params.maxWaitMs??5*60_000;
   const progressIntervalMs=params.progressIntervalMs??15_000;
+  const maxPollErrors=Math.max(1,params.maxPollErrors??2);
+  const startedAt=Date.now();
+  let consecutivePollErrors=0;
+  const safeGetTaskStatus=async(fallbackPages=0):Promise<{pages:number;done:boolean}|null>=>{
+    try{
+      const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
+      return {pages:Number(summary?.pages||0),done:summary?.done!==false};
+    }catch(error){
+      if(!isRecoverableTransferPollError(error,signal))throw error;
+      return fallbackPages>0?{pages:fallbackPages,done:false}:null;
+    }
+  };
   if(allowInitialCheck){
-    const existing=await request('Transfer/GetTaskStatus',undefined,siteId);
-    if(Number(existing?.pages||0)>0&&existing?.done!==false){
-      return {pages:Number(existing.pages),done:true};
+    try{
+      const existing=await request('Transfer/GetTaskStatus',undefined,siteId);
+      if(Number(existing?.pages||0)>0&&existing?.done!==false){
+        return {pages:Number(existing.pages),done:true};
+      }
+    }catch(error){
+      if(!isRecoverableTransferPollError(error,signal))throw error;
+      consecutivePollErrors++;
+      const message=error instanceof Error?error.message:String(error||'请求异常');
+      params.onPollError?.({error:message,consecutiveErrors:consecutivePollErrors,elapsedMs:Date.now()-startedAt,exhausted:false});
     }
   }
-  const startedAt=Date.now();
   let lastProgressAt=startedAt,lastReportAt=0;
   let previousTotal=-1,previousDone=-1,stable=0,emptyPolls=0,emptyDoneChecks=0;
   while(stable<2){
     signal.throwIfAborted();
-    const status=await request(`Transfer/GetStatus?id=${encodeURIComponent(transferTaskId)}`,undefined,siteId);
-    const pages=Array.isArray(status)?status:[];
-    const now=Date.now();
-    if(pages.length>0){
-      const doneCount=pages.filter((p:any)=>p?.done===true).length;
-      const allDone=doneCount===pages.length;
-      if(pages.length!==previousTotal||doneCount!==previousDone){
-        lastProgressAt=now;
-      }
-      stable=allDone&&previousTotal===pages.length?stable+1:0;
-      previousTotal=pages.length;
-      previousDone=doneCount;
-      emptyPolls=0;
-      emptyDoneChecks=0;
-      if(stable>=2)break;
-      if(!allDone&&params.onProgress){
-        if((lastReportAt===0?now-startedAt:now-lastReportAt)>=progressIntervalMs){
-          lastReportAt=now;
-          params.onProgress({completedPages:doneCount,totalPages:pages.length,elapsedMs:now-startedAt});
+    try{
+      const status=await request(`Transfer/GetStatus?id=${encodeURIComponent(transferTaskId)}`,undefined,siteId);
+      const pages=Array.isArray(status)?status:[];
+      const now=Date.now();
+      if(pages.length>0){
+        consecutivePollErrors=0;
+        const doneCount=pages.filter((p:any)=>p?.done===true).length;
+        const allDone=doneCount===pages.length;
+        if(pages.length!==previousTotal||doneCount!==previousDone){
+          lastProgressAt=now;
         }
+        stable=allDone&&previousTotal===pages.length?stable+1:0;
+        previousTotal=pages.length;
+        previousDone=doneCount;
+        emptyPolls=0;
+        emptyDoneChecks=0;
+        if(stable>=2)break;
+        if(!allDone&&params.onProgress){
+          if((lastReportAt===0?now-startedAt:now-lastReportAt)>=progressIntervalMs){
+            lastReportAt=now;
+            params.onProgress({completedPages:doneCount,totalPages:pages.length,elapsedMs:now-startedAt});
+          }
+        }
+        const stalled=(now-lastProgressAt)>=stallTimeoutMs;
+        const timedOut=(now-startedAt)>=maxWaitMs;
+        if(!allDone&&(stalled||timedOut)){
+          const summary=await safeGetTaskStatus(doneCount);
+          return {pages:summary?summary.pages:doneCount,done:summary?summary.done:false,completedPages:doneCount,totalPages:pages.length,stalled,timedOut};
+        }
+        await delay(pollMs,signal);
+        continue;
       }
+      emptyPolls++;
+      const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
+      consecutivePollErrors=0;
+      if(Number(summary?.pages||0)>0&&summary?.done!==false){
+        return {pages:Number(summary.pages),done:true};
+      }
+      if(summary?.done===true){
+        emptyDoneChecks++;
+        if(emptyDoneChecks>=2)return {pages:0,done:true};
+        await delay(emptyDoneDelayMs,signal);
+        continue;
+      }
+      if(emptyPolls>=maxEmptyPolls)return {pages:0,done:Boolean(summary?.done)};
+      if((now-startedAt)>=maxWaitMs)return {pages:Number(summary?.pages||0),done:Boolean(summary?.done),timedOut:true};
+      await delay(pollMs,signal);
+    }catch(error){
+      if(!isRecoverableTransferPollError(error,signal))throw error;
+      consecutivePollErrors++;
+      const now=Date.now();
+      const elapsedMs=now-startedAt;
       const stalled=(now-lastProgressAt)>=stallTimeoutMs;
-      const timedOut=(now-startedAt)>=maxWaitMs;
-      if(!allDone&&(stalled||timedOut)){
-        const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
-        return {pages:Number(summary?.pages||0),done:summary?.done!==false,completedPages:doneCount,totalPages:pages.length,stalled,timedOut};
+      const timedOut=elapsedMs>=maxWaitMs;
+      const exhausted=consecutivePollErrors>=maxPollErrors||stalled||timedOut;
+      const message=error instanceof Error?error.message:String(error||'请求异常');
+      params.onPollError?.({error:message,consecutiveErrors:consecutivePollErrors,elapsedMs,exhausted});
+      if(exhausted){
+        const doneCount=Math.max(0,previousDone);
+        const totalCount=Math.max(0,previousTotal);
+        if(doneCount>0){
+          const summary=await safeGetTaskStatus(doneCount);
+          return {pages:summary?summary.pages:doneCount,done:summary?summary.done:false,completedPages:doneCount,totalPages:totalCount,stalled,timedOut:true};
+        }
+        return {pages:0,done:false,completedPages:0,totalPages:totalCount,stalled:stalled||/TimeoutError|AbortError|超时|aborted/i.test(message),timedOut:true};
       }
       await delay(pollMs,signal);
-      continue;
     }
-    emptyPolls++;
-    const summary=await request('Transfer/GetTaskStatus',undefined,siteId);
-    if(Number(summary?.pages||0)>0&&summary?.done!==false){
-      return {pages:Number(summary.pages),done:true};
-    }
-    if(summary?.done===true){
-      emptyDoneChecks++;
-      if(emptyDoneChecks>=2)return {pages:0,done:true};
-      await delay(emptyDoneDelayMs,signal);
-      continue;
-    }
-    if(emptyPolls>=maxEmptyPolls)return {pages:0,done:Boolean(summary?.done)};
-    if((now-startedAt)>=maxWaitMs)return {pages:Number(summary?.pages||0),done:Boolean(summary?.done),timedOut:true};
-    await delay(pollMs,signal);
   }
-  const status=await request('Transfer/GetTaskStatus',undefined,siteId);
-  return {pages:Number(status?.pages||0),done:status?.done!==false,completedPages:Math.max(0,previousDone),totalPages:Math.max(0,previousTotal),stalled:false,timedOut:false};
+  const summary=await safeGetTaskStatus(Math.max(0,previousDone));
+  return {pages:summary?summary.pages:Math.max(0,previousDone),done:summary?summary.done:true,completedPages:Math.max(0,previousDone),totalPages:Math.max(0,previousTotal),stalled:false,timedOut:false};
 }
 
 function isValidHttpUrl(value:string){
@@ -327,7 +390,7 @@ export async function executeGeneration(
   directory: string,
   signal: AbortSignal,
   openSession: typeof generationSession = generationSession,
-  options?: { preflightReference?: ReferencePreflightFn },
+  options?: { preflightReference?: ReferencePreflightFn; koobooRequestTimeoutMs?: number },
 ) {
   let hadTransferTaskBeforeRun=Boolean(task.generation?.transferTaskId);
   const versionInput=store.version(task.versionId);
@@ -358,7 +421,7 @@ export async function executeGeneration(
   let templateRef:NonNullable<AutomationTask['generation']>['referenceTemplate'];
   while(true){
     if(versionInput?.referenceTemplateId)await resolveTaskReferenceTemplate(task,versionInput,store,vault,signal);
-    const client=koobooClient(task,vault,signal);
+    const client=koobooClient(task,vault,signal,options?.koobooRequestTimeoutMs?{requestTimeoutMs:options.koobooRequestTimeoutMs}:undefined);
     environment=client.environment;origin=client.origin;request=client.request;
     apiOrigin=new URL(environment.apiOrigin||origin).origin;
     // Older executions already submitted a prompt without durable delivery receipts.
@@ -472,6 +535,15 @@ export async function executeGeneration(
       store.event(task.id,`${label}：已完成 ${completedPages}/${totalPages} 页（已等待 ${seconds} 秒）`);
       store.put(task);
     };
+    const transferPollError=(label:string)=>({error,consecutiveErrors,exhausted}:{error:string;consecutiveErrors:number;elapsedMs:number;exhausted:boolean})=>{
+      store.event(
+        task.id,
+        exhausted
+          ?`${label}状态查询连续异常或超时（第 ${consecutiveErrors} 次：${error}），结束等待并转入后续降级/回退处理`
+          :`${label}状态查询暂时超时或异常（第 ${consecutiveErrors} 次：${error}），稍后重试查询`,
+      );
+      store.put(task);
+    };
     const tryDegradeToMaterialsOnCloneFailure=():boolean=>{
       const currentGen=task.generation!;
       if(!currentGen.fallbackToMaterialsOnCloneFailure)return false;
@@ -479,15 +551,22 @@ export async function executeGeneration(
       if(!availableMaterials.length)return false;
       currentGen.skipSourceTransfer=true;
       currentGen.transferComplete=true;
+      if(currentGen.cloneEnvironmentFallback)currentGen.cloneEnvironmentFallback.outcome='degraded-to-materials';
       if(currentGen.sourceSandbox)currentGen.sourceSandbox.complete=true;
       const degradeMarker='原站克隆已自动降级为跳过：请直接以已导入的资料包作为业务事实来源，不要依赖原站克隆页面。';
       if(!task.message.includes(degradeMarker)){
         task.message+=(task.message?'\n':'')+degradeMarker;
       }
       store.put(task);
+      const attemptCount=currentGen.attemptedEnvironmentIds?.length||1;
+      const scopeNote=attemptCount>2
+        ?`已依次尝试 ${attemptCount} 个环境，含回退环境重试`
+        :currentGen.cloneEnvironmentFallback
+          ?'含回退环境重试'
+          :'含单页降级重试';
       store.event(
         task.id,
-        `原站克隆（${currentGen.cloneEnvironmentFallback?'含回退环境重试':'含单页降级重试'}）仍为 0 页，已按配置自动转为跳过原站克隆，改用随附资料包（${availableMaterials.length} 份文件）继续生成`,
+        `原站克隆（${scopeNote}）仍为 0 页，已按配置自动转为跳过原站克隆，改用随附资料包（${availableMaterials.length} 份文件）继续生成`,
       );
       return true;
     };
@@ -560,8 +639,10 @@ export async function executeGeneration(
         reason:`源站克隆导入 0 页（${input.contentUrl}）`,
         ...(abandonedRemoteSiteId?{abandonedSiteId:abandonedRemoteSiteId,abandonedRemoteDeleted:remoteDeleted}:{}),
         switchedAt:Date.now(),
+        outcome:'pending',
       };
       if(!store.switchTaskEnvironmentOnCloneFallback(task,abandonedLocalSiteId)){
+        markCloneFallbackFailed(task,store);
         throw zeroPageTransferError(input.contentUrl,abandonedLocalSiteId,sandboxName,true);
       }
       store.event(
@@ -597,13 +678,14 @@ export async function executeGeneration(
           task.generation.transferFallbackAttempted=true;store.put(task);
           if(await tryFallbackEnvironment(sandbox||undefined))continue;
           if(tryDegradeToMaterialsOnCloneFailure())break;
+          markCloneFallbackFailed(task,store);
           throw zeroPageTransferError(input.contentUrl,site.id,sandbox||'source-sandbox',Boolean(task.generation.cloneEnvironmentFallback));
         }
         sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
         task.generation.sourceSandbox=sourceSandbox;store.put(task);
         store.event(task.id,`已创建只读源站 Sandbox ${sandbox}（${sandboxSiteId}），正在同步旧内容站`);
       }
-      let transfer=await waitForTransferPages({request,siteId:sourceSandbox.siteId,transferTaskId:sourceSandbox.transferTaskId!,signal,allowInitialCheck:hadSandboxTransfer,onProgress:transferProgress('正在同步旧内容站 Sandbox')});
+      let transfer=await waitForTransferPages({request,siteId:sourceSandbox.siteId,transferTaskId:sourceSandbox.transferTaskId!,signal,allowInitialCheck:hadSandboxTransfer,onProgress:transferProgress('正在同步旧内容站 Sandbox'),onPollError:transferPollError('旧内容站 Sandbox 同步')});
       if(!transfer.pages&&!task.generation.transferFallbackAttempted){
         task.generation.transferFallbackAttempted=true;store.put(task);
         store.event(task.id,'旧内容站 Sandbox 克隆完成但导入 0 页，尝试重建 1 次只读源站抓取');
@@ -613,16 +695,19 @@ export async function executeGeneration(
           if(isValidSandbox(sandbox,sandboxSiteId,transferTaskId)){
             sourceSandbox={sandbox,siteId:sandboxSiteId,previewUrl,transferTaskId,complete:false};
             task.generation.sourceSandbox=sourceSandbox;store.put(task);
-            transfer=await waitForTransferPages({request,siteId:sandboxSiteId,transferTaskId,signal,allowInitialCheck:false,onProgress:transferProgress('正在同步旧内容站 Sandbox')});
+            transfer=await waitForTransferPages({request,siteId:sandboxSiteId,transferTaskId,signal,allowInitialCheck:false,onProgress:transferProgress('正在同步旧内容站 Sandbox'),onPollError:transferPollError('旧内容站 Sandbox 同步')});
           }
         }catch(err:any){store.event(task.id,`重建只读源站抓取失败：${err?.message||'请求异常'}`);}
       }
       if(!transfer.pages){
         if(await tryFallbackEnvironment(sourceSandbox.sandbox))continue;
         if(tryDegradeToMaterialsOnCloneFailure())break;
+        markCloneFallbackFailed(task,store);
         throw zeroPageTransferError(input.contentUrl,site.id,sourceSandbox.sandbox,Boolean(task.generation.cloneEnvironmentFallback));
       }
-      sourceSandbox.complete=true;task.generation.sourceSandbox=sourceSandbox;task.generation.transferComplete=true;store.put(task);
+      sourceSandbox.complete=true;task.generation.sourceSandbox=sourceSandbox;task.generation.transferComplete=true;
+      if(task.generation.cloneEnvironmentFallback)task.generation.cloneEnvironmentFallback.outcome='succeeded';
+      store.put(task);
       store.event(
         task.id,
         transfer.stalled||transfer.timedOut
@@ -645,7 +730,7 @@ export async function executeGeneration(
             );
             try{
               const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
-              const transfer=await resolveSingleTransferResult({single,request,siteId,signal,onProgress:transferProgress('正在等待内容站克隆')});
+              const transfer=await resolveSingleTransferResult({single,request,siteId,signal,onProgress:transferProgress('正在等待内容站克隆'),onPollError:transferPollError('内容站单页抓取')});
               pages=transfer.pages;
             }catch(err:any){store.event(task.id,`${task.generation.overrideContentUrl?'替换原网址单页':'单页降级'}抓取失败：${err?.message||'请求异常'}`);}
           }
@@ -653,28 +738,34 @@ export async function executeGeneration(
             task.generation.transferFallbackAttempted=true;store.put(task);
             if(await tryFallbackEnvironment())continue;
             if(tryDegradeToMaterialsOnCloneFailure())break;
+            markCloneFallbackFailed(task,store);
             throw zeroPageTransferError(input.contentUrl,site.id,undefined,Boolean(task.generation.cloneEnvironmentFallback));
           }
-          task.generation.transferComplete=true;store.put(task);
+          task.generation.transferComplete=true;
+          if(task.generation.cloneEnvironmentFallback)task.generation.cloneEnvironmentFallback.outcome='succeeded';
+          store.put(task);
           store.event(task.id,'已确认目标站存在导入页面，继续准备参考站');
         }else{
           store.event(task.id,`正在等待内容站克隆完成：${input.contentUrl}`);
           store.put(task);
-          let transfer=await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:hadTransferTaskBeforeRun,onProgress:transferProgress('正在等待内容站克隆')});
+          let transfer=await waitForTransferPages({request,siteId,transferTaskId:taskId,signal,allowInitialCheck:hadTransferTaskBeforeRun,onProgress:transferProgress('正在等待内容站克隆'),onPollError:transferPollError('内容站克隆')});
           if(!transfer.pages&&!task.generation.transferFallbackAttempted){
             task.generation.transferFallbackAttempted=true;store.put(task);
             store.event(task.id,'内容站克隆完成但导入 0 页，尝试通过 Transfer/Single 降级抓取首页 1 次');
             try{
               const single=await request('Transfer/Single',{pageUrl:input.contentUrl,name:'index'},siteId);
-              transfer=await resolveSingleTransferResult({single,request,siteId,signal,onProgress:transferProgress('正在等待内容站克隆')});
+              transfer=await resolveSingleTransferResult({single,request,siteId,signal,onProgress:transferProgress('正在等待内容站克隆'),onPollError:transferPollError('内容站单页抓取')});
             }catch(err:any){store.event(task.id,`单页降级抓取失败：${err?.message||'请求异常'}`);}
           }
           if(!transfer.pages){
             if(await tryFallbackEnvironment())continue;
             if(tryDegradeToMaterialsOnCloneFailure())break;
+            markCloneFallbackFailed(task,store);
             throw zeroPageTransferError(input.contentUrl,site.id,undefined,Boolean(task.generation.cloneEnvironmentFallback));
           }
-          task.generation.transferComplete=true;store.put(task);
+          task.generation.transferComplete=true;
+          if(task.generation.cloneEnvironmentFallback)task.generation.cloneEnvironmentFallback.outcome='succeeded';
+          store.put(task);
           store.event(
             task.id,
             transfer.stalled||transfer.timedOut

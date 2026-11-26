@@ -187,20 +187,28 @@ async function delayWithSignal(ms: number, signal: AbortSignal): Promise<void> {
 
 const DEFAULT_READ_RETRY_DELAYS_MS = [500, 1500] as const;
 
-export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vault,signal:AbortSignal,options?:{retryDelaysMs?:readonly number[]}) {
+export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vault,signal:AbortSignal,options?:{retryDelaysMs?:readonly number[];requestTimeoutMs?:number}) {
   const environment=vault.get().environments.find(e=>e.id===task.environmentId);
   if(!environment?.token)throw new Error('缺少 Kooboo 环境令牌，请在系统设置补齐');
   const origin=new URL(environment.origin).origin,apiOrigin=new URL(environment.apiOrigin||origin).origin;
   const retryDelaysMs=options?.retryDelaysMs??DEFAULT_READ_RETRY_DELAYS_MS;
+  const requestTimeoutMs=options?.requestTimeoutMs??120000;
   const request=async(path:string,body?:unknown,siteId?:string):Promise<any>=>{
     const url=new URL(`/_api/v2/${path}`,apiOrigin);if(siteId)url.searchParams.set('SiteId',siteId);
+    const cleanPath=path.split('?')[0]!;
     const canRetryRead=body===undefined;
     let result!:{status:number;body:string};
     for(let attempt=0;;attempt++){
+      const timeoutSignal=AbortSignal.timeout(requestTimeoutMs);
       try{
-        result=await httpRead(url,{token:environment.token,body,signal:AbortSignal.any([signal,AbortSignal.timeout(120000)])});
+        result=await httpRead(url,{token:environment.token,body,signal:AbortSignal.any([signal,timeoutSignal])});
         break;
       }catch(error){
+        if(!signal.aborted&&timeoutSignal.aborted){
+          const timeoutErr=new Error(`Kooboo ${cleanPath} 请求超时（${Math.max(1,Math.round(requestTimeoutMs/1000))} 秒）`,{cause:error});
+          timeoutErr.name='TimeoutError';
+          throw timeoutErr;
+        }
         if(!canRetryRead||signal.aborted||attempt>=retryDelaysMs.length||!isTransientKoobooReadError(error))throw error;
         await delayWithSignal(retryDelaysMs[attempt]!,signal);
       }

@@ -8,6 +8,7 @@ import { randomUUID } from 'node:crypto';
 import { createApp } from '../server/app.js';
 import { defaultAutomationSettings } from '../shared/automation.js';
 import { executeGeneration, waitForTransferPages } from '../server/automation/generator.js';
+import { koobooClient } from '../server/automation/kooboo.js';
 
 async function listen(server: ReturnType<typeof createServer>) {
   await new Promise<void>((resolve) => server.listen(0, '127.0.0.1', resolve));
@@ -288,6 +289,103 @@ test('executeGeneration records visible waiting and completion events for legacy
     const messages = f.automationStore.events(task.id).map((e) => e.message);
     assert.ok(messages.some((m) => m.includes('正在等待内容站克隆完成：https://legacy.test/')));
     assert.ok(messages.some((m) => m.includes('内容站克隆完成；参考站由 Kooboo AI 使用 Sandbox tools 准备')));
+  } finally {
+    await f.app.close();
+    rmSync(directory, { recursive: true, force: true });
+    await closeServer(server);
+  }
+});
+
+test('waitForTransferPages converges on consecutive AbortError/TimeoutError poll failures while preserving caller aborts and auth errors', async () => {
+  const pollErrors: Array<{ error: string; consecutiveErrors: number; exhausted: boolean }> = [];
+  let attempts = 0;
+  const result = await waitForTransferPages({
+    request: async (path) => {
+      if (path.startsWith('Transfer/GetStatus')) {
+        attempts++;
+        if (attempts === 1) return [{ url: 'https://slow.example.test/', done: false }];
+        const abortErr = new Error('The operation was aborted');
+        abortErr.name = 'AbortError';
+        throw abortErr;
+      }
+      throw new Error(`Unexpected path: ${path}`);
+    },
+    siteId: 'site-poll-timeout',
+    transferTaskId: 'task-poll-timeout',
+    signal: AbortSignal.timeout(5000),
+    allowInitialCheck: false,
+    pollMs: 5,
+    maxPollErrors: 2,
+    onPollError: (info) => pollErrors.push(info),
+  });
+
+  assert.equal(attempts, 3);
+  assert.equal(result.pages, 0);
+  assert.equal(result.done, false);
+  assert.equal(result.timedOut, true);
+  assert.equal(result.stalled, true);
+  assert.equal(result.totalPages, 1);
+  assert.equal(pollErrors.length, 2);
+  assert.equal(pollErrors[0]!.exhausted, false);
+  assert.equal(pollErrors[1]!.exhausted, true);
+
+  // Caller abort must still rethrow immediately
+  const callerAbort = new AbortController();
+  callerAbort.abort(new Error('operator cancelled'));
+  await assert.rejects(
+    () =>
+      waitForTransferPages({
+        request: async () => {
+          throw new Error('should not be called');
+        },
+        siteId: 'site-abort',
+        transferTaskId: 'task-abort',
+        signal: callerAbort.signal,
+        allowInitialCheck: false,
+      }),
+    /operator cancelled/,
+  );
+
+  // Non-recoverable 401 auth errors must not be swallowed
+  await assert.rejects(
+    () =>
+      waitForTransferPages({
+        request: async () => {
+          throw new Error('Kooboo Transfer/GetStatus 请求失败（401）：Unauthorized');
+        },
+        siteId: 'site-auth',
+        transferTaskId: 'task-auth',
+        signal: AbortSignal.timeout(5000),
+        allowInitialCheck: false,
+        pollMs: 5,
+      }),
+    /401/,
+  );
+});
+
+test('koobooClient converts internal request timeout into a readable TimeoutError', async () => {
+  const server = createServer((_req, _res) => {
+    // Intentionally keep socket open past requestTimeoutMs
+  });
+  const origin = await listen(server);
+  const directory = mkdtempSync(join(tmpdir(), 'kooboo-timeout-'));
+  const f = await createApp({ directory, serveWeb: false, startWorker: false });
+  const envId = randomUUID();
+  try {
+    f.vault.update({
+      threshold: 80,
+      paused: true,
+      model: { endpoint: 'https://api.deepseek.com', name: 'deepseek-flash-1017', apiKey: 'test-key' },
+      environments: [{ id: envId, name: 'SlowEnv', origin, apiOrigin: origin, token: 'tok' }],
+    });
+    const { request } = koobooClient({ environmentId: envId }, f.vault, AbortSignal.timeout(5000), {
+      retryDelaysMs: [10],
+      requestTimeoutMs: 50,
+    });
+    await assert.rejects(
+      () => request('Transfer/GetStatus?id=t1', undefined, 'site-1'),
+      (err: unknown) => err instanceof Error && err.name === 'TimeoutError' && /Kooboo Transfer\/GetStatus 请求超时/.test(err.message),
+    );
   } finally {
     await f.app.close();
     rmSync(directory, { recursive: true, force: true });

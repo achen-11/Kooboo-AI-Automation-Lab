@@ -537,3 +537,65 @@ test('detects HOMEPAGE_SUBPAGE_LINK, LOW_RES_IMAGE_UPSCALE, overlayCardBottom cl
   const digest = formatPrecheckDigest([{ snapshot: snap, signals }]);
   assert.match(digest, /浮层卡底=945px\/900px/);
 });
+
+test('emits LOW_TEXT_CONTRAST (minor and major) and address duplication in CONTENT_DUPLICATION', () => {
+  assert.equal(collectViewportVisualPrecheckInPage.toString().includes('__name'), false);
+
+  const minorContrastSignals = evaluateVisualPrecheckSignals(
+    baseSnapshot({
+      contrastSummary: {
+        violationCount: 1,
+        samples: [{ ratio: 3.6, required: 4.5, fontSize: 15, text: 'Muted body caption' }],
+        manualCheckCount: 2,
+        fadedCount: 0,
+      },
+    }),
+  );
+  const minorSig = minorContrastSignals.find(s => s.code === 'LOW_TEXT_CONTRAST');
+  assert.ok(minorSig);
+  assert.equal(minorSig.severityHint, 'minor');
+  assert.equal(minorSig.ruleId, undefined);
+  assert.match(minorSig.summary, /1 处纯色背景文字对比度低于 WCAG 标准/);
+  assert.match(minorSig.summary, /另有 2 处位于图片\/渐变上/);
+
+  const majorContrastSnap = baseSnapshot({
+    contrastSummary: {
+      violationCount: 3,
+      samples: [
+        { ratio: 2.1, required: 4.5, fontSize: 14, text: 'Very faint text' },
+        { ratio: 3.8, required: 4.5, fontSize: 16, text: 'Low contrast label' },
+      ],
+      manualCheckCount: 1,
+      fadedCount: 2,
+    },
+  });
+  const majorContrastSignals = evaluateVisualPrecheckSignals(majorContrastSnap);
+  const majorSig = majorContrastSignals.find(s => s.code === 'LOW_TEXT_CONTRAST');
+  assert.ok(majorSig);
+  assert.equal(majorSig.severityHint, 'major');
+  assert.equal(majorSig.metrics.worstRatio, 2.1);
+
+  const contrastDigest = formatPrecheckDigest([{ snapshot: majorContrastSnap, signals: majorContrastSignals }]);
+  assert.match(contrastDigest, /文字对比度检查：3 处纯色背景文字低于 WCAG 标准/);
+  assert.match(contrastDigest, /另有 1 处位于图片\/渐变上需结合截图复核/);
+  assert.match(contrastDigest, /LOW_TEXT_CONTRAST/);
+
+  const addrDupSignals = evaluateVisualPrecheckSignals(
+    baseSnapshot({
+      duplicationSummary: {
+        phones: [],
+        emails: [],
+        addresses: [{ value: '123 Main Street', total: 4, main: 3 }],
+        ctaLabels: [],
+        duplicateBlocks: [],
+        duplicateImages: [],
+      },
+    }),
+  );
+  const addrSig = addrDupSignals.find(s => s.code === 'CONTENT_DUPLICATION');
+  assert.ok(addrSig);
+  assert.equal(addrSig.severityHint, 'major');
+  assert.equal(addrSig.ruleId, 'R-DUPE-01');
+  assert.equal(addrSig.metrics.addressCount, 1);
+  assert.match(addrSig.summary, /地址重复（123 Main Street 整页4\/正文3）/);
+});

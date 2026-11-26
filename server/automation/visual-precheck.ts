@@ -97,10 +97,25 @@ export interface ImageDistortionCandidate {
 export interface DuplicationSummary {
   phones: Array<{ value: string; total: number; main: number }>;
   emails: Array<{ value: string; total: number; main: number }>;
+  addresses?: Array<{ value: string; total: number; main: number }>;
   ctaLabels: Array<{ label: string; total: number; main: number }>;
   duplicateBlocks: Array<{ text: string; count: number }>;
   duplicateImages: Array<{ srcHint: string; count: number }>;
   heroRepeatedBadges?: Array<{ text: string; count: number }>;
+}
+
+export interface LowContrastSample {
+  ratio: number;
+  required: number;
+  fontSize: number;
+  text: string;
+}
+
+export interface ContrastPrecheckSummary {
+  violationCount: number;
+  samples: LowContrastSample[];
+  manualCheckCount: number;
+  fadedCount: number;
 }
 
 export interface ExternalAssetCandidate {
@@ -148,6 +163,7 @@ export interface RawViewportPrecheckSnapshot {
   maxVerticalBlankGap?: number;
   imageDistortions?: ImageDistortionCandidate[];
   duplicationSummary?: DuplicationSummary;
+  contrastSummary?: ContrastPrecheckSummary;
   localeHygiene?: LocaleHygieneSnapshot;
   taskScope?: 'homepage' | 'site';
   externalAssets?: ExternalAssetCandidate[];
@@ -168,6 +184,7 @@ export type VisualPrecheckSignalCode =
   | 'SPLIT_HEIGHT_IMBALANCE'
   | 'SECTION_AIR_GAP'
   | 'IMAGE_VISIBILITY_ISSUE'
+  | 'LOW_TEXT_CONTRAST'
   | 'CONTENT_DUPLICATION'
   | 'MIN_FONT_SIZE'
   | 'NAV_NOT_STICKY'
@@ -469,6 +486,35 @@ export function evaluateVisualPrecheckSignals(snapshot: RawViewportPrecheckSnaps
     });
   }
 
+  if (snapshot.contrastSummary && snapshot.contrastSummary.violationCount > 0) {
+    const cs = snapshot.contrastSummary;
+    const worst = cs.samples.length
+      ? cs.samples.reduce((best, cur) => (cur.ratio < best.ratio ? cur : best))
+      : undefined;
+    const severe =
+      cs.violationCount >= 3 || cs.samples.some(s => s.ratio < s.required - 1.2);
+    const worstDetail = worst
+      ? `，最差 ${worst.ratio.toFixed(1)}:1 < ${worst.required}:1，${Math.round(worst.fontSize)}px「${worst.text.slice(0, 24)}」`
+      : '';
+    signals.push({
+      code: 'LOW_TEXT_CONTRAST',
+      severityHint: severe ? 'major' : 'minor',
+      viewport: snapshot.viewport,
+      summary: `检测到 ${cs.violationCount} 处纯色背景文字对比度低于 WCAG 标准（H16/H29${worstDetail}）${cs.manualCheckCount > 0 ? `；另有 ${cs.manualCheckCount} 处位于图片/渐变上需结合截图复核` : ''}。`,
+      metrics: {
+        count: cs.violationCount,
+        ...(worst
+          ? {
+              worstRatio: Math.round(worst.ratio * 100) / 100,
+              requiredRatio: worst.required,
+            }
+          : {}),
+        manualCheckCount: cs.manualCheckCount,
+        fadedCount: cs.fadedCount,
+      },
+    });
+  }
+
   if (snapshot.duplicationSummary) {
     const d = snapshot.duplicationSummary;
     const parts: string[] = [];
@@ -477,6 +523,9 @@ export function evaluateVisualPrecheckSignals(snapshot: RawViewportPrecheckSnaps
     }
     if (d.emails.length) {
       parts.push(`邮箱重复（${d.emails.map(e => `${e.value} 整页${e.total}/正文${e.main}`).join('、')}）`);
+    }
+    if (d.addresses?.length) {
+      parts.push(`地址重复（${d.addresses.map(a => `${a.value} 整页${a.total}/正文${a.main}`).join('、')}）`);
     }
     if (d.ctaLabels.length) {
       parts.push(`CTA 文案重复（${d.ctaLabels.map(c => `「${c.label}」整页${c.total}/正文${c.main}`).join('、')}）`);
@@ -494,6 +543,7 @@ export function evaluateVisualPrecheckSignals(snapshot: RawViewportPrecheckSnaps
       const severe =
         d.phones.some(p => p.total > 3 || p.main > 1) ||
         d.emails.some(e => e.total > 3 || e.main > 1) ||
+        Boolean(d.addresses?.some(a => a.total > 2 || a.main > 1)) ||
         d.duplicateBlocks.length > 0;
       signals.push({
         code: 'CONTENT_DUPLICATION',
@@ -504,6 +554,7 @@ export function evaluateVisualPrecheckSignals(snapshot: RawViewportPrecheckSnaps
         metrics: {
           phoneCount: d.phones.length,
           emailCount: d.emails.length,
+          addressCount: d.addresses?.length || 0,
           ctaCount: d.ctaLabels.length,
           blockCount: d.duplicateBlocks.length,
           imageCount: d.duplicateImages.length,
@@ -978,7 +1029,9 @@ export function collectViewportVisualPrecheckInPage(args: {
 
   let headerSticky: boolean | undefined;
   let desktopHamburgerDetected = false;
-  const headerEl = document.querySelector('header');
+  const headerEl =
+    document.querySelector('header') ||
+    document.querySelector('[class*="site-header" i], [class*="navbar" i]');
   if (headerEl) {
     const hdrRect = headerEl.getBoundingClientRect();
     const hdrStyle = getComputedStyle(headerEl);
@@ -996,15 +1049,18 @@ export function collectViewportVisualPrecheckInPage(args: {
           }
         }
         let hasVisibleHamburger = false;
-        for (const btn of Array.from(headerEl.querySelectorAll('button, [role="button"]'))) {
+        for (const btn of Array.from(headerEl.querySelectorAll('button, a, [role="button"]'))) {
           const br = btn.getBoundingClientRect();
           if (br.width < 12 || br.height < 12) continue;
           const bst = getComputedStyle(btn);
           if (bst.display === 'none' || bst.visibility === 'hidden' || Number(bst.opacity) === 0) continue;
           const hint = `${btn.getAttribute('aria-label') || ''} ${typeof (btn as HTMLElement).className === 'string' ? (btn as HTMLElement).className : ''} ${btn.textContent || ''}`;
+          if (!btn.closest('nav') && br.width <= 64 && /hamburger|burger|menu-toggle|mobile-menu|nav-toggle|drawer-toggle|open menu/i.test(hint)) {
+            desktopHamburgerDetected = true;
+            break;
+          }
           if (btn.hasAttribute('aria-expanded') || /menu|nav|hamburger|drawer|菜单|导航|≡|☰/i.test(hint)) {
             hasVisibleHamburger = true;
-            break;
           }
         }
         if (hasVisibleHamburger && visibleNavLinks < 3) {
@@ -1212,14 +1268,14 @@ export function collectViewportVisualPrecheckInPage(args: {
         }
       }
       if (visKids.length !== 2) continue;
-      const mediaCol = visKids.find(k => Boolean(k.querySelector('img')));
+      const mediaCol = visKids.find(k => Boolean(k.querySelector('img, video, picture')));
       const textCol = visKids.find(k => k !== mediaCol);
       if (!mediaCol || !textCol) continue;
       if (getComputedStyle(mediaCol).position === 'sticky') continue;
       checkedSplits++;
       let mTop = Infinity;
       let mBottom = -Infinity;
-      for (const im of Array.from(mediaCol.querySelectorAll('img'))) {
+      for (const im of Array.from(mediaCol.querySelectorAll('img, video, picture'))) {
         const mr = im.getBoundingClientRect();
         const mst = getComputedStyle(im);
         if (mr.width > 1 && mr.height > 1 && mst.display !== 'none' && mst.visibility !== 'hidden') {
@@ -1345,6 +1401,7 @@ export function collectViewportVisualPrecheckInPage(args: {
 
   const phoneCounts: Record<string, { display: string; total: number; main: number }> = {};
   const emailCounts: Record<string, { total: number; main: number }> = {};
+  const addressCounts: Record<string, { display: string; total: number; main: number }> = {};
   const ctaCounts: Record<string, { label: string; total: number; main: number }> = {};
   const blockCounts: Record<string, { text: string; count: number }> = {};
   const dupImgCounts: Record<string, { srcHint: string; count: number }> = {};
@@ -1378,6 +1435,18 @@ export function collectViewportVisualPrecheckInPage(args: {
         if (!emailCounts[key]) emailCounts[key] = { total: 0, main: 0 };
         emailCounts[key].total++;
         if (z.zone === 'main') emailCounts[key].main++;
+      }
+      const addrMatches =
+        z.text.match(
+          /(?:\b\d{1,4}\s+[A-Za-zÀ-ÿ][\w.'-]*(?:\s+[A-Za-zÀ-ÿ][\w.'-]*){0,3}\s+(?:street|st\.?|road|rd\.?|avenue|ave\.?|lane|ln\.?|boulevard|blvd\.?|drive|dr\.?|way)\b)|(?:\b[A-Za-zÀ-ÿ][\w.'-]*(?:straat|laan|weg|plein|gracht|dijk|kade|singel|steeg)\s+\d{1,4}[a-zA-Z]?\b)/gi,
+        ) || [];
+      for (const rawAddr of addrMatches) {
+        const cleanAddr = rawAddr.replace(/\s+/g, ' ').trim();
+        if (cleanAddr.length < 6) continue;
+        const key = cleanAddr.toLowerCase();
+        if (!addressCounts[key]) addressCounts[key] = { display: cleanAddr, total: 0, main: 0 };
+        addressCounts[key].total++;
+        if (z.zone === 'main') addressCounts[key].main++;
       }
     }
 
@@ -1428,6 +1497,10 @@ export function collectViewportVisualPrecheckInPage(args: {
     }
   }
 
+  const dupAddresses = Object.values(addressCounts)
+    .filter(a => a.total > 2 || a.main > 1)
+    .map(a => ({ value: a.display, total: a.total, main: a.main }));
+
   const duplicationSummary: DuplicationSummary = {
     phones: Object.values(phoneCounts)
       .filter(p => p.total > 3 || p.main > 1)
@@ -1435,6 +1508,7 @@ export function collectViewportVisualPrecheckInPage(args: {
     emails: Object.entries(emailCounts)
       .filter(([, e]) => e.total > 3 || e.main > 1)
       .map(([value, e]) => ({ value, total: e.total, main: e.main })),
+    ...(dupAddresses.length > 0 ? { addresses: dupAddresses } : {}),
     ctaLabels: Object.values(ctaCounts)
       .filter(c => c.total > 3 || c.main > 2)
       .map(c => ({ label: c.label, total: c.total, main: c.main })),
@@ -1562,6 +1636,191 @@ export function collectViewportVisualPrecheckInPage(args: {
     demoNavResiduals,
   };
 
+  let contrastViolationCount = 0;
+  const contrastSamples: LowContrastSample[] = [];
+  let contrastManualCount = 0;
+  let contrastFadedCount = 0;
+  if (body) {
+    const contrastTextEls = new Set<Element>();
+    for (const sel of ['main', 'header', 'footer']) {
+      const scope = document.querySelector(sel);
+      if (!scope) continue;
+      for (const el of Array.from(scope.querySelectorAll('*'))) {
+        if (contrastTextEls.size >= 420) break;
+        const tag = el.tagName;
+        if (tag === 'SCRIPT' || tag === 'STYLE' || tag === 'NOSCRIPT' || tag === 'SVG') continue;
+        if (el.closest('svg, [aria-hidden="true"], .sr-only')) continue;
+        let hasDirect = false;
+        for (const node of Array.from(el.childNodes)) {
+          if (node.nodeType === 3 && node.textContent && node.textContent.trim().length > 0) {
+            hasDirect = true;
+            break;
+          }
+        }
+        if (!hasDirect) continue;
+        const er = el.getBoundingClientRect();
+        if (er.width <= 1 || er.height <= 1) continue;
+        let elVis = true;
+        for (let cur: Element | null = el; elVis && cur; cur = cur.parentElement) {
+          const st = getComputedStyle(cur);
+          if (
+            st.display === 'none' ||
+            st.visibility === 'hidden' ||
+            st.visibility === 'collapse' ||
+            Number(st.opacity) <= 0.05
+          ) {
+            elVis = false;
+          }
+        }
+        if (elVis) contrastTextEls.add(el);
+      }
+    }
+
+    const contrastBlocks = new Map<Element, Element[]>();
+    for (const el of Array.from(contrastTextEls)) {
+      const key =
+        el.closest('p, h1, h2, h3, h4, h5, h6, li, button, a, td, th, label, figcaption, blockquote') || el;
+      let list = contrastBlocks.get(key);
+      if (!list) {
+        if (contrastBlocks.size >= 220) continue;
+        list = [];
+        contrastBlocks.set(key, list);
+      }
+      list.push(el);
+    }
+
+    for (const [block, els] of Array.from(contrastBlocks.entries())) {
+      const br = block.getBoundingClientRect();
+      const sec = block.closest('section') || body;
+      let overMedia = false;
+      for (const m of Array.from(sec.querySelectorAll('img, video, canvas'))) {
+        if (m.closest('header, footer')) continue;
+        const mr = m.getBoundingClientRect();
+        if (mr.width <= 1 || mr.height <= 1) continue;
+        const mst = getComputedStyle(m);
+        if (mst.display === 'none' || mst.visibility === 'hidden' || Number(mst.opacity) <= 0.05) continue;
+        const big = mr.width * mr.height >= viewportWidth * viewportHeight * 0.25;
+        const overlap = !(mr.right < br.left || mr.left > br.right || mr.bottom < br.top || mr.top > br.bottom);
+        if (big && overlap) {
+          overMedia = true;
+          break;
+        }
+      }
+      if (overMedia) {
+        contrastManualCount++;
+        continue;
+      }
+
+      let worstBlockViolation: LowContrastSample | null = null;
+      for (const el of els) {
+        const bgLayers: Array<{ r: number; g: number; b: number; a: number }> = [];
+        let hasNonSolidBg = false;
+        for (let cur: Element | null = el; cur && cur !== root; cur = cur.parentElement) {
+          const cst = getComputedStyle(cur);
+          if ((cst.backgroundImage && cst.backgroundImage !== 'none') || cst.backgroundClip === 'text') {
+            hasNonSolidBg = true;
+            break;
+          }
+          const bgMatch = String(cst.backgroundColor || '').match(/rgba?\(([^)]+)\)/i);
+          if (bgMatch) {
+            const parts = bgMatch[1]
+              .split(/[\s,/]+/)
+              .filter(Boolean)
+              .map(Number);
+            if (parts.length >= 3 && !parts.some(n => Number.isNaN(n))) {
+              const a = parts.length > 3 ? parts[3] : 1;
+              if (a > 0.02) {
+                bgLayers.push({ r: parts[0], g: parts[1], b: parts[2], a });
+                if (a >= 0.99) break;
+              }
+            }
+          }
+        }
+        if (hasNonSolidBg) {
+          contrastManualCount++;
+          continue;
+        }
+
+        let bgR = 255;
+        let bgG = 255;
+        let bgB = 255;
+        for (let i = bgLayers.length - 1; i >= 0; i--) {
+          const layer = bgLayers[i];
+          bgR = layer.r * layer.a + bgR * (1 - layer.a);
+          bgG = layer.g * layer.a + bgG * (1 - layer.a);
+          bgB = layer.b * layer.a + bgB * (1 - layer.a);
+        }
+
+        const elSt = getComputedStyle(el);
+        const fgMatch = String(elSt.color || '').match(/rgba?\(([^)]+)\)/i);
+        if (!fgMatch) continue;
+        const fgParts = fgMatch[1]
+          .split(/[\s,/]+/)
+          .filter(Boolean)
+          .map(Number);
+        if (fgParts.length < 3 || fgParts.some(n => Number.isNaN(n))) continue;
+        const fgA = fgParts.length > 3 ? fgParts[3] : 1;
+
+        let op = 1;
+        for (let cur: Element | null = el; cur && cur !== root; cur = cur.parentElement) {
+          const curOp = parseFloat(getComputedStyle(cur).opacity);
+          if (Number.isFinite(curOp)) op *= curOp;
+        }
+        if (op < 0.5 || fgA < 0.5) {
+          contrastFadedCount++;
+          continue;
+        }
+
+        const blendA = fgA * op;
+        const fgR = fgParts[0] * blendA + bgR * (1 - blendA);
+        const fgG = fgParts[1] * blendA + bgG * (1 - blendA);
+        const fgB = fgParts[2] * blendA + bgB * (1 - blendA);
+
+        const fgSr = fgR / 255;
+        const fgSg = fgG / 255;
+        const fgSb = fgB / 255;
+        const fgLum =
+          0.2126 * (fgSr <= 0.03928 ? fgSr / 12.92 : Math.pow((fgSr + 0.055) / 1.055, 2.4)) +
+          0.7152 * (fgSg <= 0.03928 ? fgSg / 12.92 : Math.pow((fgSg + 0.055) / 1.055, 2.4)) +
+          0.0722 * (fgSb <= 0.03928 ? fgSb / 12.92 : Math.pow((fgSb + 0.055) / 1.055, 2.4));
+
+        const bgSr = bgR / 255;
+        const bgSg = bgG / 255;
+        const bgSb = bgB / 255;
+        const bgLum =
+          0.2126 * (bgSr <= 0.03928 ? bgSr / 12.92 : Math.pow((bgSr + 0.055) / 1.055, 2.4)) +
+          0.7152 * (bgSg <= 0.03928 ? bgSg / 12.92 : Math.pow((bgSg + 0.055) / 1.055, 2.4)) +
+          0.0722 * (bgSb <= 0.03928 ? bgSb / 12.92 : Math.pow((bgSb + 0.055) / 1.055, 2.4));
+
+        const ratio = (Math.max(fgLum, bgLum) + 0.05) / (Math.min(fgLum, bgLum) + 0.05);
+        const fs = parseFloat(elSt.fontSize) || 16;
+        const fw = parseFloat(elSt.fontWeight) || 400;
+        const isLarge = fs >= 24 || (fs >= 18.66 && fw >= 700);
+        const required = isLarge ? 3 : 4.5;
+        if (ratio < required - 0.05 && (!worstBlockViolation || ratio < worstBlockViolation.ratio)) {
+          worstBlockViolation = {
+            ratio: Math.round(ratio * 100) / 100,
+            required,
+            fontSize: Math.round(fs * 10) / 10,
+            text: (block.textContent || '').replace(/\s+/g, ' ').trim().slice(0, 40),
+          };
+        }
+      }
+      if (worstBlockViolation) {
+        contrastViolationCount++;
+        if (contrastSamples.length < 10) {
+          contrastSamples.push(worstBlockViolation);
+        }
+      }
+    }
+  }
+  const contrastSummary: ContrastPrecheckSummary = {
+    violationCount: contrastViolationCount,
+    samples: contrastSamples,
+    manualCheckCount: contrastManualCount,
+    fadedCount: contrastFadedCount,
+  };
+
   return {
     viewport: args.viewport,
     url: location.href,
@@ -1593,6 +1852,7 @@ export function collectViewportVisualPrecheckInPage(args: {
     maxVerticalBlankGap,
     imageDistortions,
     duplicationSummary,
+    contrastSummary,
     localeHygiene,
     ...(externalAssets.length > 0 ? { externalAssets } : {}),
   };
@@ -2013,6 +2273,41 @@ export async function runVisualPrecheck(
     viewport,
     templateName: options?.templateName,
   });
+  if (
+    viewport === 'desktop' &&
+    snapshot.headerSticky === true &&
+    snapshot.documentHeight >= snapshot.viewportHeight + 700
+  ) {
+    try {
+      await page.evaluate(() => window.scrollTo(0, 700));
+      if (typeof page.waitForTimeout === 'function') {
+        await page.waitForTimeout(200);
+      }
+      const stillVisibleAfterScroll = await page.evaluate(() => {
+        const hdr =
+          document.querySelector('header') ||
+          document.querySelector('[class*="site-header" i], [class*="navbar" i]');
+        if (!hdr) return true;
+        const r = hdr.getBoundingClientRect();
+        const st = getComputedStyle(hdr);
+        return (
+          r.height > 1 &&
+          r.bottom > 8 &&
+          r.top < window.innerHeight &&
+          st.display !== 'none' &&
+          st.visibility !== 'hidden' &&
+          Number(st.opacity) > 0.05
+        );
+      });
+      if (!stillVisibleAfterScroll) {
+        snapshot.headerSticky = false;
+      }
+    } catch {
+      // ignore scroll probe failure
+    } finally {
+      await page.evaluate(() => window.scrollTo(0, 0)).catch(() => {});
+    }
+  }
   let mobileMenu: MobileMenuPrecheckResult | undefined;
   if (
     viewport === 'mobile' &&
@@ -2154,6 +2449,15 @@ export function formatPrecheckDigest(checks: ViewportVisualPrecheck[]): string {
     }
     if (typeof s.minFontViolationCount === 'number' && s.minFontViolationCount > 0) {
       lines.push(`- 最小字号检查：<12px 可见文字共 ${s.minFontViolationCount} 处`);
+    }
+    if (s.contrastSummary && (s.contrastSummary.violationCount > 0 || s.contrastSummary.manualCheckCount > 0)) {
+      lines.push(
+        `- 文字对比度检查：${s.contrastSummary.violationCount} 处纯色背景文字低于 WCAG 标准${
+          s.contrastSummary.manualCheckCount > 0
+            ? `，另有 ${s.contrastSummary.manualCheckCount} 处位于图片/渐变上需结合截图复核`
+            : ''
+        }`,
+      );
     }
     if (check.signals.length) {
       for (const sig of check.signals) {

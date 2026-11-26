@@ -28,6 +28,10 @@
 | `PAT-008` | `2026-11-26 · classic-auto-restoration` | 页面残留未本地化的外部图片/旧站 `http://` 资源，触发 HTTPS 拦截或跨站请求风险 | 真缺口（可 100% 机检） | 1 | L1 (`EXTERNAL_OR_INSECURE_ASSET`) + L2 (`R-TRUST-01`) + L3 (`site-ui-rules.ts`) | `landed-L1+L2+L3` |
 | `PAT-009` | `2026-11-26 · classic-auto-restoration` | 外联预览首页建议控制在 5–7 个板块（约 4,000–5,500px）防止过长疲劳 | 业务画像偏好（外联场景） | 1 | L4（观察中，不进全局硬约束） | `observing` (`L4-profile-only`) |
 | `PAT-010` | `2026-11-26 · classic-auto-restoration` | 外籍客群地区商家资料建议提供轻量双语切换（NL/EN），新站未落地 | 资料驱动/业务画像偏好 | 1 | L4（按资料显式清单或外联画像触发） | `observing` (`L4-profile-only`) |
+| `PAT-011` | `2026-11-26 · ui-spec-v1.3` | 纯色及半透明叠层背景文字 WCAG 对比度不足缺乏自动化机检，依赖肉眼抽查易漏检 | 真缺口（可 100% 机检） | 1 | L1 (`LOW_TEXT_CONTRAST`) | `landed-L1` |
+| `PAT-012` | `2026-11-26 · ui-spec-v1.3` | 桌面端导航吸顶仅查静态 CSS `position` 易漏检滚动失效；同页地址重复、`video/picture` 双栏失衡及桌面残留汉堡按钮存在探针盲区 | 已有规则漏检 | 1 | L1 (`visual-precheck.ts`) | `landed-L1` |
+| `PAT-013` | `2026-11-26 · ui-spec-v1.3` | 部分模板桌面端误沿用平板/移动端悬浮胶囊+汉堡导航，应在模板母版侧统一改为通栏导航；评测侧保留参考站设计 DNA 不设全局强制红线 | 模板母版特化（选项 C 定案） | 1 | L4（Kooboo 模板市场优化规范） | `L4-profile-only` |
+| `PAT-014` | `2026-11-26 · ui-spec-v1.3` | 暗色页面缺失 `color-scheme: dark` 滚动条适配、页脚链接按钮化、多档价格表纵向堆叠（L3 已有单句约束，L1/L2 暂未单列探针/红线） | 待观察（防过拟合） | 1 | L3 已有 / L1-L2 观察中 | `observing` |
 
 ---
 
@@ -41,7 +45,8 @@
 | `HOMEPAGE_SUBPAGE_LINK` | `homepage`（仅首页）模式下仍指向 `/services` 等未生成子页的导航或卡片 CTA | `R-TRUST-01` | 仅首页范围下存在点击 404 死链 |
 | `LOW_RES_IMAGE_UPSCALE` | `naturalWidth < 600px` 的低清旧站图片是否被拉伸至宽幅横幅或大图容器 | `R-VISUAL-02` | 小图强行拉满大横幅导致明显模糊 |
 | `EXTERNAL_OR_INSECURE_ASSET` | 生成站点是否残留外部域名图片或旧站 `http://` 不安全资源引用 | `R-TRUST-01` | 资源未本地化或触发 HTTPS 混合内容拦截 |
-| `CONTENT_DUPLICATION` | 同页图片重复使用（`>= 2` 次）、Hero 创立年份/定位徽章连续复读、文案标题重复 | `R-DUPE-01` | Hero 与下方画廊重复贴图、首屏 `Sinds YYYY` 连续复读 |
+| `CONTENT_DUPLICATION` | 同页图片重复使用（`>= 2` 次）、电话/邮箱/地址/CTA 超限、Hero 创立年份/定位徽章连续复读、文案标题重复 | `R-DUPE-01` | Hero 与下方画廊重复贴图、首屏 `Sinds YYYY` 连续复读、同一地址多次复读 |
+| `LOW_TEXT_CONTRAST` | 纯色及半透明叠层背景下的可见文本对比度是否低于 WCAG 4.5:1 / 3:1（跳过图片/渐变与滚动淡入态） | — | 浅灰字配白底、低对比度按钮或标签 |
 | `SPLIT_HEIGHT_IMBALANCE` / `IMAGE_VISIBILITY_ISSUE` | 图文分栏高度比例失衡、图遮字/文字对比度或图片不可见 | `R-LAYOUT-02` / `R-VISUAL-03` | 分栏极度不对称或浅色文字压在亮背景上 |
 | `MIN_FONT_SIZE` / `TITLE_LINES_EXCEEDED` | 正文最小字号过小、Hero/卡片标题行数超限 | `R-LAYOUT-01` / `R-LAYOUT-03` | 移动端字号难以阅读或标题过多折行 |
 | `LOCALE_OR_DATE_ISSUE` / `MOBILE_MENU_TRAPPED` | 多语言/本地化混杂、过时年份或移动端汉堡菜单无法正常收放 | `R-TRUST-01` / `R-LAYOUT-05` | 语言混杂、过时版权年份或移动菜单交互失效 |

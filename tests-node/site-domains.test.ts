@@ -8,7 +8,7 @@ import { join } from 'node:path';
 import { createApp } from '../server/app.js';
 import { AutomationStore } from '../server/automation/store.js';
 import { Database } from '../server/runtime.js';
-import { refreshSite } from '../server/automation/kooboo.js';
+import { publicSiteUrl, refreshSite } from '../server/automation/kooboo.js';
 import { bindingDomain, generatedSiteName } from '../shared/kooboo-domains.js';
 import type { GeneratedSite } from '../shared/automation.js';
 
@@ -16,6 +16,11 @@ async function fixture() {
   const nativeId = randomUUID(), oldUrl = 'https://auto-ab123456-abc.first.test/landing';
   const state = { domains: [{ domainName: 'first.test', sudDomainUseDash: false }, { domainName: 'ce2.local.test', sudDomainUseDash: true }],
     bindings: [{ fullName: 'auto-ab123456-abc.first.test', subDomain: 'auto-ab123456-abc', port: 0, enableSsl: true }],
+    homePageLink: oldUrl,
+    pages: undefined as Array<Record<string, unknown>> | undefined,
+    defaultRoute: undefined as { startPage: string; notFound: string; error: string } | 'fail' | undefined,
+    failDefaultRouteUpdate: false,
+    defaultRouteUpdates: [] as Array<Record<string, unknown>>,
     available: true, commit: true, dropResponse: false, invalidBindings: false, missingSite: false, posts: 0, creates: 0, requests: 0,
     beforePost: undefined as (() => Promise<void>) | undefined };
   const server = createServer(async (req, res) => {
@@ -24,10 +29,21 @@ async function fixture() {
     const url = new URL(req.url!, 'http://localhost');
     res.setHeader('Content-Type', 'application/json');
     if (url.pathname.endsWith('/Domain/Available')) { res.end(JSON.stringify(state.domains)); return; }
-    if (url.pathname.endsWith('/Site/List')) { res.end(JSON.stringify(state.missingSite ? [] : [{ siteId: nativeId, homePageLink: oldUrl }])); return; }
+    if (url.pathname.endsWith('/Site/List')) { res.end(JSON.stringify(state.missingSite ? [] : [{ siteId: nativeId, homePageLink: state.homePageLink }])); return; }
     assert.equal(url.searchParams.get('SiteId'), nativeId);
     if (url.pathname.endsWith('/Binding/ListBySite')) { res.end(JSON.stringify(state.invalidBindings ? {} : state.bindings)); return; }
     if (url.pathname.endsWith('/Binding/IsUniqueName')) { res.end(JSON.stringify(state.available)); return; }
+    if (url.pathname.endsWith('/Page/All') && state.pages !== undefined) { res.end(JSON.stringify(state.pages)); return; }
+    if (url.pathname.endsWith('/Page/DefaultRoute') && state.defaultRoute !== undefined) {
+      if (state.defaultRoute === 'fail') { res.statusCode = 500; res.end(JSON.stringify({ message: 'default route read failed' })); return; }
+      res.end(JSON.stringify(state.defaultRoute)); return;
+    }
+    if (url.pathname.endsWith('/Page/DefaultRouteUpdate') && state.defaultRoute !== undefined) {
+      let body = ''; for await (const chunk of req) body += chunk;
+      state.defaultRouteUpdates.push(JSON.parse(body));
+      if (state.failDefaultRouteUpdate) { res.statusCode = 500; res.end(JSON.stringify({ message: 'default route update failed' })); return; }
+      res.end(''); return;
+    }
     if (url.pathname.endsWith('/Binding/Post')) {
       state.posts++; let body = ''; for await (const chunk of req) body += chunk;
       const value = JSON.parse(body), root = state.domains.find(item => item.domainName === value.rootDomain)!;
@@ -190,4 +206,72 @@ test('the SQLite rebind reservation excludes parallel requests and worker claims
     f.store.db.prepare('INSERT INTO auto_site_domain_locks VALUES(?,?,?)').run(f.site.id, randomUUID(), 0);
     assert.equal(worker.domainReserved(f.site.id), false);
   } finally { release?.(); db.close(); await f.close(); }
+});
+
+test('refreshSite reconciles non-root homePageLink to / and syncs DefaultStart while preserving custom error pages', async () => {
+  const f = await fixture(); try {
+    const legacyPageId = randomUUID(), rootPageId = randomUUID(), notFoundId = randomUUID(), errorId = randomUUID();
+    f.state.homePageLink = 'https://auto-ab123456-abc.first.test/oud-home';
+    f.state.pages = [
+      { id: legacyPageId, name: 'LegacyHome', path: '/oud-home', startPage: true, online: true },
+      { id: rootPageId, name: 'home', path: '/', startPage: false, online: true },
+    ];
+    f.state.defaultRoute = { startPage: legacyPageId, notFound: notFoundId, error: errorId };
+    await refreshSite(f.store.task(f.task.id)!, f.store, f.vault, AbortSignal.timeout(5000));
+    assert.equal(f.store.site(f.site.id)!.url, 'https://auto-ab123456-abc.first.test/');
+    assert.equal(f.store.task(f.task.id)!.siteUrl, 'https://auto-ab123456-abc.first.test/');
+    assert.deepEqual(f.state.defaultRouteUpdates, [{ startPage: rootPageId, notFound: notFoundId, error: errorId }]);
+    const events = f.store.events(f.task.id);
+    assert.ok(events.some(e => e.message.includes('已自动将默认首页与站点入口校正为 /')));
+  } finally { await f.close(); }
+});
+
+test('refreshSite degrades safely when DefaultRoute read or update fails without dropping custom error pages', async () => {
+  const f = await fixture(); try {
+    const legacyPageId = randomUUID(), rootPageId = randomUUID(), notFoundId = randomUUID(), errorId = randomUUID();
+    f.state.homePageLink = 'https://auto-ab123456-abc.first.test/oud-home';
+    f.state.pages = [
+      { id: legacyPageId, name: 'LegacyHome', path: '/oud-home', startPage: true, online: true },
+      { id: rootPageId, name: 'home', path: '/', startPage: false, online: true },
+    ];
+    f.state.defaultRoute = 'fail';
+    await refreshSite(f.store.task(f.task.id)!, f.store, f.vault, AbortSignal.timeout(5000));
+    assert.equal(f.state.defaultRouteUpdates.length, 0);
+    assert.equal(f.store.site(f.site.id)!.url, 'https://auto-ab123456-abc.first.test/');
+    assert.ok(f.store.events(f.task.id).some(e => e.message.includes('同步 Kooboo 默认首页未生效')));
+
+    f.state.defaultRoute = { startPage: legacyPageId, notFound: notFoundId, error: errorId };
+    f.state.failDefaultRouteUpdate = true;
+    await refreshSite(f.store.task(f.task.id)!, f.store, f.vault, AbortSignal.timeout(5000));
+    assert.equal(f.state.defaultRouteUpdates.length, 1);
+    assert.equal(f.store.task(f.task.id)!.siteUrl, 'https://auto-ab123456-abc.first.test/');
+    assert.ok(f.store.events(f.task.id).some(e => e.message.includes('default route update failed')));
+  } finally { await f.close(); }
+});
+
+test('refreshSite keeps legitimate non-root homePageLink when no / page exists, and publicSiteUrl stays read-only', async () => {
+  const f = await fixture(); try {
+    const landingId = randomUUID(), rootPageId = randomUUID();
+    f.state.homePageLink = 'https://auto-ab123456-abc.first.test/landing';
+    f.state.pages = [{ id: landingId, name: 'landing', path: '/landing', startPage: true, online: true }];
+    f.state.defaultRoute = { startPage: landingId, notFound: '00000000-0000-0000-0000-000000000000', error: '00000000-0000-0000-0000-000000000000' };
+    await refreshSite(f.store.task(f.task.id)!, f.store, f.vault, AbortSignal.timeout(5000));
+    assert.equal(f.store.site(f.site.id)!.url, 'https://auto-ab123456-abc.first.test/landing');
+    assert.equal(f.state.defaultRouteUpdates.length, 0);
+
+    f.state.homePageLink = 'https://auto-ab123456-abc.first.test/oud-home';
+    f.state.pages.push({ id: rootPageId, name: 'home', path: '/', startPage: false, online: true });
+    const origin = new URL(f.vault.get().environments[0].origin).origin;
+    const url = await publicSiteUrl(f.site, { siteId: f.site.siteId, homePageLink: f.state.homePageLink }, async (path, body, siteId) => {
+      const res = await fetch(`${origin}/_api/v2/${path}${siteId ? `?SiteId=${siteId}` : ''}`, {
+        method: body === undefined ? 'GET' : 'POST',
+        headers: { authorization: 'Bearer test-only-token', ...(body === undefined ? {} : { 'content-type': 'application/json' }) },
+        ...(body === undefined ? {} : { body: JSON.stringify(body) }),
+      });
+      const text = await res.text();
+      return text.trim() ? JSON.parse(text) : null;
+    });
+    assert.equal(url, 'https://auto-ab123456-abc.first.test/');
+    assert.equal(f.state.defaultRouteUpdates.length, 0);
+  } finally { await f.close(); }
 });

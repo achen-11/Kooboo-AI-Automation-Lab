@@ -56,7 +56,7 @@ export function buildClonedContentImageGuidance(
   if (options?.isContinuation) {
     return source.kind === 'source-sandbox'
       ? `【原内容站图片优先防回归】原内容站（${source.contentUrl}）已成功克隆至只读源站 Sandbox「${source.sandbox}」，修复或补图时必须优先复用原内容站真实图片资源（再考虑随附资料图），仅在原站确无可用图时才以 imagePlaceholder 兜底，严禁把已正确使用的原站实图替换为占位图或残留模板演示图。`
-      : `【原内容站图片优先防回归】原内容站（${source.contentUrl}）已成功克隆至当前目标站，修复或补图时必须优先从当前站点媒体库（Image/File）复用原内容站真实图片资源（再考虑随附资料图），仅在原站确无可用图时才以 imagePlaceholder 兜底，严禁把已正确使用的原站实图替换为占位图。`;
+      : `【原内容站图片优先防回归】原内容站（${source.contentUrl}）已成功克隆至当前目标站，修复或补图时必须优先从当前站点媒体库（Image/File）复用原内容站真实图片资源（再考虑随附资料图），仅在原站确无可用图时才以 imagePlaceholder 兜底，严禁把已正确使用的原站实图替换为占位图。重写根路径 / 首页时须原位更新或先删旧页再建 /，严禁用 update_object_route 改名旧首页路由以免默认起始页漂移。`;
   }
   if (source.kind === 'source-sandbox') {
     return [
@@ -71,6 +71,7 @@ export function buildClonedContentImageGuidance(
     `1. 原内容站（${source.contentUrl}）已成功克隆至当前目标站。按参考站重构新版页面与样式时，仅重构视觉布局与代码架构，严禁丢弃已克隆进当前站点媒体库（Image）与文件库（File）的原内容站真实图片资源；先通过 list_site_object 盘点当前站点已有的原站 Image / File 资产，品牌 Logo、产品/服务实拍、团队、案例、门店/环境及首屏主图等展示位必须优先直接引用原内容站已克隆图片，严禁绕过原站可用图片改用 imagePlaceholder 或复制参考站图片。`,
     '2. 图片选用优先级：当前目标站已克隆的原内容站真实可用图片 > 随附资料包/客户上传图片 > imagePlaceholder（仅限原站确无对应图片、图片破损/分辨率严重不足或构图明显不适配时兜底）；若原图比例与新容器不同，优先使用 object-fit: cover、object-position 或合适裁切适配，而非轻易弃用原图。',
     '3. 清理旧站样式、脚本或多余页面时，严禁误删仍在使用的原内容站真实业务图片。',
+    '4. 首页路由与默认起始页保护：重构根路径 `/` 首页时，必须原位更新克隆得到的原 `/` 页面对象（或先删除旧 `/` 页面再创建新 `/` 页面），严禁用 `update_object_route` 将旧首页改名为 `/oud-home`、`/old-home` 等备份路径后再另建 `/`——旧页面保留的默认起始页（StartPage / DefaultStart）标记会导致站点首页链接指向旧页。',
   ].join('\n');
 }
 
@@ -113,7 +114,7 @@ export function buildSiteUiHardRulesPrompt(options: SiteUiHardRulesOptions): str
 
   return [
     `【企业官网 UI 与版式硬约束（${SITE_UI_RULES_VERSION}，优先级：可读性>结构>平衡>一致性>视觉还原>动效）】`,
-    `1. 单首页与清理：唯一首页 /，删 Home 2/3、Demos、All Pages 及 Lorem ipsum/Edit me/Your text here；${scopeLine}`,
+    `1. 单首页与清理：唯一首页 /，禁将旧 / 改名备份（应原位改或删后重建防默认页漂移），删 Home 2/3、Demos、All Pages 及 Lorem ipsum/Edit me/Your text here；${scopeLine}`,
     '2. 首屏安全线（1440×900/1280×800/390×844）：eyebrow+H1+副文+主CTA+主图完整；CTA底 ≤ vh−40（860/760）、主图与浮层卡片底 ≤ vh、文本 ≤640/560px、H1顶 ≥ 导航底+32；文字中心落 44–56%（grid;align-content:center，禁 flex-end/100vh 底对齐）；首屏同年/定位标签最多1次；超限精炼副文或微缩 H1（≥40px）。',
     '3. 标题行数与断行：H1 ≤3 行（优先2），H2/H3/卡题 ≤2 行，标签 1 行；末行禁单英词/单汉字（text-wrap:balance + max-width + &nbsp;），4 行即缩字号/加宽/精简，禁 line-clamp 截断。',
     '4. 图文等高与纵排多图：双栏高差 ≤ max(48px,短列8%)；媒体列 position:relative;min-height:100% + img{position:absolute;inset:0;width:100%;height:100%;object-fit:cover}，禁仅 height:100%；文高÷单图高（4:3按0.75×列宽）>1.4 拆2图、>2.2 拆3图（≥180px、gap:16–24px），>2.8 用 sticky/拆节，禁小图配长文；参考站失衡仍须按此重构。',

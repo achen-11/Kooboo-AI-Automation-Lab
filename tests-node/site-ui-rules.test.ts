@@ -50,6 +50,7 @@ test('buildSiteUiHardRulesPrompt generates bounded, scenario- and scope-aware v1
   assert.match(upgradeDirect, /禁灰白实拍图充 Logo 墙及硬凑数字/);
   assert.match(upgradeDirect, /多电话（座机\+24\/7热线）全保留标用途并用 tel:\/mailto:/);
   assert.match(upgradeDirect, /内容图≤1（禁 Hero 与下方复用同图）/);
+  assert.match(upgradeDirect, /禁将旧 \/ 改名备份/);
   assert.doesNotMatch(upgradeDirect, /不要写代码/);
 
   const materialsHomepage = buildSiteUiHardRulesPrompt({
@@ -267,6 +268,7 @@ test('resolveClonedContentImageSource and buildClonedContentImageGuidance respec
   );
   assert.match(targetInitial, /原内容站图片资源优先策略（内容站已成功克隆至目标站）/);
   assert.match(targetInitial, /list_site_object/);
+  assert.match(targetInitial, /严禁用 `update_object_route` 将旧首页改名为 `\/oud-home`/);
 
   const targetCont = buildClonedContentImageGuidance(
     { scenario: 'upgrade', generation: { transferComplete: true } },
@@ -274,6 +276,7 @@ test('resolveClonedContentImageSource and buildClonedContentImageGuidance respec
     { isContinuation: true },
   );
   assert.match(targetCont, /【原内容站图片优先防回归】.*已成功克隆至当前目标站/);
+  assert.match(targetCont, /严禁用 update_object_route 改名旧首页路由/);
 
   assert.deepEqual(
     resolveClonedContentImageSource(

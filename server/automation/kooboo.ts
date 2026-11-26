@@ -229,7 +229,7 @@ export function koobooClient(task:Pick<AutomationTask,'environmentId'>,vault:Vau
       const detail=extractKoobooErrorDetail(result.body);
       throw new Error(detail?`Kooboo ${cleanPath} 请求失败（${result.status}）：${detail}`:`Kooboo ${cleanPath} 请求失败（${result.status}）`);
     }
-    const value=JSON.parse(result.body);
+    const value=result.body.trim()?JSON.parse(result.body):null;
     return availability&&result.status===200&&value===null?true:value;
   };
   return {origin,environment,request};
@@ -334,12 +334,127 @@ export async function searchKoobooTemplates(
     totalPages: Number(raw?.totalPages ?? raw?.TotalPages ?? 1) || 1,
   };
 }
+export interface RootStartPageReconciliation {
+  correctedUrl: string;
+  previousPath: string;
+  rootPageId: string;
+  rootPageName: string;
+  previousStartPageId?: string;
+  previousStartPagePath?: string;
+  defaultRouteSynced: boolean;
+  syncError?: string;
+}
+
+function normalizeKoobooPagePath(raw: unknown): string {
+  const trimmed = String(raw ?? '').trim().split(/[?#]/)[0] || '';
+  if (!trimmed || trimmed === '/' || trimmed === '\\') return '/';
+  const withLeading = trimmed.startsWith('/') ? trimmed : `/${trimmed}`;
+  return withLeading.replace(/\/+$/, '') || '/';
+}
+
+/**
+ * Reconciles a Kooboo site URL when StartPage (`DefaultStart`) stayed on a renamed
+ * legacy page (e.g. `/oud-home`) while an online page already exists at `/`.
+ */
+export async function reconcileRootHomepageUrl(input: {
+  url: string;
+  siteId?: string;
+  request: KoobooRequestFn;
+  syncDefaultRoute?: boolean;
+}): Promise<RootStartPageReconciliation | undefined> {
+  if (!input.siteId) return undefined;
+  let parsed: URL;
+  try {
+    parsed = new URL(input.url);
+  } catch {
+    return undefined;
+  }
+  if (!/^https?:$/i.test(parsed.protocol) || parsed.pathname === '/') return undefined;
+
+  let pages: unknown;
+  try {
+    pages = await input.request('Page/All', undefined, input.siteId);
+  } catch {
+    return undefined;
+  }
+  if (!Array.isArray(pages)) return undefined;
+
+  const rootPage = pages.find((item: any) => {
+    if (!item || typeof item !== 'object') return false;
+    if ((item.online ?? item.Online) === false) return false;
+    const id = String(item.id ?? item.Id ?? '').trim();
+    return Boolean(id) && normalizeKoobooPagePath(item.path ?? item.Path) === '/';
+  }) as Record<string, unknown> | undefined;
+  if (!rootPage) return undefined;
+
+  const rootPageId = String(rootPage.id ?? rootPage.Id ?? '').trim();
+  const rootPageName = String(rootPage.name ?? rootPage.Name ?? '').trim();
+  const previousStart = pages.find((item: any) => {
+    if (!item || typeof item !== 'object') return false;
+    const id = String(item.id ?? item.Id ?? '').trim();
+    return id !== rootPageId && (item.startPage ?? item.StartPage) === true;
+  }) as Record<string, unknown> | undefined;
+
+  const corrected = new URL(parsed.href);
+  corrected.pathname = '/';
+  corrected.search = '';
+  corrected.hash = '';
+
+  let defaultRouteSynced = false;
+  let syncError: string | undefined;
+  if (input.syncDefaultRoute === true) {
+    try {
+      const currentDefault = await input.request('Page/DefaultRoute', undefined, input.siteId);
+      if (!currentDefault || typeof currentDefault !== 'object') {
+        throw new Error('Page/DefaultRoute 返回无效结果');
+      }
+      await input.request(
+        'Page/DefaultRouteUpdate',
+        {
+          startPage: rootPageId,
+          notFound: currentDefault.notFound ?? currentDefault.NotFound ?? '00000000-0000-0000-0000-000000000000',
+          error: currentDefault.error ?? currentDefault.Error ?? '00000000-0000-0000-0000-000000000000',
+        },
+        input.siteId,
+      );
+      defaultRouteSynced = true;
+    } catch (error) {
+      defaultRouteSynced = false;
+      syncError = error instanceof Error ? error.message : String(error);
+    }
+  }
+
+  return {
+    correctedUrl: corrected.href,
+    previousPath: parsed.pathname,
+    rootPageId,
+    rootPageName,
+    ...(previousStart ? {
+      previousStartPageId: String(previousStart.id ?? previousStart.Id ?? '').trim() || undefined,
+      previousStartPagePath: normalizeKoobooPagePath(previousStart.path ?? previousStart.Path),
+    } : {}),
+    defaultRouteSynced,
+    ...(syncError ? { syncError } : {}),
+  };
+}
+
 export async function refreshSite(task:AutomationTask,store:AutomationStore,vault:Vault,signal:AbortSignal):Promise<GeneratedSite|undefined> {
   if(!task.generatedSiteId)return;
   const site=store.site(task.generatedSiteId);if(!site)return;
   const {request}=koobooClient(task,vault,signal),list=await request('Site/List');
   const actual=(Array.isArray(list)?list:[]).find(s=>siteIdentity(s).toLowerCase()===site.siteId.toLowerCase());
-  const url=await publicSiteUrl(site,actual,request);
+  const url=await publicSiteUrl(site,actual,request,{
+    syncDefaultRoute:true,
+    onReconcile:(info)=>{
+      const pageLabel=info.rootPageName||info.rootPageId;
+      store.event(
+        task.id,
+        info.defaultRouteSynced
+          ? `检测到 Kooboo 默认首页指向非根路径 ${info.previousPath}，但根路径 / 已存在页面「${pageLabel}」；已自动将默认首页与站点入口校正为 /`
+          : `检测到 Kooboo 默认首页指向非根路径 ${info.previousPath}，但根路径 / 已存在页面「${pageLabel}」；已将平台入口校正为 /（同步 Kooboo 默认首页未生效：${info.syncError||'接口不可用'}）`,
+      );
+    },
+  });
   if(typeof url==='string'&&/^https?:\/\//i.test(url)) {
     site.url=url;task.siteUrl=url;store.saveSite(site);store.put(task);
   }
@@ -347,16 +462,37 @@ export async function refreshSite(task:AutomationTask,store:AutomationStore,vaul
 }
 
 /** A newly added binding need not be Kooboo's first/default binding. */
-export async function publicSiteUrl(site:GeneratedSite|undefined,actual:any,request:ReturnType<typeof koobooClient>['request']) {
+export async function publicSiteUrl(
+  site:GeneratedSite|undefined,
+  actual:any,
+  request:ReturnType<typeof koobooClient>['request'],
+  options?:{syncDefaultRoute?:boolean;onReconcile?:(info:RootStartPageReconciliation)=>void},
+) {
+  let candidateUrl:string|undefined;
   if(site?.preferredDomain){
     const bindings=await request('Binding/ListBySite',undefined,site.siteId);
     const binding=Array.isArray(bindings)&&bindings.find(item=>String(item.fullName||item.FullName||'').toLowerCase()===site.preferredDomain&&!Number(item.port??item.Port??0));
     if(!binding)throw new Error('已选择的站点域名绑定不存在，请重新绑定域名');
     const url=new URL(site.url);
     url.hostname=site.preferredDomain;url.port='';url.protocol=(binding.enableSsl??binding.EnableSsl)?'https:':'http:';
-    return url.href;
+    candidateUrl=url.href;
+  }else{
+    candidateUrl=actual?.homePageLink||actual?.HomePageLink;
   }
-  return actual?.homePageLink||actual?.HomePageLink;
+  if(typeof candidateUrl==='string'&&/^https?:\/\//i.test(candidateUrl)){
+    const siteId=site?.siteId||siteIdentity(actual);
+    const reconciled=await reconcileRootHomepageUrl({
+      url:candidateUrl,
+      siteId,
+      request,
+      syncDefaultRoute:options?.syncDefaultRoute,
+    });
+    if(reconciled){
+      options?.onReconcile?.(reconciled);
+      return reconciled.correctedUrl;
+    }
+  }
+  return candidateUrl;
 }
 
 export async function probeSite(url:string,signal:AbortSignal) {

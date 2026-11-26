@@ -19,7 +19,7 @@ import type { codexClient } from '../server/automation/codex-client.js';
 const rawPath='.work/raw/one.html',body='<html>prefix 原始来源正文 source evidence verified suffix outside receipt</html>';
 function fixture(){
   const directory=mkdtempSync(resolve(tmpdir(),'review-continuation-')),db=new Database(':memory:'),store=new AutomationStore(db),vault=new Vault(directory),settings=structuredClone(defaultAutomationSettings);
-  settings.completeness!.maxMinutes=5;settings.learning!.use=false;
+  settings.completeness!.maxMinutes=5;
   vault.update({threshold:80,paused:true,model:{endpoint:'https://models.invalid',name:'test',apiKey:'fake-key'},environments:[]});
   const resource=store.saveResource({name:'Source',scenario:'migration',contentUrl:'https://source.invalid/',referenceUrl:'',description:'Source',files:[],externalSource:'',externalId:''});
   const task=store.create({resourceIds:[resource.id],kind:'generation',scope:'site',environmentId:'',requirements:''},settings)[0],collections=new CollectionStore(store,directory);

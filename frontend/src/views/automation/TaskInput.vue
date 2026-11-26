@@ -3,7 +3,6 @@ import { computed } from 'vue';
 import { LoaderCircle, ArrowUpRight } from '@lucide/vue';
 import type { AutomationRule, InputVersion, OptimizationPolicy } from '../../../../shared/automation';
 import type { TemplateWorkflowResponse } from '../../../../shared/template-workflow';
-import TaskLearning from '../../components/TaskLearning.vue';
 import TaskManifest from '../../components/TaskManifest.vue';
 import Disclosure from '../../components/Disclosure.vue';
 import { useTaskSection } from './use-task-section';
@@ -124,7 +123,6 @@ const hasDistinctInputRootDomain = computed(() =>
         <Disclosure label="版本标识"><p class="task-prose">{{ data.rule.hash }}</p></Disclosure>
       </section>
       <TaskManifest :task-id="taskId" />
-      <TaskLearning :task-id="taskId" mode="input" />
     </template>
   </template>
 </template>

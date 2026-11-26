@@ -62,6 +62,7 @@ export interface HeroFoldMetrics {
   h1Bottom?: number;
   ctaBottom?: number;
   heroImgBottom?: number;
+  overlayCardBottom?: number;
   textBlockHeight?: number;
   maxTextBlockHeight?: number;
   headerBottom?: number;
@@ -99,6 +100,13 @@ export interface DuplicationSummary {
   ctaLabels: Array<{ label: string; total: number; main: number }>;
   duplicateBlocks: Array<{ text: string; count: number }>;
   duplicateImages: Array<{ srcHint: string; count: number }>;
+  heroRepeatedBadges?: Array<{ text: string; count: number }>;
+}
+
+export interface ExternalAssetCandidate {
+  tag: 'img' | 'script' | 'link';
+  url: string;
+  insecure: boolean;
 }
 
 export interface LocaleHygieneSnapshot {
@@ -141,6 +149,8 @@ export interface RawViewportPrecheckSnapshot {
   imageDistortions?: ImageDistortionCandidate[];
   duplicationSummary?: DuplicationSummary;
   localeHygiene?: LocaleHygieneSnapshot;
+  taskScope?: 'homepage' | 'site';
+  externalAssets?: ExternalAssetCandidate[];
 }
 
 export type VisualPrecheckSignalCode =
@@ -162,7 +172,10 @@ export type VisualPrecheckSignalCode =
   | 'MIN_FONT_SIZE'
   | 'NAV_NOT_STICKY'
   | 'DESKTOP_HAMBURGER_NAV'
-  | 'LOCALE_OR_DATE_ISSUE';
+  | 'LOCALE_OR_DATE_ISSUE'
+  | 'HOMEPAGE_SUBPAGE_LINK'
+  | 'LOW_RES_IMAGE_UPSCALE'
+  | 'EXTERNAL_OR_INSECURE_ASSET';
 
 export interface VisualPrecheckSignal {
   code: VisualPrecheckSignalCode;
@@ -349,6 +362,9 @@ export function evaluateVisualPrecheckSignals(snapshot: RawViewportPrecheckSnaps
     if (typeof fm.heroImgBottom === 'number' && fm.heroImgBottom > vh + 8) {
       clipReasons.push(`首屏内容主图底部 ${Math.round(fm.heroImgBottom)}px > ${vh}px`);
     }
+    if (typeof fm.overlayCardBottom === 'number' && fm.overlayCardBottom > vh + 8) {
+      clipReasons.push(`首屏浮层卡片底部 ${Math.round(fm.overlayCardBottom)}px > ${vh}px（被首屏底边裁切）`);
+    }
     if (
       typeof fm.textBlockHeight === 'number' &&
       typeof fm.maxTextBlockHeight === 'number' &&
@@ -374,6 +390,7 @@ export function evaluateVisualPrecheckSignals(snapshot: RawViewportPrecheckSnaps
         metrics: {
           ...(typeof fm.ctaBottom === 'number' ? { ctaBottom: Math.round(fm.ctaBottom) } : {}),
           ...(typeof fm.heroImgBottom === 'number' ? { heroImgBottom: Math.round(fm.heroImgBottom) } : {}),
+          ...(typeof fm.overlayCardBottom === 'number' ? { overlayCardBottom: Math.round(fm.overlayCardBottom) } : {}),
           ...(typeof fm.textBlockHeight === 'number' ? { textBlockHeight: Math.round(fm.textBlockHeight) } : {}),
           viewportHeight: vh,
         },
@@ -468,7 +485,10 @@ export function evaluateVisualPrecheckSignals(snapshot: RawViewportPrecheckSnaps
       parts.push(`${d.duplicateBlocks.length} 处正文/标题完全重复`);
     }
     if (d.duplicateImages.length) {
-      parts.push(`${d.duplicateImages.length} 张内容图重复超过 2 次`);
+      parts.push(`${d.duplicateImages.length} 张内容图同页重复出现（建议每张实拍图仅用 1 次）`);
+    }
+    if (d.heroRepeatedBadges?.length) {
+      parts.push(`首屏标签重复（${d.heroRepeatedBadges.map(b => `「${b.text}」×${b.count}`).join('、')}）`);
     }
     if (parts.length > 0) {
       const severe =
@@ -487,6 +507,7 @@ export function evaluateVisualPrecheckSignals(snapshot: RawViewportPrecheckSnaps
           ctaCount: d.ctaLabels.length,
           blockCount: d.duplicateBlocks.length,
           imageCount: d.duplicateImages.length,
+          heroBadgeCount: d.heroRepeatedBadges?.length || 0,
         },
       });
     }
@@ -545,6 +566,76 @@ export function evaluateVisualPrecheckSignals(snapshot: RawViewportPrecheckSnaps
         },
       });
     }
+  }
+
+  const lowResUpscaled = snapshot.imageCandidates.filter(
+    i =>
+      !i.broken &&
+      i.naturalWidth > 0 &&
+      i.naturalHeight > 0 &&
+      i.naturalWidth < 600 &&
+      i.width >= 360 &&
+      (i.width / i.naturalWidth >= 1.45 || i.height / i.naturalHeight >= 1.45) &&
+      !/\.svg(?:[?#]|$)|^data:image\/svg/i.test(i.srcHint),
+  );
+  if (lowResUpscaled.length > 0) {
+    const worst = lowResUpscaled.reduce((best, cur) =>
+      Math.max(cur.width / cur.naturalWidth, cur.height / cur.naturalHeight) >
+      Math.max(best.width / best.naturalWidth, best.height / best.naturalHeight)
+        ? cur
+        : best,
+    );
+    const worstRatio = Math.round(Math.max(worst.width / worst.naturalWidth, worst.height / worst.naturalHeight) * 100) / 100;
+    const anyInHero = lowResUpscaled.some(i => i.inHero);
+    signals.push({
+      code: 'LOW_RES_IMAGE_UPSCALE',
+      ruleId: 'R-VISUAL-02',
+      severityHint: worstRatio >= 1.8 || anyInHero ? 'major' : 'minor',
+      viewport: snapshot.viewport,
+      summary: `检测到 ${lowResUpscaled.length} 张低分辨率图片（原始宽度 < 600px）被拉伸放入大容器（例如 ${worst.naturalWidth}×${worst.naturalHeight}px 渲染为 ${worst.width}×${worst.height}px，放大 ${worstRatio}×）。`,
+      metrics: {
+        count: lowResUpscaled.length,
+        worstNaturalWidth: worst.naturalWidth,
+        worstRenderedWidth: worst.width,
+        worstRatio,
+        anyInHero,
+      },
+    });
+  }
+
+  if (snapshot.taskScope === 'homepage' && snapshot.internalLinks?.length) {
+    const subpageLinks = snapshot.internalLinks.filter(p => !/^\/(?:index\.html?)?(?:\?.*)?$/i.test(p));
+    if (subpageLinks.length > 0) {
+      signals.push({
+        code: 'HOMEPAGE_SUBPAGE_LINK',
+        ruleId: 'R-TRUST-01',
+        severityHint: 'major',
+        viewport: snapshot.viewport,
+        summary: `当前为仅首页（homepage）任务，但页面仍存在 ${subpageLinks.length} 个站内子页链接（如 ${subpageLinks.slice(0, 4).join('、')}），未统一改用页内锚点 #anchor，存在点击 404 风险。`,
+        metrics: {
+          count: subpageLinks.length,
+          sample: subpageLinks.slice(0, 5).join(','),
+        },
+      });
+    }
+  }
+
+  if (snapshot.externalAssets && snapshot.externalAssets.length > 0) {
+    const hasInsecureOrImg = snapshot.externalAssets.some(a => a.insecure || a.tag === 'img');
+    signals.push({
+      code: 'EXTERNAL_OR_INSECURE_ASSET',
+      ruleId: 'R-TRUST-01',
+      severityHint: hasInsecureOrImg ? 'major' : 'minor',
+      viewport: snapshot.viewport,
+      summary: `检测到 ${snapshot.externalAssets.length} 个未本地化的外部或非 HTTPS 资源（如 ${snapshot.externalAssets
+        .slice(0, 3)
+        .map(a => `${a.tag}:${a.url}`)
+        .join('、')}），存在跨站拦截或失效风险。`,
+      metrics: {
+        count: snapshot.externalAssets.length,
+        insecureCount: snapshot.externalAssets.filter(a => a.insecure).length,
+      },
+    });
   }
 
   return signals;
@@ -1019,6 +1110,34 @@ export function collectViewportVisualPrecheckInPage(args: {
     if (heroContentImg) {
       heroFoldMetrics.heroImgBottom = Math.round(heroContentImg.getBoundingClientRect().bottom);
     }
+    let worstOverlayBottom = -Infinity;
+    for (const card of Array.from(heroSection.querySelectorAll('div, article, aside, figure'))) {
+      if (card.closest('header, footer, nav, [aria-hidden="true"]')) continue;
+      const cr = card.getBoundingClientRect();
+      if (cr.width < 160 || cr.height < 70 || cr.height > viewportHeight * 0.65) continue;
+      if (cr.top >= viewportHeight - 16 || cr.bottom <= viewportHeight + 8) continue;
+      let cVis = true;
+      for (let cur: Element | null = card; cVis && cur; cur = cur.parentElement) {
+        const st = getComputedStyle(cur);
+        if (st.display === 'none' || st.visibility === 'hidden' || st.visibility === 'collapse' || Number(st.opacity) === 0) {
+          cVis = false;
+        }
+      }
+      if (!cVis) continue;
+      const cst = getComputedStyle(card);
+      const isBoxed =
+        cst.position === 'absolute' ||
+        cst.backgroundColor !== 'rgba(0, 0, 0, 0)' ||
+        cst.borderTopWidth !== '0px' ||
+        cst.boxShadow !== 'none';
+      if (!isBoxed) continue;
+      const cText = (card.textContent || '').replace(/\s+/g, ' ').trim();
+      if (cText.length < 8 || !card.querySelector('h1, h2, h3, h4, a, button')) continue;
+      if (cr.bottom > worstOverlayBottom) worstOverlayBottom = cr.bottom;
+    }
+    if (Number.isFinite(worstOverlayBottom)) {
+      heroFoldMetrics.overlayCardBottom = Math.round(worstOverlayBottom);
+    }
     if (h1) {
       const h1r = h1.getBoundingClientRect();
       if (h1r.width > 1 && h1r.height > 1) {
@@ -1320,8 +1439,108 @@ export function collectViewportVisualPrecheckInPage(args: {
       .filter(c => c.total > 3 || c.main > 2)
       .map(c => ({ label: c.label, total: c.total, main: c.main })),
     duplicateBlocks: Object.values(blockCounts).filter(b => b.count >= 2),
-    duplicateImages: Object.values(dupImgCounts).filter(d => d.count > 2),
+    duplicateImages: Object.values(dupImgCounts).filter(d => d.count >= 2),
   };
+
+  if (heroSection) {
+    const heroBadgeCounts: Record<string, { text: string; count: number }> = {};
+    for (const el of Array.from(heroSection.querySelectorAll('span, p, div, small, strong, em, li'))) {
+      if (el.closest('header, footer, [aria-hidden="true"]')) continue;
+      let hasNonSvgChild = false;
+      for (const ch of Array.from(el.children)) {
+        if (ch.tagName.toUpperCase() !== 'SVG') {
+          hasNonSvgChild = true;
+          break;
+        }
+      }
+      if (hasNonSvgChild) continue;
+      const er = el.getBoundingClientRect();
+      if (er.width < 10 || er.height < 8) continue;
+      const est = getComputedStyle(el);
+      if (est.display === 'none' || est.visibility === 'hidden' || Number(est.opacity) === 0) continue;
+      const rawText = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      if (rawText.length < 4 || rawText.length > 28) continue;
+      const key = rawText.toLowerCase();
+      if (!heroBadgeCounts[key]) heroBadgeCounts[key] = { text: rawText, count: 0 };
+      heroBadgeCounts[key].count++;
+    }
+    const yearPhraseCounts: Record<string, { text: string; count: number }> = {};
+    for (const el of Array.from(heroSection.querySelectorAll('h1, h2, p, span, div'))) {
+      if (el.closest('header, footer, [aria-hidden="true"]')) continue;
+      const er = el.getBoundingClientRect();
+      if (er.width < 10 || er.height < 8) continue;
+      let hasMatchedDescendant = false;
+      for (const desc of Array.from(el.querySelectorAll('h1, h2, p, span, div'))) {
+        if (/(?:sinds|since|est\.?)\s+\d{4}/i.test(desc.textContent || '')) {
+          hasMatchedDescendant = true;
+          break;
+        }
+      }
+      if (hasMatchedDescendant) continue;
+      const rawText = (el.textContent || '').replace(/\s+/g, ' ').trim();
+      const matches = rawText.match(/(?:sinds|since|est\.?)\s+\d{4}/gi) || [];
+      for (const m of matches) {
+        const clean = m.replace(/\s+/g, ' ').trim();
+        const key = clean.toLowerCase();
+        if (!yearPhraseCounts[key]) yearPhraseCounts[key] = { text: clean, count: 0 };
+        yearPhraseCounts[key].count++;
+      }
+    }
+    const repeatedMap: Record<string, { text: string; count: number }> = {};
+    for (const k of Object.keys(heroBadgeCounts)) {
+      if (heroBadgeCounts[k].count >= 2) repeatedMap[k] = heroBadgeCounts[k];
+    }
+    for (const k of Object.keys(yearPhraseCounts)) {
+      if (yearPhraseCounts[k].count >= 2 && (!repeatedMap[k] || yearPhraseCounts[k].count > repeatedMap[k].count)) {
+        repeatedMap[k] = yearPhraseCounts[k];
+      }
+    }
+    const repeated = Object.values(repeatedMap);
+    if (repeated.length > 0) {
+      duplicationSummary.heroRepeatedBadges = repeated;
+    }
+  }
+
+  const externalAssets: ExternalAssetCandidate[] = [];
+  const seenAssetUrls: Record<string, boolean> = {};
+  const allowedAssetCdn =
+    /(?:^|\.)(?:fonts\.googleapis\.com|fonts\.gstatic\.com|cdn\.jsdelivr\.net|unpkg\.com|cdnjs\.cloudflare\.com)$/i;
+  for (const img of Array.from(document.images)) {
+    const ir = img.getBoundingClientRect();
+    if (ir.width <= 1 || ir.height <= 1) continue;
+    const raw = (img.currentSrc || img.getAttribute('src') || '').trim();
+    if (!raw || /^(?:data|blob):/i.test(raw)) continue;
+    try {
+      const parsed = new URL(raw, location.href);
+      const insecure = location.protocol === 'https:' && parsed.protocol === 'http:';
+      if ((insecure || parsed.origin !== location.origin) && !seenAssetUrls[parsed.href]) {
+        seenAssetUrls[parsed.href] = true;
+        externalAssets.push({ tag: 'img', url: parsed.href.slice(0, 180), insecure });
+        if (externalAssets.length >= 10) break;
+      }
+    } catch {
+      // ignore invalid URL
+    }
+  }
+  if (externalAssets.length < 10) {
+    for (const el of Array.from(document.querySelectorAll('script[src], link[rel="stylesheet"][href]'))) {
+      const tag = el.tagName.toLowerCase() === 'script' ? 'script' : 'link';
+      const raw = (el.getAttribute(tag === 'script' ? 'src' : 'href') || '').trim();
+      if (!raw || /^(?:data|blob):/i.test(raw)) continue;
+      try {
+        const parsed = new URL(raw, location.href);
+        if (parsed.origin === location.origin) continue;
+        const insecure = location.protocol === 'https:' && parsed.protocol === 'http:';
+        if ((insecure || !allowedAssetCdn.test(parsed.hostname)) && !seenAssetUrls[parsed.href]) {
+          seenAssetUrls[parsed.href] = true;
+          externalAssets.push({ tag, url: parsed.href.slice(0, 180), insecure });
+          if (externalAssets.length >= 10) break;
+        }
+      } catch {
+        // ignore invalid URL
+      }
+    }
+  }
 
   const htmlLang = (root.getAttribute('lang') || '').trim().toLowerCase();
   const visibleBodyText = body ? body.innerText || '' : '';
@@ -1375,6 +1594,7 @@ export function collectViewportVisualPrecheckInPage(args: {
     imageDistortions,
     duplicationSummary,
     localeHygiene,
+    ...(externalAssets.length > 0 ? { externalAssets } : {}),
   };
 }
 
@@ -1785,6 +2005,7 @@ export async function runVisualPrecheck(
   options?: {
     templateName?: string;
     skipMobileMenuProbe?: boolean;
+    taskScope?: 'homepage' | 'site';
     onCaptureEvidence?: (tag: string) => Promise<string | undefined>;
   },
 ): Promise<ViewportVisualPrecheck> {
@@ -1803,7 +2024,11 @@ export async function runVisualPrecheck(
       options?.onCaptureEvidence ? async () => options.onCaptureEvidence!('mobile-menu-open') : undefined,
     );
   }
-  const fullSnapshot: RawViewportPrecheckSnapshot = mobileMenu ? { ...snapshot, mobileMenu } : snapshot;
+  const fullSnapshot: RawViewportPrecheckSnapshot = {
+    ...snapshot,
+    ...(mobileMenu ? { mobileMenu } : {}),
+    ...(options?.taskScope ? { taskScope: options.taskScope } : {}),
+  };
   const signals = evaluateVisualPrecheckSignals(fullSnapshot);
   return { snapshot: fullSnapshot, signals };
 }
@@ -1920,6 +2145,7 @@ export function formatPrecheckDigest(checks: ViewportVisualPrecheck[]): string {
       const fm = s.heroFoldMetrics;
       const parts: string[] = [];
       if (typeof fm.ctaBottom === 'number') parts.push(`CTA底=${fm.ctaBottom}px/${s.viewportHeight}px`);
+      if (typeof fm.overlayCardBottom === 'number') parts.push(`浮层卡底=${fm.overlayCardBottom}px/${s.viewportHeight}px`);
       if (typeof fm.centerPct === 'number') parts.push(`中心=${fm.centerPct}%`);
       if (typeof fm.textBlockHeight === 'number') parts.push(`文本块高=${fm.textBlockHeight}px`);
       if (parts.length) {

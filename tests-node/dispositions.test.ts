@@ -55,7 +55,7 @@ async function createFixture() {
     return site;
   }
 
-  function finishSiteRun(resourceId: string, siteId: string, score: number, collectLearning = false) {
+  function finishSiteRun(resourceId: string, siteId: string, score: number) {
     const generation = store.create(
       {
         resourceIds: [resourceId],
@@ -76,9 +76,6 @@ async function createFixture() {
     const evaluation = store.ensureEvaluation(generation, settings);
     evaluation.status = 'completed';
     evaluation.stopped = true;
-    if (collectLearning) {
-      evaluation.learningPolicy = { ...evaluation.learningPolicy!, collect: true };
-    }
     evaluation.report = {
       summary: score >= 85 ? '复刻达标' : '首屏结构差距较大',
       quality: score >= 85 ? 'passed' : 'failed',
@@ -194,12 +191,12 @@ test('completing a generated site optionally completes its resource, auto-discar
   }
 });
 
-test('discarding a generated site leaves its resource active, cancels purely queued tasks, skips reflection, and retains billing', async () => {
+test('discarding a generated site leaves its resource active, cancels purely queued tasks, and retains billing', async () => {
   const f = await createFixture();
   try {
     const resource = f.makeResource('Template Beta');
     const site = f.makeSite(resource.id, 'beta-v1');
-    const { generation, evaluation } = f.finishSiteRun(resource.id, site.id, 48, true);
+    const { generation } = f.finishSiteRun(resource.id, site.id, 48);
 
     const at = Date.parse('2026-11-10T10:00:00+08:00');
     f.store.usage.record(generation.id, {
@@ -228,7 +225,6 @@ test('discarding a generated site leaves its resource active, cancels purely que
       f.settings,
     )[0];
     assert.equal(queuedTask.status, 'queued');
-    assert.ok(f.store.reflectionCandidates().includes(evaluation.id));
 
     const discardRes = await f.app.inject({
       method: 'POST',
@@ -254,9 +250,8 @@ test('discarding a generated site leaves its resource active, cancels purely que
       [resource.id],
     );
 
-    // Queued continuation was cleanly cancelled, and discarded evaluation skips reflection.
+    // Queued continuation was cleanly cancelled.
     assert.equal(f.store.task(queuedTask.id)?.status, 'cancelled');
-    assert.equal(f.store.reflectionCandidates().includes(evaluation.id), false);
 
     // Dashboard cost accounting still retains historical spend.
     const analytics = dashboardAnalytics(f.store, {

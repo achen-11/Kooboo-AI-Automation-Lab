@@ -304,15 +304,9 @@ function formatEvidenceMeta(item: TemplateEvidence): string {
           >
             <div class="baseline-guidance-head">
               <div class="toolbar-actions">
-                <span class="badge">经验 v{{ exp.revision }}</span>
+                <span class="badge">历史经验 v{{ exp.revision }}</span>
                 <span v-if="exp.reason" class="text-muted small-text">命中依据：{{ exp.reason }}</span>
               </div>
-              <a
-                class="text-action"
-                :href="/^[a-f0-9-]+$/i.test(exp.id) ? `#/experiences/${exp.id}` : '#/experiences'"
-              >
-                查看经验详情<ArrowUpRight :size="13" />
-              </a>
             </div>
             <p class="task-prose">{{ exp.guidance }}</p>
           </article>

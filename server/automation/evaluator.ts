@@ -17,7 +17,6 @@ import { confirmedCodexExit } from './codex-process.js';
 import { ensureManifest, ManifestStore, checksSchema, validateCompleteness } from './completeness.js';
 import type { RequirementManifest } from '../../shared/completeness.js';
 import { inspectionTools, implementationEvidenceBinding } from './inspection-tools.js';
-import { selectExperience, adoptedGuidance } from './experience.js';
 import { checkpointMigrationReport, finishPendingMigrationReport } from './migration-verification.js';
 import { effectiveCollectionInput } from './collection/store.js';
 import { checkpointCollectionReport, finishPendingCollectionReport, collectionProgramEvidence, collectionProgramArtifacts, validateCollectionProgramCompleteness, checkpointCollectionProgramReview, pendingCollectionProgramReview, clearCollectionProgramReview, type CollectionProgramEvidence } from './collection/report.js';
@@ -262,7 +261,6 @@ export async function executeEvaluation(task:AutomationTask,store:AutomationStor
   if(!configured)throw new Error('请在系统设置填写评测 Responses 服务端点');
   const endpoint=responsesBaseUrl(configured);
   task.model={name:task.model?.name||settings.evaluationModel,endpoint};store.put(task);
-  await selectExperience(task,'evaluation',store,vault,directory,signal);
   if(sourceSnapshot)writeFileSync(resolve(work,'source-snapshot.json'),JSON.stringify({...sourceSnapshot,note:'来源证据按路径首次采集后冻结，采集时间见逐条观察；不是全站同一瞬间的原子快照。'},null,2),{mode:0o600});
   const browser=await (dependencies.openBrowser||evaluationBrowser)({target:site.url,reference:refOrContent,content:effectiveInput.contentUrl},work,signal,retained,files=>{task.artifacts=files;store.put(task);writeFileSync(resolve(work,'evidence-manifest.json'),JSON.stringify(files),{mode:0o600});},{taskId:task.id,siteRevision:task.siteRevision||'',inputVersionId:task.versionId,sourceSnapshotId:sourceSnapshot?.id,viewportEvidence:task.scenario==='site-template'&&!program});
   let usage:Awaited<ReturnType<typeof usageCapture>>|undefined,inspection:Awaited<ReturnType<typeof inspectionTools>>|undefined;
@@ -308,7 +306,7 @@ export async function executeEvaluation(task:AutomationTask,store:AutomationStor
     writeFileSync(resolve(work,'task.json'),JSON.stringify({task:reviewTask,input:program?{...effectiveInput,files:undefined}:effectiveInput,site,manifest:reviewManifest,sourceRenderedTargets:renderedTargets,collectionPageAliases:compact?.pageAliases||pageAliases,...(program?{collectionProgramSummary:'collection-program-summary.json',fullManifest:'collection-manifest.json',materialsManifest:'materials-manifest.json',evidenceManifest:'evidence-manifest.json'}:{})},null,2),{mode:0o600});
     copyHarnessReferences('evaluation',work);
     const humanSummaryGuidance='\n\n阅读工作区 references/human-summary.md，在最终 JSON 中按规范填写面向非研发团队的可选字段 humanSummary（verdict、headline、highlights、topFixes、unverifiedNote）。';
-    writeFileSync(resolve(work,'SKILL.md'),task.rule.sop+'\n\n'+task.rule.references+adoptedGuidance(task,store,'evaluation',vault)+acceptedAssetGuidance+renderedGuidance+(program?dataIdentityEvaluationContract(true):'')+templateResidualGuidance+humanSummaryGuidance,{mode:0o600});
+    writeFileSync(resolve(work,'SKILL.md'),task.rule.sop+'\n\n'+task.rule.references+acceptedAssetGuidance+renderedGuidance+(program?dataIdentityEvaluationContract(true):'')+templateResidualGuidance+humanSummaryGuidance,{mode:0o600});
     copyEvaluationMaterials(directory,work,effectiveInput.files);
     const codex=(dependencies.createClient||codexClient)(vault,directory,{...browser.env,...inspection.env,...usage.env},task.model,sdkPidFile);
     const threadOptions={model:task.model.name,workingDirectory:work,skipGitRepoCheck:true,sandboxMode:'workspace-write' as const,networkAccessEnabled:true,approvalPolicy:'never' as const,webSearchMode:'disabled' as const};

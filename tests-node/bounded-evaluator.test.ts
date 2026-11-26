@@ -23,7 +23,6 @@ import type { evaluationBrowser } from '../server/automation/browser.js';
 import type { ScreenshotReceipt } from '../server/automation/page-screenshots.js';
 import { evaluateVisualPrecheckSignals, type RawViewportPrecheckSnapshot } from '../server/automation/visual-precheck.js';
 import { defaultAutomationSettings, type AutomationTask, type MaterialFile } from '../shared/automation.js';
-import { defaultLearningSettings } from '../shared/experience.js';
 
 const TINY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1cAAAAASUVORK5CYII=',
@@ -70,7 +69,6 @@ async function setupEnv() {
     environments: [{ id: envId, name: 'TestEnv', origin, apiOrigin: origin, token: 'test-token' }],
   });
   const settings = structuredClone(defaultAutomationSettings);
-  settings.learning = { ...defaultLearningSettings, use: false, collect: false };
   vault.updateAutomation({
     ...settings,
     evaluationEndpoint: `${origin}/v1`,
@@ -442,7 +440,6 @@ test('bounded homepage evaluation runs 1 read-only local_image turn, creates bud
     task.generatedSiteId = randomUUID();
     task.status = 'running';
     task.stopped = false;
-    task.learningPolicy = { ...defaultLearningSettings, use: false, collect: false };
     task.rule = { ...task.rule!, criteria: makeHomepageCriteria() };
     f.store.saveSite({
       id: task.generatedSiteId,
@@ -579,7 +576,6 @@ test('bounded homepage evaluation splits into 2 sequential viewport turns when >
     task.generatedSiteId = randomUUID();
     task.status = 'running';
     task.stopped = false;
-    task.learningPolicy = { ...defaultLearningSettings, use: false, collect: false };
     task.rule = { ...task.rule!, criteria: makeHomepageCriteria() };
     f.store.saveSite({
       id: task.generatedSiteId,
@@ -817,7 +813,6 @@ test('bounded homepage evaluation ignores finite-animation settle notices when i
       task.generatedSiteId = randomUUID();
       task.status = 'running';
       task.stopped = false;
-      task.learningPolicy = { ...defaultLearningSettings, use: false, collect: false };
       task.rule = { ...task.rule!, criteria: makeHomepageCriteria() };
       f.store.saveSite({
         id: task.generatedSiteId,
@@ -950,7 +945,6 @@ test('bounded homepage evaluation runs 2 batches in parallel, attaches mobile-me
     task.generatedSiteId = randomUUID();
     task.status = 'running';
     task.stopped = false;
-    task.learningPolicy = { ...defaultLearningSettings, use: false, collect: false };
     task.rule = { ...task.rule!, criteria: makeHomepageCriteria() };
     f.store.saveSite({
       id: task.generatedSiteId,
@@ -1174,7 +1168,6 @@ test('bounded homepage evaluation opens a fresh thread with compact reminder whe
     task.generatedSiteId = randomUUID();
     task.status = 'running';
     task.stopped = false;
-    task.learningPolicy = { ...defaultLearningSettings, use: false, collect: false };
     task.rule = { ...task.rule!, criteria: makeHomepageCriteria() };
     f.store.saveSite({
       id: task.generatedSiteId,
@@ -1427,7 +1420,6 @@ test('reference validation aggregates all missing criteria in one repair prompt 
     task.generatedSiteId = randomUUID();
     task.status = 'running';
     task.stopped = false;
-    task.learningPolicy = { ...defaultLearningSettings, use: false, collect: false };
     task.rule = { ...task.rule!, criteria: makeHomepageCriteria() };
     f.store.saveSite({
       id: task.generatedSiteId,
@@ -1557,7 +1549,6 @@ test('tall 22,000px page uses startY/nextStartY continuation, slices batches <=1
     task.generatedSiteId = randomUUID();
     task.status = 'running';
     task.stopped = false;
-    task.learningPolicy = { ...defaultLearningSettings, use: false, collect: false };
     task.rule = { ...task.rule!, criteria: makeHomepageCriteria() };
     f.store.saveSite({
       id: task.generatedSiteId,

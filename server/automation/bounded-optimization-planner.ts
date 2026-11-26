@@ -15,12 +15,12 @@ import {
 import { runBoundedBatchWithRecovery, type BatchImage } from './bounded-evaluator.js';
 import { collectionTargetRepairContext } from './collection/report.js';
 import { collectionSourceGaps } from './collection/recollection.js';
-import { adoptedGuidance } from './experience.js';
 import { followupReportComparison, followupTaskContext } from './followup-context.js';
 import { copyHarnessReferences } from './harness.js';
 import { migrationRepairContext } from './migration-verification.js';
 import { optimizationEvidence } from './optimization-evidence.js';
 import { ModelBudgetExceeded } from './request-budget.js';
+import { resolveClonedContentImageSource } from './site-ui-rules.js';
 import type { AutomationStore } from './store.js';
 import { usageCapture } from './usage-proxy.js';
 import type { Vault } from '../lib/vault.js';
@@ -162,7 +162,7 @@ export async function executeBoundedOptimizationPlanning(params: {
   copyHarnessReferences('optimization', work);
   writeFileSync(
     resolve(work, 'SKILL.md'),
-    `${task.optimization.policy.sop}\n\n本次场景约束：${optimizationScenarioGuidance(task.scenario)}${adoptedGuidance(task, store, 'followup', vault)}`,
+    `${task.optimization.policy.sop}\n\n本次场景约束：${optimizationScenarioGuidance(task.scenario)}`,
     { mode: 0o600 },
   );
 
@@ -269,6 +269,7 @@ export async function executeBoundedOptimizationPlanning(params: {
       })
       .join('，');
     const hasMajorOrCritical = currentReport.issues.some(i => i.severity !== 'minor');
+    const clonedSource = resolveClonedContentImageSource(task, version);
 
     const promptSections = [
       `你是站点持续优化规划 Agent（有界只读单步模式）。`,
@@ -279,12 +280,18 @@ export async function executeBoundedOptimizationPlanning(params: {
       `【优化规范与场景约束】`,
       task.optimization.policy.sop.trim(),
       `场景约束：${optimizationScenarioGuidance(task.scenario)}`,
-      adoptedGuidance(task, store, 'followup', vault).trim(),
       ``,
       `【当前目标与轮次】`,
       `- 站点：${site?.url || task.siteUrl || '未记录'} | 场景：${task.scenario} | 范围：${task.scope}`,
       `- 双端目标分：${task.optimization.policy.targetScore} | 当前得分：${gapsToTarget} | 已完成修复轮次：${roundNumber}/${task.optimization.policy.maxRounds}`,
       `- 原需求摘要：${(version?.description || task.message || '').trim().slice(0, 2000) || '（无）'}`,
+      ...(clonedSource
+        ? [
+            clonedSource.kind === 'source-sandbox'
+              ? `- 原内容站图片基线：原内容站（${clonedSource.contentUrl}）已成功克隆至只读源站 Sandbox「${clonedSource.sandbox}」；涉及缺图、换图或主视觉修复时，必须在修复委托中优先要求从该源站 Sandbox 复用原内容站真实图片资源，仅在原站确无可用图时才以资料图或 imagePlaceholder 兜底，严禁把可用原站图片替换成占位图。`
+              : `- 原内容站图片基线：原内容站（${clonedSource.contentUrl}）已成功克隆至目标站；涉及缺图、换图或主视觉修复时，必须在修复委托中优先要求从当前目标站媒体库复用原内容站真实图片资源，仅在原站确无可用图时才以资料图或 imagePlaceholder 兜底，严禁把可用原站图片替换成占位图。`,
+          ]
+        : []),
       ...(!hasMajorOrCritical
         ? [
             `- 特别防退化纪律：当前报告已无 Critical/Major 缺陷！仅选 3–5 项最高收益且不牵连稳定区的 Minor 缺陷定向小改，并在 message 末尾醒目注明“严禁修改已达标的高分区段（如首屏、通过的网格或已有正确文案），严禁写入资料整理口径”。`,

@@ -25,8 +25,7 @@ async function fixture() {
   store.saveSite(site);
   const create = () => {
     const task = store.create({ resourceIds: [resource.id], kind: 'generation', scope: 'homepage', environmentId, generatedSiteId: site.id, requirements: '完整要求😀\n保留换行' }, structuredClone(defaultAutomationSettings))[0];
-    task.requirementsEnabled = false; task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
-    task.generation = { prepared: true, conversationId: randomUUID() }; store.put(task); return task;
+    task.requirementsEnabled = false; task.generation = { prepared: true, conversationId: randomUUID() }; store.put(task); return task;
   };
   const task = create();
   const record = (patch: Partial<GenerationDelivery> = {}): GenerationDelivery => ({ id: randomUUID(), taskId: task.id, versionId: task.versionId, siteId: site.siteId, conversationId: task.generation!.conversationId!, createdAt: Date.now(), kind: 'initial', state: 'prepared', text: '实际原文😀\n第二行', textBytes: Buffer.byteLength('实际原文😀\n第二行'), images: [], ...patch });

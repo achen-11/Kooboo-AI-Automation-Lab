@@ -7,8 +7,6 @@ import { randomUUID } from 'node:crypto';
 import { createApp } from '../server/app.js';
 import { AutomationStore } from '../server/automation/store.js';
 import { AutomationWorker } from '../server/automation/worker.js';
-import { ExperienceStore } from '../server/automation/experience-store.js';
-import { queueReflection } from '../server/automation/experience.js';
 import { defaultAutomationSettings } from '../shared/automation.js';
 
 async function fixture() {
@@ -29,10 +27,8 @@ async function fixture() {
   return {...services,store,site,task,review,headers,directory,async close(){await services.app.close();rmSync(directory,{recursive:true,force:true});}};
 }
 
-test('idle dispatch never reads full task history or usage, including already reflected reports',async()=>{
+test('idle dispatch never reads full task history or usage',async()=>{
   const f=await fixture();try{
-    f.review.learningPolicy={...f.review.learningPolicy!,collect:true};f.store.put(f.review);
-    const run=queueReflection(f.review,f.store)!;run.status='failed';new ExperienceStore(f.store).put(run);
     f.vault.updateAutomation({...defaultAutomationSettings,enabled:true});
     const prepare=f.store.db.prepare.bind(f.store.db);
     f.store.db.prepare=sql=>{
@@ -41,7 +37,6 @@ test('idle dispatch never reads full task history or usage, including already re
     };
     const worker=new AutomationWorker(f.store,f.vault,f.directory);
     await worker.tick();await worker.tick();
-    assert.equal(f.store.reflectionCandidates().length,0,'failed reflections are retained rather than resubmitted every second');
   }finally{await f.close();}
 });
 

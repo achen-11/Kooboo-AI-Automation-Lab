@@ -8,15 +8,13 @@ import { randomUUID } from 'node:crypto';
 import { createApp } from '../server/app.js';
 import { defaultAutomationSettings, defaultOptimizationPolicy } from '../shared/automation.js';
 import { defaultCompletenessSettings } from '../shared/completeness.js';
-import { defaultLearningSettings } from '../shared/experience.js';
 import { deriveEvaluationHumanSummary, deriveHumanNotice } from '../shared/human-diagnostics.js';
 import { taskSummary } from '../shared/task-presentation.js';
 import { builtInHarnessSop, buildHarnessCatalog, resolveHarnessSop } from '../server/automation/harness.js';
 import { executeGeneration } from '../server/automation/generator.js';
 import { FollowupRuntimeError } from '../server/automation/errors.js';
 import { mergeTemplateReports, rawBatchReport } from '../server/automation/template-review.js';
-import { AutomationWorker, syncReflectionCandidates } from '../server/automation/worker.js';
-import { ExperienceStore } from '../server/automation/experience-store.js';
+import { AutomationWorker } from '../server/automation/worker.js';
 import { validateFollowupAction } from '../server/automation/followup.js';
 import { isConfirmedCloneFailure } from '../server/automation/autonomy.js';
 
@@ -53,15 +51,17 @@ async function createTestApp(koobooOrigin = 'https://kooboo.test') {
   return { ...f, directory, headers, envId };
 }
 
-test('Harness catalog exposes all 17 files, 8 stages, and GET /api/automation/harness', async () => {
+test('Harness catalog exposes all 16 files, 8 stages, and GET /api/automation/harness', async () => {
   const f = await createTestApp();
   try {
     const catalog = buildHarnessCatalog(f.vault.rawAutomation());
     assert.equal(catalog.rootDir, 'harness/');
     assert.equal(catalog.overviewPath, 'README.md');
     assert.equal(catalog.stages.length, 8);
-    assert.equal(catalog.documents.length, 17);
+    assert.equal(catalog.documents.length, 16);
     assert.ok(catalog.documents.some(doc => doc.path === 'intake/SKILL.md'));
+    assert.ok(catalog.documents.some(doc => doc.path === 'distillation/SKILL.md'));
+    assert.ok(catalog.documents.some(doc => doc.path === 'distillation/references/pattern-ledger.md'));
     assert.ok(catalog.documents.some(doc => doc.path === 'evaluation/CHECKS.md'));
     assert.ok(catalog.documents.some(doc => doc.path === 'generation/references/site-ui-rules.md'));
     for (const doc of catalog.documents) {
@@ -72,8 +72,8 @@ test('Harness catalog exposes all 17 files, 8 stages, and GET /api/automation/ha
     const res = await f.app.inject({ url: '/api/automation/harness', headers: f.headers });
     assert.equal(res.statusCode, 200);
     const body = res.json();
-    assert.equal(body.documents.length, 17);
-    assert.equal(body.bindings.length, 6);
+    assert.equal(body.documents.length, 16);
+    assert.equal(body.bindings.length, 4);
     assert.ok(body.bindings.every((b: { customized: boolean }) => b.customized === false));
   } finally {
     await f.app.close();
@@ -98,48 +98,58 @@ test('Vault auto-upgrades untouched legacy SOPs, preserves custom edits, and sup
     assert.equal(migrated.migratedLegacy, true);
     assert.equal(migrated.value, builtInHarnessSop('followup.sop'));
 
+    const prevOptSop = `# 站点持续优化决策规范（Optimization SOP）
+
+你负责根据独立报告及真实截图决定是否继续优化站点。
+
+## 分析与修复委托纪律
+
+- 实际查看所提供的目标站和参考站截图，按问题位置、视口、参考设计意图、预期改善和保留约束整理一组可执行修复。优先重大缺陷及 Hero / 结构差距，不笼统重做全站，不承诺某个修改能加固定分数。
+- 当已无 Critical/Major 缺陷且与目标分差较小（例如差 < 3 分）时，仅针对最高收益的 3–5 项 Minor 缺陷做精准小改，并在 \`message\` 中明确“严禁改动已达标的高分区段（如首屏/稳定网格）”；同时严禁在页面文案、页脚、询盘表单或提示中暴露“依据客户提供的《...》资料整理”“电话与邮箱以商务确认为准”等内部制作口径文字。
+- 比较本轮与上轮问题及双端证据，记录已解决、仍存在、未验证和新增问题。\`improved\` 表示有实际问题解决或设计改善，不单凭分数的一两分波动；明显退化又无可信修复方案时 \`interrupt\`。
+- 遵守原输入、场景和范围。资料建站、迁移与升级保留内容站及资料包的真实内容与合法资源；非豁免展示位缺少真实配图时使用 \`imagePlaceholder\` 真实配图（\`<img>\`），不得用大块几何 SVG 充数；迁移与升级按来源清单检查内容标识、分类关系、分页、URL/SEO 及功能完整性。参考截图作为审查证据。不修改评分口径、目标或权重。Kooboo 负责具体实现，独立评测负责真实复评。
+- 通过工具 \`repair\` 委托修复，或 \`interrupt\` 说明停止理由和下一步；不得直接改站。
+- 当决定 \`interrupt\` 停止优化时，同时按 \`references/human-output.md\` 填写简洁的 \`userSummary\`，让非研发同事明白“为什么停在当前分数、站点现在处于什么状态、接下来人工可以怎么做”。`;
+    const migratedOpt = resolveHarnessSop('optimization.sop', prevOptSop);
+    assert.equal(migratedOpt.customized, false);
+    assert.equal(migratedOpt.migratedLegacy, true);
+    assert.equal(migratedOpt.value, builtInHarnessSop('optimization.sop'));
+
     f.vault.updateAutomation({
       ...defaultAutomationSettings,
       followup: { ...defaultAutomationSettings.followup, sop: preV070Followup },
       optimization: { ...defaultOptimizationPolicy, sop: '旧版未编辑\n' },
     });
-    // Actually store genuine legacy optimization SOP and a genuine custom followup SOP test:
+    // Actually store genuine legacy followup SOP and a genuine custom completeness SOP test:
     f.vault.updateAutomation({
       ...defaultAutomationSettings,
       followup: { ...defaultAutomationSettings.followup, sop: preV070Followup },
       optimization: { ...defaultOptimizationPolicy, sop: defaultOptimizationPolicy.sop },
-      completeness: { ...defaultCompletenessSettings, sop: defaultCompletenessSettings.sop },
-      learning: {
-        ...defaultLearningSettings,
-        selectionSop: defaultLearningSettings.selectionSop,
-        reflectionSop: '用户手写的自定义复盘规则：必须附加人工核对。',
-      },
+      completeness: { ...defaultCompletenessSettings, sop: '用户手写的自定义完整度规范：必须逐页人工抽检。' },
     });
 
     const loaded = f.vault.automation();
     assert.equal(loaded.followup.sop, builtInHarnessSop('followup.sop'));
     assert.equal(loaded.optimization!.sop, builtInHarnessSop('optimization.sop'));
-    assert.equal(loaded.completeness!.sop, builtInHarnessSop('completeness.sop'));
-    assert.equal(loaded.learning!.selectionSop, builtInHarnessSop('learning.selectionSop'));
-    assert.equal(loaded.learning!.reflectionSop, '用户手写的自定义复盘规则：必须附加人工核对。');
+    assert.equal(loaded.completeness!.sop, '用户手写的自定义完整度规范：必须逐页人工抽检。');
 
     const catalogRes = await f.app.inject({ url: '/api/automation/harness', headers: f.headers });
     assert.equal(catalogRes.statusCode, 200);
     const bindings = catalogRes.json().bindings as Array<{ key: string; customized: boolean; migratedLegacy: boolean }>;
     assert.equal(bindings.find((b) => b.key === 'followup.sop')?.migratedLegacy, true);
     assert.equal(bindings.find((b) => b.key === 'followup.sop')?.customized, false);
-    assert.equal(bindings.find((b) => b.key === 'learning.reflectionSop')?.customized, true);
+    assert.equal(bindings.find((b) => b.key === 'completeness.sop')?.customized, true);
 
     const resetRes = await f.app.inject({
       method: 'POST',
       url: '/api/automation/harness/reset',
       headers: f.headers,
-      payload: { key: 'learning.reflectionSop' },
+      payload: { key: 'completeness.sop' },
     });
     assert.equal(resetRes.statusCode, 200);
-    assert.equal(resetRes.json().settings.learning.reflectionSop, builtInHarnessSop('learning.reflectionSop'));
+    assert.equal(resetRes.json().settings.completeness.sop, builtInHarnessSop('completeness.sop'));
     assert.equal(
-      resetRes.json().bindings.find((b: { key: string }) => b.key === 'learning.reflectionSop')?.customized,
+      resetRes.json().bindings.find((b: { key: string }) => b.key === 'completeness.sop')?.customized,
       false,
     );
   } finally {
@@ -357,7 +367,6 @@ test('generator stops infinite loop when transfer returns pages=0 (legacy Transf
     )[0];
     delete upgTask.autonomy;
     upgTask.requirementsEnabled = false;
-    upgTask.learningPolicy = { ...upgTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(upgTask);
 
     await assert.rejects(
@@ -420,7 +429,6 @@ test('generator stops infinite loop when transfer returns pages=0 (legacy Transf
     )[0];
     delete legTask.autonomy;
     legTask.requirementsEnabled = false;
-    legTask.learningPolicy = { ...legTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(legTask);
 
     await assert.rejects(
@@ -441,7 +449,6 @@ test('generator stops infinite loop when transfer returns pages=0 (legacy Transf
     )[0];
     delete recTask.autonomy;
     recTask.requirementsEnabled = false;
-    recTask.learningPolicy = { ...recTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(recTask);
 
     await executeGeneration(
@@ -482,7 +489,6 @@ test('generator stops infinite loop when transfer returns pages=0 (legacy Transf
       defaultAutomationSettings,
     )[0];
     noTaskIdTask.generation = { createAttempted: true };
-    noTaskIdTask.learningPolicy = { ...defaultLearningSettings, use: true, collect: true };
     f.automationStore.put(noTaskIdTask);
 
     await assert.rejects(
@@ -504,14 +510,13 @@ test('generator stops infinite loop when transfer returns pages=0 (legacy Transf
   }
 });
 
-test('confirmed clone failure stops immediately with 0 followup and 0 experience reflection LLM calls', async () => {
+test('confirmed clone failure stops immediately with 0 followup LLM calls', async () => {
   const f = await createTestApp('https://shawnchen-de.kooboo.io');
   try {
     f.vault.updateAutomation({
       ...f.vault.automation(),
       enabled: true,
       followup: { ...defaultAutomationSettings.followup, enabled: true },
-      learning: { ...defaultLearningSettings, use: true, collect: true },
     });
     const res = f.automationStore.saveResource({
       name: 'De Friese Schaar',
@@ -529,7 +534,6 @@ test('confirmed clone failure stops immediately with 0 followup and 0 experience
     )[0];
 
     let followupCalls = 0;
-    let reflectCalls = 0;
     const cloneError = new FollowupRuntimeError(
       '内容站克隆完成但导入 0 页（http://www.defrieseschaar.nl），已重试后仍无法获取源站页面',
       ['在浏览器打开 http://www.defrieseschaar.nl，确认原网站可公开访问且未被验证码或登录拦截。'],
@@ -562,9 +566,6 @@ test('confirmed clone failure stops immediately with 0 followup and 0 experience
         followupCalls++;
         throw new Error('followup should never run on confirmed clone failure');
       },
-      (async () => {
-        reflectCalls++;
-      }) as any,
     );
 
     await worker.tick();
@@ -576,17 +577,8 @@ test('confirmed clone failure stops immediately with 0 followup and 0 experience
     assert.equal(updated.stopped, true);
     assert.equal(updated.followup, undefined, 'Should not schedule followup after confirmed clone failure');
     assert.equal(followupCalls, 0);
-    assert.equal(reflectCalls, 0, 'Should not invoke reflectExperience LLM call on confirmed clone failure');
 
-    const es = new ExperienceStore(f.automationStore);
-    syncReflectionCandidates(f.automationStore, es);
-    const learningRuns = es.runs(task.id, 1, 10).items;
-    assert.equal(learningRuns.length, 1);
-    assert.equal(learningRuns[0]!.status, 'completed');
-    assert.match(learningRuns[0]!.reason, /^跳过复盘：/);
-    assert.equal(es.claim(), undefined);
-
-    // Even if a task was previously queued in following-up with confirmed clone failure, worker short-circuits before calling followup or experience selection:
+    // Even if a task was previously queued in following-up with confirmed clone failure, worker short-circuits before calling followup:
     f.automationStore.scheduleFollowup(updated, f.vault.automation().followup);
     updated.error = cloneError.message;
     f.automationStore.put(updated);
@@ -595,7 +587,6 @@ test('confirmed clone failure stops immediately with 0 followup and 0 experience
     const afterFollowupTick = f.automationStore.task(task.id)!;
     assert.equal(afterFollowupTick.status, 'interrupted');
     assert.equal(followupCalls, 0);
-    assert.equal(reflectCalls, 0);
 
     // And validateFollowupAction rejects action=retry on confirmed clone failure:
     assert.throws(

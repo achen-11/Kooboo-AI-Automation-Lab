@@ -6,15 +6,13 @@ export type HarnessCategory =
   | 'optimization'
   | 'completeness'
   | 'intake'
-  | 'experience'
+  | 'distillation'
   | 'delivery';
 
 export type HarnessSopKey =
   | 'followup.sop'
   | 'optimization.sop'
   | 'completeness.sop'
-  | 'learning.selectionSop'
-  | 'learning.reflectionSop'
   | 'delivery.sop';
 
 export interface HarnessDocumentSummary {
@@ -71,7 +69,7 @@ export const harnessCategoryLabels: Record<HarnessCategory, string> = {
   optimization: '持续优化',
   completeness: '完整度清单',
   intake: '资料收集整理',
-  experience: '经验闭环',
+  distillation: '反馈蒸馏与规律台账',
   delivery: '交付核验',
 };
 
@@ -79,7 +77,5 @@ export const harnessSettingLabels: Record<HarnessSopKey, string> = {
   'followup.sop': '跟进 AI 决策规范',
   'optimization.sop': '站点持续优化决策规范',
   'completeness.sop': '应交付清单提取规范',
-  'learning.selectionSop': '经验筛选规范',
-  'learning.reflectionSop': '经验复盘沉淀规范',
   'delivery.sop': '跨环境交付核验规范',
 };

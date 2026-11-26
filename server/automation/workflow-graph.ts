@@ -11,7 +11,6 @@ import {
   type InputVersion,
 } from '../../shared/automation.js';
 import type { CollectionRun } from '../../shared/collection.js';
-import type { LearningRun } from '../../shared/experience.js';
 import {
   deriveHumanNotice,
   sanitizeHumanText,
@@ -41,7 +40,6 @@ import {
 import type { Vault } from '../lib/vault.js';
 import { inMaintenance } from '../updates/maintenance.js';
 import { CollectionStore } from './collection/store.js';
-import { ExperienceStore } from './experience-store.js';
 import { diagnoseTaskQueueReason } from './queue-diagnostics.js';
 import type { AutomationStore } from './store.js';
 import { SupplementStore } from './supplement.js';
@@ -57,7 +55,6 @@ export interface WorkflowGraphOptions {
 interface StoreHelpers {
   collection: CollectionStore;
   template: TemplateWorkflowStore;
-  experience: ExperienceStore;
   supplement: SupplementStore;
 }
 
@@ -70,7 +67,6 @@ function getStoreHelpers(store: AutomationStore, directory: string): StoreHelper
     cached = {
       collection: new CollectionStore(store, directory),
       template: new TemplateWorkflowStore(store),
-      experience: new ExperienceStore(store),
       supplement: new SupplementStore(store),
     };
     storeCache.set(store, cached);
@@ -414,9 +410,7 @@ function formatGenerationChecks(
 function formatPrepareChecks(
   genTask: AutomationTask,
   version: InputVersion | undefined,
-  selectionRun: LearningRun | undefined,
   isRunningPrepare: boolean,
-  learningUseEnabled: boolean,
 ): WorkflowStepCheck[] {
   const g = genTask.generation || {};
   const needsClone =
@@ -507,7 +501,7 @@ function formatPrepareChecks(
 
   checks.push({
     id: 'prepare-manifest',
-    label: learningUseEnabled ? '锁定交付清单与经验指引' : '锁定交付清单与上下文',
+    label: '锁定交付清单与上下文',
     status: manifestDone
       ? 'done'
       : failedHere && siteCreated && cloneDone && uploadDone
@@ -515,11 +509,6 @@ function formatPrepareChecks(
         : isRunningPrepare && siteCreated && cloneDone && uploadDone
           ? 'running'
           : 'pending',
-    detail: selectionRun
-      ? selectionRun.status === 'completed'
-        ? `已匹配 ${selectionRun.adoptions.length} 条适用经验`
-        : '正在筛选历史经验'
-      : undefined,
   });
 
   return checks;
@@ -669,21 +658,8 @@ export function buildTaskWorkflowGraph(
   );
   const showDelivery = Boolean(del || autoDeliveryFlag || autoDeliveryExpected);
 
-  // Timing & bounded learning & supplements
+  // Timing & supplements
   const timing = store.timing.summary(workflowIds, now);
-  const placeholders = workflowIds.map(() => '?').join(',');
-  const learningRuns: LearningRun[] = workflowIds.length
-    ? (store.db
-        .prepare(
-          `SELECT json FROM auto_learning_runs WHERE json_extract(json,'$.taskId') IN (${placeholders}) ORDER BY created_at DESC LIMIT 20`,
-        )
-        .all(...workflowIds) as { json: string }[]).map((r) => JSON.parse(r.json) as LearningRun)
-    : [];
-  const selectionRun = learningRuns.find((r) => r.kind === 'selection');
-  const reflectionRuns = learningRuns.filter((r) => r.kind === 'reflection');
-  const learningUseEnabled = Boolean(selectionRun || (settings.learning?.use && root.learningPolicy?.use !== false));
-  const learningCollectEnabled = Boolean(settings.learning?.collect && root.learningPolicy?.collect !== false);
-  const showLearning = Boolean(reflectionRuns.length > 0 || (learningCollectEnabled && showEvaluation));
 
   const activeTask: AutomationTask =
     viewing.kind === 'evaluation' && !opt
@@ -880,9 +856,7 @@ export function buildTaskWorkflowGraph(
     const prepChecks = formatPrepareChecks(
       prepTask,
       version,
-      selectionRun,
       prepStatus === 'running',
-      learningUseEnabled,
     );
     const refUrl = effectiveReferenceUrl(version, prepTask);
     const tplMode = effectiveTemplateUsageMode(version, Boolean(prepTask.generatedSiteId));
@@ -1496,66 +1470,6 @@ export function buildTaskWorkflowGraph(
         label: '异常自动跟进',
         active: fStatus === 'running' || fStatus === 'queued',
         completed: fStatus === 'completed',
-      });
-    }
-  }
-
-  // 10. Experience Learning branch node (when reflection exists OR learning collection is enabled for an evaluation-capable workflow)
-  if (showLearning) {
-    const latestLearn = reflectionRuns[0];
-    const learnStatus: WorkflowNodeStatus = !latestLearn
-      ? 'pending'
-      : latestLearn.status === 'completed'
-        ? 'completed'
-        : latestLearn.status === 'running'
-          ? 'running'
-          : latestLearn.status === 'queued'
-            ? 'queued'
-            : 'attention';
-    const anchorNode = mainNodes[mainNodes.length - 1];
-    const producedCount = reflectionRuns.reduce((sum, r) => sum + r.produced.length, 0);
-
-    nodes.push({
-      id: 'learning',
-      kind: 'learning',
-      lane: 'branch',
-      column: anchorNode?.column ?? 0,
-      anchorNodeId: anchorNode?.id,
-      title: '经验复盘沉淀',
-      subtitle: !latestLearn
-        ? '结束后自动复盘'
-        : learnStatus === 'completed'
-          ? producedCount > 0
-            ? `已沉淀 ${producedCount} 条经验`
-            : '复盘完成（无新增条目）'
-          : learnStatus === 'running'
-            ? 'AI 正在复盘本轮得失'
-            : learnStatus === 'queued'
-              ? '排队等待复盘'
-              : '复盘未完成',
-      status: learnStatus,
-      statusLabel: workflowNodeStatusLabels[learnStatus],
-      summary: latestLearn
-        ? cleanText(
-            latestLearn.reason,
-            '任务结束后由 AI 自动总结可复用经验，供后续同场景任务参考（不影响当前站点报告）。',
-          )
-        : '系统已开启经验自动沉淀，任务与评测全部完成后会自动提取有效经验。',
-      description: '后置经验学习支路：提取本次建站与评测中的有效方法或避坑点，写入经验库。',
-      taskId: latestLearn?.taskId,
-      durationMs: stageDuration(timing.stages, ['experience']),
-      actions: [{ type: 'tab', label: '查看经验复盘记录', tab: 'execution' }],
-    });
-
-    if (anchorNode) {
-      edges.push({
-        id: `edge-${anchorNode.id}-learning`,
-        from: anchorNode.id,
-        to: 'learning',
-        kind: 'branch',
-        label: '结束后复盘',
-        active: learnStatus === 'running' || learnStatus === 'queued',
-        completed: learnStatus === 'completed',
       });
     }
   }

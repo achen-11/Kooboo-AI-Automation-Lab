@@ -692,3 +692,38 @@ test('homepage preset outOfScope moves static-screenshot accordion/hover/link-ta
   assert.equal(verdict.humanSummary?.verdict, 'ready');
   assert.deepEqual(verdict.coverage.unverified, []);
 });
+
+test('buildBoundedCheckerPrompt emits Option A brand-palette rule for upgrade with reference and omits it for site-template', () => {
+  const preset = defaultOutOfScope({
+    scenario: 'upgrade',
+    scope: 'homepage',
+    hasReference: true,
+    hasMaterials: true,
+    hasBackendAccess: false,
+  });
+  const upgradePrompt = buildBoundedCheckerPrompt({
+    scenario: 'upgrade',
+    scope: 'homepage',
+    siteUrl: 'https://target.test/',
+    description: 'Classic auto workshop upgrade',
+    criteria: homepageCriteria,
+    presetOutOfScope: preset,
+    imageManifestLines: ['t.png (role=target)', 'r.png (role=reference)'],
+    hasReference: true,
+  });
+  assert.match(upgradePrompt, /升级场景配色口径（重要）/);
+  assert.match(upgradePrompt, /品牌主色、强调色与 Logo 优先承接原内容站与商家行业气质/);
+  assert.match(upgradePrompt, /R-TRUST-01/);
+
+  const templatePrompt = buildBoundedCheckerPrompt({
+    scenario: 'site-template',
+    scope: 'homepage',
+    siteUrl: 'https://tpl.test/',
+    description: 'Template generation',
+    criteria: homepageCriteria,
+    presetOutOfScope: preset,
+    imageManifestLines: ['t.png (role=target)', 'r.png (role=reference)'],
+    hasReference: true,
+  });
+  assert.doesNotMatch(templatePrompt, /升级场景配色口径/);
+});

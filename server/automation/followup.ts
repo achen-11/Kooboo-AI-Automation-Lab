@@ -15,13 +15,12 @@ import { generationSession, matchingGenerationOutcome, type GenerationObservatio
 import { readConversation, refreshSite, probeSite } from './kooboo.js';
 import { FollowupRuntimeError } from './errors.js';
 import { optimizationEvidence, planningImageInput } from './optimization-evidence.js';
-import { adoptedGuidance, PLATFORM_HARD_CONTRACTS } from './experience.js';
 import { copyHarnessReferences } from './harness.js';
 import { migrationRepairContext } from './migration-verification.js';
 import { followupRequestPolicy, followupAccountState, isConfirmedCloneFailure, retainStoppedFollowupReservations } from './autonomy.js';
 import { collectionTargetRepairContext } from './collection/report.js';
 import { collectionSourceGaps, recollectionObjectiveSchema, validateRecollectionAction } from './collection/recollection.js';
-import { followupTaskContext, followupReportComparison, selectFollowupTaskEvents } from './followup-context.js';
+import { followupTaskContext, followupReportComparison, selectFollowupTaskEvents, PLATFORM_HARD_CONTRACTS } from './followup-context.js';
 import { isConversationPayloadTooLarge } from '../../shared/task-presentation.js';
 import { toolsClientScript, windowsToolsHint } from './tools-client.js';
 import {
@@ -280,7 +279,7 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
   const address=server.address();if(!address||typeof address==='string')throw new Error('跟进工具服务启动失败');
   writeFileSync(resolve(work,'tools.mjs'),toolsClientScript('FOLLOWUP_TOOLS_URL','FOLLOWUP_TOOLS_TOKEN','followup_tool_transport_error'),{mode:0o600});
   copyHarnessReferences(quality?'optimization':'followup',work);
-  writeFileSync(resolve(work,'SKILL.md'),(quality?task.optimization!.policy.sop+'\n\n本次场景约束：'+optimizationScenarioGuidance(task.scenario):task.followup.policy.sop)+adoptedGuidance(task,store,'followup',vault),{mode:0o600});
+  writeFileSync(resolve(work,'SKILL.md'),(quality?task.optimization!.policy.sop+'\n\n本次场景约束：'+optimizationScenarioGuidance(task.scenario):task.followup.policy.sop),{mode:0o600});
   writeFileSync(resolve(work,'task.json'),JSON.stringify(store.sanitize({task:followupTaskContext(task),input:store.version(task.versionId)}),null,2),{mode:0o600});
   writeFileSync(resolve(work,'tools-schema.json'),JSON.stringify(z.toJSONSchema(toolInput),null,2),{mode:0o600});
   const codex=createClient(vault,directory,{FOLLOWUP_TOOLS_URL:`http://127.0.0.1:${address.port}/tools`,FOLLOWUP_TOOLS_TOKEN:token,...usage.env},task.model||undefined);

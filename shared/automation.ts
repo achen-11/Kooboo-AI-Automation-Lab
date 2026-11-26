@@ -1,4 +1,3 @@
-import { defaultLearningSettings, type LearningSettings } from './experience.js';
 import { defaultCompletenessSettings, type CompletenessSettings } from './completeness.js';
 export interface AutomationTask {
   templateWorkflow?: import('./template-workflow.js').TemplateWorkflowBinding;
@@ -22,7 +21,7 @@ export function supportsAutomaticOptimization(scenario: Scenario) { return ['mat
 export function optimizationScenarioGuidance(scenario: Scenario) {
   return scenario === 'site-template'
     ? '本次为 AI Site 模板：图片使用 imagePlaceholder，不得复用参考站资源。'
-    : '本次为资料建站、站点迁移或升级：保留内容站及资料包的真实内容和合法资源；若非豁免展示位缺少真实配图，使用 imagePlaceholder 真实配图（<img>），禁止用大块几何 SVG 充数。优先修复主视觉/结构、内容标识、分类归属、分页、URL/SEO、功能和双端缺陷；数量与 HTTP 200 不能代替内容及关系对账。严禁在公开页面（含页脚、询盘表单、说明文字）写入“依据客户提供的《...》资料整理”“电话与邮箱以商务确认为准”等内部制作口径文案；严禁改动已达标的高分区段（尤其未报错的首屏与稳定网格），仅做定向精准修复防止回归。';
+    : '本次为资料建站、站点迁移或升级：保留内容站及资料包的真实内容和合法资源；当存在内容站且克隆成功时，优先使用原内容站中的真实图片资源（禁止把可用原站图片替换成占位图），仅在原站及资料包确无可用配图的非豁免展示位使用 imagePlaceholder 真实配图（<img>），禁止用大块几何 SVG 充数。优先修复主视觉/结构、内容标识、分类归属、分页、URL/SEO、功能和双端缺陷；数量与 HTTP 200 不能代替内容及关系对账。严禁在公开页面（含页脚、询盘表单、说明文字）写入“依据客户提供的《...》资料整理”“电话与邮箱以商务确认为准”等内部制作口径文案；严禁改动已达标的高分区段（尤其未报错的首屏与稳定网格），仅做定向精准修复防止回归。';
 }
 export type Scope = 'homepage' | 'site';
 export type TaskStatus = 'queued' | 'running' | 'pending' | 'cancelling' | 'cancelled' | 'completed' | 'failed' | 'following-up' | 'interrupted';
@@ -110,7 +109,7 @@ export const defaultOptimizationPolicy: OptimizationPolicy = { targetScore: 85, 
 实际查看所提供的目标站和参考站截图，按问题位置、视口、参考设计意图、预期改善和保留约束整理一组可执行修复。优先重大缺陷及 Hero / 结构差距，不笼统重做全站，不承诺某个修改能加固定分数。
 当已无 Critical/Major 缺陷且与目标分差较小（例如差 < 3 分）时，仅针对最高收益的 3–5 项 Minor 缺陷做精准小改，并在修复委托中明示“严禁改动已达标的高分区段（如首屏/稳定网格）”；严禁在页面文案、页脚、询盘表单或提示中暴露“依据客户提供的《...》资料整理”“电话与邮箱以商务确认为准”等内部制作口径文字。
 比较本轮与上轮问题及双端证据，记录已解决、仍存在、未验证和新增问题。improved 表示有实际问题解决或设计改善，不单凭分数的一两分波动；明显退化又无可信修复方案时 interrupt。
-遵守原输入、场景和范围。资料建站、迁移与升级保留内容站及资料包的真实内容与合法资源；非豁免展示位缺少真实配图时使用 imagePlaceholder 真实配图，不得用大块几何 SVG 充数；迁移与升级按来源清单检查内容标识、分类关系、分页、URL/SEO及功能完整性。参考截图作为审查证据。不修改评分口径、目标或权重。Kooboo 负责具体实现，独立评测负责真实复评。
+遵守原输入、场景和范围。资料建站、迁移与升级保留内容站及资料包的真实内容与合法资源；当存在内容站且克隆成功时，优先使用原内容站中的真实图片资源（禁止把可用原站图片替换成占位图），仅在原站及资料包确无可用配图的非豁免展示位使用 imagePlaceholder 真实配图，不得用大块几何 SVG 充数；迁移与升级按来源清单检查内容标识、分类关系、分页、URL/SEO及功能完整性。参考截图作为审查证据。不修改评分口径、目标或权重。Kooboo 负责具体实现，独立评测负责真实复评。
 通过工具 repair 委托修复，或 interrupt 说明停止理由和下一步；不得直接改站。` };
 export interface FollowupSettings { enabled: boolean; concurrency: number; maxAttempts: number; maxMinutes: number; maxTokens: number; maxRequests?: number; sop: string }
 export interface CollectionReportObservation { reportId:string; sourceGaps:string[] }
@@ -160,8 +159,8 @@ export interface FollowupWindow { index: number; startedAt: number; attemptsBase
 export interface FollowupManualResume { at: number; afterInterrupt: boolean; previousInterruptReason?: string }
 export interface FollowupRun { reportObservations?:Record<string,CollectionReportObservation>; budgetId?: string; runId?: string; window?: FollowupWindow; budgetStartedAt?: number; elapsedMs?: number; activeStartedAt?: number; activeHeartbeatAt?: number; activeElapsedMs?:number; state: 'queued' | 'running' | 'waiting' | 'resolved' | 'interrupted'; attempts: number; transportFailures?: number; consecutiveTransportFailures?: number; manualResume?: FollowupManualResume; startedAt: number; nextAt: number; tokens: number; threadId: string; imageThread?: { threadId: string; names: string[] }; policy: FollowupSettings; executionStopped: boolean; lastAction?: FollowupAction; observations: string[] }
 export interface AutomationNotice { id: string; taskId: string; title: string; message: string; createdAt: number; readAt: number | null }
-export interface AutomationTask { migrationPendingReport?: { report: AutomationReport; inputVersionId: string; siteRevision: string; manifestId: string; ruleHash: string }; completenessPolicy?:CompletenessSettings; learningPolicy?: LearningSettings; requirementsId?: string; requirementsEnabled?: boolean; autoEvaluate?: boolean; autoDelivery?: boolean; optimization?: OptimizationRun; optimizationRootId?: string; optimizationRound?: number; siteRevision?: string; repairEvidence?: { reportId: string; files: string[] }; usage?: import('./billing.js').UsageSummary; delivery?: DeliveryRun; id: string; stage?: AutomationStage; generation?: GenerationCheckpoint; followup?: FollowupRun; interruption?: TaskInterruption; artifacts?: MaterialFile[]; evaluationTaskId?: string; kind: 'generation' | 'evaluation'; resourceId: string; versionId: string; resourceName: string; scenario: Scenario; scope: Scope; environmentId: string; generatedSiteId: string | null; parentId: string | null; message: string; status: TaskStatus; stopped: boolean; createdAt: number; updatedAt: number; error: string; context: string; threadId: string; rule: AutomationRule | null; report: AutomationReport | null; siteUrl: string; model: { name: string; endpoint: string } | null }
-export interface AutomationSettings { showExecutionBrowser?: boolean; completeness?:CompletenessSettings; learning?: LearningSettings; optimization?: OptimizationPolicy; followup: FollowupSettings; enabled: boolean; autoEvaluate: boolean; generationConcurrency: number; evaluationConcurrency: number; timeoutMinutes: number; evaluationModel: string; evaluationEndpoint: string; prompts: Record<Scenario, string> }
+export interface AutomationTask { migrationPendingReport?: { report: AutomationReport; inputVersionId: string; siteRevision: string; manifestId: string; ruleHash: string }; completenessPolicy?:CompletenessSettings; requirementsId?: string; requirementsEnabled?: boolean; autoEvaluate?: boolean; autoDelivery?: boolean; optimization?: OptimizationRun; optimizationRootId?: string; optimizationRound?: number; siteRevision?: string; repairEvidence?: { reportId: string; files: string[] }; usage?: import('./billing.js').UsageSummary; delivery?: DeliveryRun; id: string; stage?: AutomationStage; generation?: GenerationCheckpoint; followup?: FollowupRun; interruption?: TaskInterruption; artifacts?: MaterialFile[]; evaluationTaskId?: string; kind: 'generation' | 'evaluation'; resourceId: string; versionId: string; resourceName: string; scenario: Scenario; scope: Scope; environmentId: string; generatedSiteId: string | null; parentId: string | null; message: string; status: TaskStatus; stopped: boolean; createdAt: number; updatedAt: number; error: string; context: string; threadId: string; rule: AutomationRule | null; report: AutomationReport | null; siteUrl: string; model: { name: string; endpoint: string } | null }
+export interface AutomationSettings { showExecutionBrowser?: boolean; completeness?:CompletenessSettings; optimization?: OptimizationPolicy; followup: FollowupSettings; enabled: boolean; autoEvaluate: boolean; generationConcurrency: number; evaluationConcurrency: number; timeoutMinutes: number; evaluationModel: string; evaluationEndpoint: string; prompts: Record<Scenario, string> }
 export function shouldEvaluateAfterGeneration(
   task: Pick<AutomationTask, 'kind' | 'optimization' | 'optimizationRootId' | 'autoEvaluate'>,
   settings: Pick<AutomationSettings, 'autoEvaluate'>,
@@ -181,13 +180,13 @@ export const defaultFollowupSettings: FollowupSettings = {
 无法继续时用 interrupt，提供具体原因、证据和可操作的下一步。不要伪造已停止或已验证。`,
 };
 export const defaultAutomationSettings: AutomationSettings = {
-  completeness:defaultCompletenessSettings, learning: defaultLearningSettings, optimization: defaultOptimizationPolicy, followup: defaultFollowupSettings,
+  completeness:defaultCompletenessSettings, optimization: defaultOptimizationPolicy, followup: defaultFollowupSettings,
   enabled: false, autoEvaluate: true, showExecutionBrowser: false, generationConcurrency: 3, evaluationConcurrency: 1, timeoutMinutes: 60,
   evaluationModel: 'deepseek-flash', evaluationEndpoint: 'https://api.deepseek.com/responses',
   prompts: {
     materials: '根据资料包从空白站点构建完整站点。优先使用 Kooboo 自带的 skill、reference 和 tools。',
-    migration: '内容站同时作为视觉参考站。在 Sandbox 克隆内容站作为输入，从空白目标站完成迁移，保留内容与视觉设计。',
-    upgrade: '先克隆内容站并导入资料包，在 Sandbox 克隆参考站；以内容站和资料包提供事实内容，以参考站作为视觉还原基准（严格对齐其页头、Hero 构图、色彩角色、字体层级与区块节奏，不得以图片尺寸偏小或品牌名偏长为由擅自改成无关通用版式；若无法获取有效参考站画面须立即停下向用户确认），从空白起点重建升级站点。',
+    migration: '内容站同时作为视觉参考站。在 Sandbox 克隆内容站作为输入，从空白目标站完成迁移，保留内容与视觉设计；当内容站克隆成功时，优先复用原内容站中的真实图片资源（仅在原站确无可用图时再考虑资料图或 imagePlaceholder 兜底）。',
+    upgrade: '先克隆内容站并导入资料包，在 Sandbox 克隆参考站；以内容站和资料包提供事实内容，当内容站克隆成功时优先使用原内容站中的真实图片资源（仅在原站确无可用图或明显不适用的展示位再考虑资料图或 imagePlaceholder 兜底），以参考站作为布局与版式节奏基准（严格对齐其页头、Hero 构图、字体层级、留白与区块节奏，但品牌主色、强调色与 Logo 须优先对齐原内容站与商家行业气质，仅在原站无明确品牌色时沿用参考站色板；不得以图片尺寸偏小或品牌名偏长为由擅自改成无关通用版式；若无法获取有效参考站画面须立即停下向用户确认），从空白起点重建升级站点。',
     'site-template': '在 Sandbox 克隆来源站，理解内容、结构与视觉设计，从空白站点构建 AI Site 模板。不得复用来源站图片等资源，图片使用 imagePlaceholder。',
     'app-template': '根据业务需求从空白站点构建 AI App，重视信息层级、交互体验与业务正确性，使用 Kooboo 现有 skill、reference 和 tools。',
   },

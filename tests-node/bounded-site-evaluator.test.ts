@@ -24,7 +24,6 @@ import {
   type AutomationTask,
   type MaterialFile,
 } from '../shared/automation.js';
-import { defaultLearningSettings } from '../shared/experience.js';
 
 const TINY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1cAAAAASUVORK5CYII=',
@@ -107,7 +106,6 @@ async function setupSiteEnv(options?: {
     environments: [{ id: environmentId, name: 'Test', origin, apiOrigin: origin, token: 'test-token' }],
   });
   const settings = structuredClone(defaultAutomationSettings);
-  settings.learning = { ...defaultLearningSettings, use: false, collect: false };
   vault.updateAutomation({
     ...settings,
     evaluationEndpoint: `${origin}/v1`,

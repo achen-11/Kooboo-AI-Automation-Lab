@@ -439,3 +439,101 @@ test('emits v1.2 layout balance, visibility, duplication, min-font, nav and loca
   assert.match(digest, /最小字号检查：<12px 可见文字共 12 处/);
   assert.match(digest, /CONTENT_DUPLICATION/);
 });
+
+test('detects HOMEPAGE_SUBPAGE_LINK, LOW_RES_IMAGE_UPSCALE, overlayCardBottom clipping, heroRepeatedBadges, duplicateImages >= 2, and EXTERNAL_OR_INSECURE_ASSET', () => {
+  assert.equal(collectViewportVisualPrecheckInPage.toString().includes('__name'), false);
+
+  const snap = baseSnapshot({
+    viewport: 'desktop',
+    viewportWidth: 1440,
+    viewportHeight: 900,
+    taskScope: 'homepage',
+    internalLinks: ['/', '/diensten', '/projecten?page=2'],
+    heroFoldMetrics: {
+      hasHeroSection: true,
+      ctaBottom: 600,
+      overlayCardBottom: 945,
+      centerPct: 50,
+    },
+    imageCandidates: [
+      {
+        inHero: true,
+        width: 900,
+        height: 520,
+        naturalWidth: 520,
+        naturalHeight: 340,
+        complete: true,
+        broken: false,
+        srcHint: '/images/legacy-hero.jpg',
+      },
+      {
+        inHero: false,
+        width: 800,
+        height: 450,
+        naturalWidth: 400,
+        naturalHeight: 225,
+        complete: true,
+        broken: false,
+        srcHint: '/images/diagram.svg',
+      },
+      {
+        inHero: false,
+        width: 800,
+        height: 500,
+        naturalWidth: 1200,
+        naturalHeight: 750,
+        complete: true,
+        broken: false,
+        srcHint: '/images/ok.jpg',
+      },
+    ],
+    duplicationSummary: {
+      phones: [],
+      emails: [],
+      ctaLabels: [],
+      duplicateBlocks: [],
+      duplicateImages: [{ srcHint: '/images/repeat.jpg', count: 2 }],
+      heroRepeatedBadges: [{ text: 'Sinds 1983', count: 3 }],
+    },
+    externalAssets: [{ tag: 'img', url: 'http://legacy.example.test/old.jpg', insecure: true }],
+  });
+
+  const signals = evaluateVisualPrecheckSignals(snap);
+  const codes = signals.map(s => s.code);
+  assert.ok(codes.includes('HERO_FOLD_CLIPPED'));
+  assert.ok(codes.includes('CONTENT_DUPLICATION'));
+  assert.ok(codes.includes('LOW_RES_IMAGE_UPSCALE'));
+  assert.ok(codes.includes('HOMEPAGE_SUBPAGE_LINK'));
+  assert.ok(codes.includes('EXTERNAL_OR_INSECURE_ASSET'));
+
+  const clipSig = signals.find(s => s.code === 'HERO_FOLD_CLIPPED')!;
+  assert.match(clipSig.summary, /首屏浮层卡片底部 945px > 900px/);
+
+  const dupSig = signals.find(s => s.code === 'CONTENT_DUPLICATION')!;
+  assert.match(dupSig.summary, /首屏标签重复（.*Sinds 1983.*×3/);
+  assert.match(dupSig.summary, /建议每张实拍图仅用 1 次/);
+
+  const lowResSig = signals.find(s => s.code === 'LOW_RES_IMAGE_UPSCALE')!;
+  assert.equal(lowResSig.ruleId, 'R-VISUAL-02');
+  assert.equal(lowResSig.severityHint, 'major');
+  assert.equal(lowResSig.metrics.count, 1);
+
+  const subpageSig = signals.find(s => s.code === 'HOMEPAGE_SUBPAGE_LINK')!;
+  assert.equal(subpageSig.ruleId, 'R-TRUST-01');
+  assert.equal(subpageSig.severityHint, 'major');
+  assert.match(subpageSig.summary, /\/diensten/);
+
+  const extSig = signals.find(s => s.code === 'EXTERNAL_OR_INSECURE_ASSET')!;
+  assert.equal(extSig.ruleId, 'R-TRUST-01');
+  assert.equal(extSig.severityHint, 'major');
+
+  // site scope or root-only homepage links must not trigger HOMEPAGE_SUBPAGE_LINK
+  const siteScopeSignals = evaluateVisualPrecheckSignals({ ...snap, taskScope: 'site' });
+  assert.equal(siteScopeSignals.some(s => s.code === 'HOMEPAGE_SUBPAGE_LINK'), false);
+
+  const homeRootOnlySignals = evaluateVisualPrecheckSignals({ ...snap, taskScope: 'homepage', internalLinks: ['/'] });
+  assert.equal(homeRootOnlySignals.some(s => s.code === 'HOMEPAGE_SUBPAGE_LINK'), false);
+
+  const digest = formatPrecheckDigest([{ snapshot: snap, signals }]);
+  assert.match(digest, /浮层卡底=945px\/900px/);
+});

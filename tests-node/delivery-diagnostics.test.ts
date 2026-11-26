@@ -65,7 +65,6 @@ async function fixture() {
       f.vault.automation(),
     )[0];
     task.requirementsEnabled = false;
-    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
     task.status = 'completed';
     task.report = {
       summary: 'source report',
@@ -161,7 +160,6 @@ test('delivery receipt, executeDelivery and Kooboo ID endpoints accept valid non
       f.vault.automation(),
     )[0];
     t2.requirementsEnabled = false;
-    t2.learningPolicy = { ...t2.learningPolicy!, use: false, collect: false };
     t2.status = 'completed';
     t2.report = t.report;
     f.automationStore.put(t2);
@@ -545,7 +543,6 @@ test('deliveryRequestUrl and executeDelivery append __engine_timeout__ aligned w
       f.vault.automation(),
     )[0];
     t2.requirementsEnabled = false;
-    t2.learningPolicy = { ...t2.learningPolicy!, use: false, collect: false };
     t2.status = 'completed';
     t2.report = t1.report;
     f.automationStore.put(t2);

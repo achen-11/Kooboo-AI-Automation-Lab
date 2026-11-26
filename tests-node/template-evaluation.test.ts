@@ -13,7 +13,6 @@ import { executeEvaluation, codexClient } from '../server/automation/evaluator.j
 import { evaluationBrowser, evaluationCapturePolicy } from '../server/automation/browser.js';
 import type { ScreenshotReceipt } from '../server/automation/page-screenshots.js';
 import { defaultAutomationSettings, defaultOptimizationPolicy, type MaterialFile } from '../shared/automation.js';
-import { defaultLearningSettings } from '../shared/experience.js';
 
 for(const absoluteSourcePaths of [false,true])test(`template execution (${absoluteSourcePaths?'absolute source URLs':'relative paths'}) performs host captures, independent short reviews, local preflight and full aggregation without a real model or browser`,async()=>{
   const directory=mkdtempSync(resolve(tmpdir(),'template-execution-')),db=new Database(':memory:'),store=new AutomationStore(db),vault=new Vault(resolve(directory,'vault'));
@@ -22,9 +21,9 @@ for(const absoluteSourcePaths of [false,true])test(`template execution (${absolu
   try{
     await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));const address=server.address();assert.ok(address&&typeof address!=='string');const origin=`http://127.0.0.1:${address.port}`,environmentId=randomUUID();
     vault.update({...vault.get(),model:{endpoint:origin+'/v1',name:'test-model',apiKey:'fake-test-key'},environments:[{id:environmentId,name:'Test',origin,apiOrigin:origin,token:'fake-test-token'}]});
-    const settings=structuredClone(defaultAutomationSettings);settings.learning={...defaultLearningSettings,use:false,collect:false};vault.updateAutomation({...settings,evaluationEndpoint:origin+'/v1',evaluationModel:'test-model'});
+    const settings=structuredClone(defaultAutomationSettings);vault.updateAutomation({...settings,evaluationEndpoint:origin+'/v1',evaluationModel:'test-model'});
     const resource=store.saveResource({name:'Template',scenario:'site-template',description:'all pages',contentUrl:'https://source.test/',referenceUrl:'',files:[],externalSource:'',externalId:''});
-    const task=store.create({resourceIds:[resource.id],kind:'generation',scope:'site',environmentId,requirements:''},settings)[0];task.kind='evaluation';task.siteRevision='current';task.generatedSiteId=randomUUID();task.status='running';task.stopped=false;task.learningPolicy={...defaultLearningSettings,use:false,collect:false};task.rule={...task.rule!,criteria:[{id:'visual',label:'Visual',weight:100,instruction:'Review actual layout',required:true,viewports:['desktop','mobile'],scopes:['site']}]};
+    const task=store.create({resourceIds:[resource.id],kind:'generation',scope:'site',environmentId,requirements:''},settings)[0];task.kind='evaluation';task.siteRevision='current';task.generatedSiteId=randomUUID();task.status='running';task.stopped=false;task.rule={...task.rule!,criteria:[{id:'visual',label:'Visual',weight:100,instruction:'Review actual layout',required:true,viewports:['desktop','mobile'],scopes:['site']}]};
     store.saveSite({id:task.generatedSiteId,resourceId:resource.id,versionId:task.versionId,environmentId,siteId:randomUUID(),name:'Target',url:'https://target.test/',createdAt:Date.now()});store.put(task);
     new ManifestStore(store).save(task,{sourceComplete:true,limitations:[],evidence:[],items:[{id:'pages',title:'Pages',kind:'page',required:true,source:'Fixed',expectation:'both paths and viewports',paths:absoluteSourcePaths?['https://source.test/','https://source.test/about?lang=zh']:['/','/about'],expectedCount:2,viewports:['desktop','mobile']}]},'human');
     let activeFiles:MaterialFile[]=[],currentTask=task,changeAbout=false,sourceGap=false;
@@ -85,14 +84,13 @@ test('intermediate optimization reassessment incrementally inherits untargeted p
   try{
     await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));const address=server.address();assert.ok(address&&typeof address!=='string');const origin=`http://127.0.0.1:${address.port}`,environmentId=randomUUID();
     vault.update({...vault.get(),model:{endpoint:origin+'/v1',name:'test-model',apiKey:'fake-test-key'},environments:[{id:environmentId,name:'Test',origin,apiOrigin:origin,token:'fake-test-token'}]});
-    const settings=structuredClone(defaultAutomationSettings);settings.learning={...defaultLearningSettings,use:false,collect:false};vault.updateAutomation({...settings,evaluationEndpoint:origin+'/v1',evaluationModel:'test-model'});
+    const settings=structuredClone(defaultAutomationSettings);vault.updateAutomation({...settings,evaluationEndpoint:origin+'/v1',evaluationModel:'test-model'});
     const resource=store.saveResource({name:'Template',scenario:'site-template',description:'all pages',contentUrl:'https://source.test/',referenceUrl:'',files:[],externalSource:'',externalId:''});
     const siteId=randomUUID();
     const paths=['/','/about','/contact','/pricing','/faq','/privacy','/terms'];
     const basePng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1cAAAAASUVORK5CYII=','base64');
     const root=store.create({resourceIds:[resource.id],kind:'generation',scope:'site',environmentId,requirements:'',optimization:{...defaultOptimizationPolicy,targetScore:85,maxRounds:3}},settings)[0];
-    root.generatedSiteId=siteId;root.siteUrl='https://target.test/';root.learningPolicy={...defaultLearningSettings,use:false,collect:false};
-    root.rule={...root.rule!,criteria:[{id:'visual',label:'Visual',weight:100,instruction:'Review actual layout',required:true,viewports:['desktop','mobile'],scopes:['site']}]};
+    root.generatedSiteId=siteId;root.siteUrl='https://target.test/';root.rule={...root.rule!,criteria:[{id:'visual',label:'Visual',weight:100,instruction:'Review actual layout',required:true,viewports:['desktop','mobile'],scopes:['site']}]};
     store.saveSite({id:siteId,resourceId:resource.id,versionId:root.versionId,environmentId,siteId:randomUUID(),name:'Target',url:'https://target.test/',createdAt:Date.now()});
     store.put(root);
     const manifest=new ManifestStore(store).save(root,{sourceComplete:true,limitations:[],evidence:[],items:[{id:'pages',title:'Pages',kind:'page',required:true,source:'Fixed',expectation:'all paths and viewports',paths,expectedCount:paths.length,viewports:['desktop','mobile']}]},'human');
@@ -133,7 +131,7 @@ test('intermediate optimization reassessment incrementally inherits untargeted p
     }};},resumeThread:()=>{throw new Error('short threads expected');}})) as unknown as typeof codexClient;
 
     const baseline=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'initial',parentId:root.id,optimizationRootId:root.id,optimizationRound:0,ruleSnapshot:root.rule!},settings)[0];
-    baseline.requirementsId=manifest.id;baseline.siteRevision='rev-0';baseline.status='running';baseline.stopped=false;baseline.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(baseline);
+    baseline.requirementsId=manifest.id;baseline.siteRevision='rev-0';baseline.status='running';baseline.stopped=false;store.put(baseline);
     currentTask=baseline;
     await executeEvaluation(baseline,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     assert.equal(threads,4,'initial full evaluation runs criteria-desktop, criteria-mobile, completeness-1, completeness-2');
@@ -147,7 +145,7 @@ test('intermediate optimization reassessment incrementally inherits untargeted p
     repair.siteRevision='rev-1';repair.repairEvidence={reportId:baseline.id,files:[homeDesktop.name]};store.put(repair);
 
     const intermediate=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'intermediate reassessment',parentId:repair.id,optimizationRootId:root.id,optimizationRound:1,ruleSnapshot:root.rule!},settings)[0];
-    intermediate.requirementsId=manifest.id;intermediate.siteRevision='rev-1';intermediate.status='running';intermediate.stopped=false;intermediate.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(intermediate);
+    intermediate.requirementsId=manifest.id;intermediate.siteRevision='rev-1';intermediate.status='running';intermediate.stopped=false;store.put(intermediate);
     currentTask=intermediate;batchesRun.length=0;const beforeIntermediate=threads;
     await executeEvaluation(intermediate,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     assert.equal(threads-beforeIntermediate,3,'intermediate incremental reassessment skips criteria-mobile and completeness-2');
@@ -163,7 +161,7 @@ test('intermediate optimization reassessment incrementally inherits untargeted p
 
     // Final full-site audit on the same revision disables Tier 2 incremental carry-forward and verifies all changed pages/viewports.
     const audit=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'final full audit',parentId:repair.id,optimizationRootId:root.id,optimizationRound:1,ruleSnapshot:root.rule!},settings)[0];
-    audit.requirementsId=manifest.id;audit.siteRevision='rev-1';audit.fullAuditRequired=true;audit.status='running';audit.stopped=false;audit.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(audit);
+    audit.requirementsId=manifest.id;audit.siteRevision='rev-1';audit.fullAuditRequired=true;audit.status='running';audit.stopped=false;store.put(audit);
     currentTask=audit;batchesRun.length=0;const beforeAudit=threads;
     await executeEvaluation(audit,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     assert.equal(threads-beforeAudit,5,'full audit re-verifies all changed criteria and completeness batches plus regression rechecks');
@@ -187,13 +185,12 @@ test('chained byte-equal round cannot launder un-audited incremental judgments i
   try{
     await new Promise<void>(done=>server.listen(0,'127.0.0.1',done));const address=server.address();assert.ok(address&&typeof address!=='string');const origin=`http://127.0.0.1:${address.port}`,environmentId=randomUUID();
     vault.update({...vault.get(),model:{endpoint:origin+'/v1',name:'test-model',apiKey:'fake-test-key'},environments:[{id:environmentId,name:'Test',origin,apiOrigin:origin,token:'fake-test-token'}]});
-    const settings=structuredClone(defaultAutomationSettings);settings.learning={...defaultLearningSettings,use:false,collect:false};vault.updateAutomation({...settings,evaluationEndpoint:origin+'/v1',evaluationModel:'test-model'});
+    const settings=structuredClone(defaultAutomationSettings);vault.updateAutomation({...settings,evaluationEndpoint:origin+'/v1',evaluationModel:'test-model'});
     const resource=store.saveResource({name:'Template',scenario:'site-template',description:'deferred provenance',contentUrl:'https://source.test/',referenceUrl:'',files:[],externalSource:'',externalId:''});
     const siteId=randomUUID();
     const basePng=Buffer.from('iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1cAAAAASUVORK5CYII=','base64');
     const root=store.create({resourceIds:[resource.id],kind:'generation',scope:'site',environmentId,requirements:'',optimization:{...defaultOptimizationPolicy,targetScore:85,maxRounds:3}},settings)[0];
-    root.generatedSiteId=siteId;root.siteUrl='https://target.test/';root.learningPolicy={...defaultLearningSettings,use:false,collect:false};
-    root.rule={...root.rule!,criteria:[{id:'hero',label:'Hero',weight:100,instruction:'Review hero',required:true,viewports:['desktop','mobile'],scopes:['site']}]};
+    root.generatedSiteId=siteId;root.siteUrl='https://target.test/';root.rule={...root.rule!,criteria:[{id:'hero',label:'Hero',weight:100,instruction:'Review hero',required:true,viewports:['desktop','mobile'],scopes:['site']}]};
     store.saveSite({id:siteId,resourceId:resource.id,versionId:root.versionId,environmentId,siteId:randomUUID(),name:'Target',url:'https://target.test/',createdAt:Date.now()});
     store.put(root);
     const manifest=new ManifestStore(store).save(root,{
@@ -250,7 +247,7 @@ test('chained byte-equal round cannot launder un-audited incremental judgments i
 
     // 1. eval0: initial full review on r0
     const eval0=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'eval0',parentId:root.id,optimizationRootId:root.id,optimizationRound:0,ruleSnapshot:root.rule!},settings)[0];
-    eval0.requirementsId=manifest.id;eval0.siteRevision='r0';eval0.status='running';eval0.stopped=false;eval0.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(eval0);
+    eval0.requirementsId=manifest.id;eval0.siteRevision='r0';eval0.status='running';eval0.stopped=false;store.put(eval0);
     currentTask=eval0;
     await executeEvaluation(eval0,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     assert.equal(threads,3,'eval0 runs criteria-desktop, criteria-mobile, completeness-1');
@@ -264,7 +261,7 @@ test('chained byte-equal round cannot launder un-audited incremental judgments i
     repair1.siteRevision='r1';repair1.repairEvidence={reportId:eval0.id,files:[r0HomeDesktop.name]};store.put(repair1);
 
     const eval1=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'eval1',parentId:repair1.id,optimizationRootId:root.id,optimizationRound:1,ruleSnapshot:root.rule!},settings)[0];
-    eval1.requirementsId=manifest.id;eval1.siteRevision='r1';eval1.status='running';eval1.stopped=false;eval1.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(eval1);
+    eval1.requirementsId=manifest.id;eval1.siteRevision='r1';eval1.status='running';eval1.stopped=false;store.put(eval1);
     currentTask=eval1;batchesRun.length=0;const beforeEval1=threads;
     await executeEvaluation(eval1,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     assert.equal(threads-beforeEval1,3,'eval1 runs criteria-desktop, completeness-1 (only /), and regression-issues');
@@ -286,7 +283,7 @@ test('chained byte-equal round cannot launder un-audited incremental judgments i
     repair2.siteRevision='r2';repair2.repairEvidence={reportId:eval1.id,files:[r1HomeDesktop.name]};store.put(repair2);
 
     const eval2=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'eval2',parentId:repair2.id,optimizationRootId:root.id,optimizationRound:2,ruleSnapshot:root.rule!},settings)[0];
-    eval2.requirementsId=manifest.id;eval2.siteRevision='r2';eval2.status='running';eval2.stopped=false;eval2.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(eval2);
+    eval2.requirementsId=manifest.id;eval2.siteRevision='r2';eval2.status='running';eval2.stopped=false;store.put(eval2);
     currentTask=eval2;batchesRun.length=0;const beforeEval2=threads;
     await executeEvaluation(eval2,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     store.put(eval2);
@@ -302,7 +299,7 @@ test('chained byte-equal round cannot launder un-audited incremental judgments i
 
     // 4a. Final audit on r1 with parentId = eval1.id: executes real model batch threads for criteria-mobile and /about (+ seo-meta), while keeping Tier 1 for genuinely reviewed hero:desktop and /.
     const auditOnR1=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'audit r1',parentId:eval1.id,optimizationRootId:root.id,optimizationRound:1,ruleSnapshot:root.rule!},settings)[0];
-    auditOnR1.requirementsId=manifest.id;auditOnR1.siteRevision='r1';auditOnR1.fullAuditRequired=true;auditOnR1.status='running';auditOnR1.stopped=false;auditOnR1.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(auditOnR1);
+    auditOnR1.requirementsId=manifest.id;auditOnR1.siteRevision='r1';auditOnR1.fullAuditRequired=true;auditOnR1.status='running';auditOnR1.stopped=false;store.put(auditOnR1);
     currentTask=auditOnR1;batchesRun.length=0;const beforeAuditR1=threads;
     await executeEvaluation(auditOnR1,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     assert.equal(threads-beforeAuditR1,3,'audit on r1 (parentId=eval1) runs criteria-mobile, completeness-1 (/about + seo-meta), and regression-issues');
@@ -319,7 +316,7 @@ test('chained byte-equal round cannot launder un-audited incremental judgments i
 
     // 4b. Final audit on r2 with parentId = repair2.id (baseline = eval1, r2 bytes === r1 bytes): executes real model batch threads for criteria-mobile and /about (+ seo-meta).
     const auditOnR2ViaRepair=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'audit r2 via repair2',parentId:repair2.id,optimizationRootId:root.id,optimizationRound:2,ruleSnapshot:root.rule!},settings)[0];
-    auditOnR2ViaRepair.requirementsId=manifest.id;auditOnR2ViaRepair.siteRevision='r2';auditOnR2ViaRepair.fullAuditRequired=true;auditOnR2ViaRepair.status='running';auditOnR2ViaRepair.stopped=false;auditOnR2ViaRepair.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(auditOnR2ViaRepair);
+    auditOnR2ViaRepair.requirementsId=manifest.id;auditOnR2ViaRepair.siteRevision='r2';auditOnR2ViaRepair.fullAuditRequired=true;auditOnR2ViaRepair.status='running';auditOnR2ViaRepair.stopped=false;store.put(auditOnR2ViaRepair);
     currentTask=auditOnR2ViaRepair;batchesRun.length=0;const beforeAuditR2Repair=threads;
     await executeEvaluation(auditOnR2ViaRepair,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     assert.equal(threads-beforeAuditR2Repair,3,'audit on r2 (parentId=repair2) executes real model batches for deferred slices despite byte-equal r1->r2');
@@ -332,7 +329,7 @@ test('chained byte-equal round cannot launder un-audited incremental judgments i
 
     // 4c. Final audit on r2 with parentId = eval2.id (exact advanceOptimization flow): executes real model batch threads for criteria-mobile and completeness-1 (/about + seo-meta).
     const auditOnR2ViaEval2=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'audit r2 via eval2',parentId:eval2.id,optimizationRootId:root.id,optimizationRound:2,ruleSnapshot:root.rule!},settings)[0];
-    auditOnR2ViaEval2.requirementsId=manifest.id;auditOnR2ViaEval2.siteRevision='r2';auditOnR2ViaEval2.fullAuditRequired=true;auditOnR2ViaEval2.status='running';auditOnR2ViaEval2.stopped=false;auditOnR2ViaEval2.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(auditOnR2ViaEval2);
+    auditOnR2ViaEval2.requirementsId=manifest.id;auditOnR2ViaEval2.siteRevision='r2';auditOnR2ViaEval2.fullAuditRequired=true;auditOnR2ViaEval2.status='running';auditOnR2ViaEval2.stopped=false;store.put(auditOnR2ViaEval2);
     currentTask=auditOnR2ViaEval2;batchesRun.length=0;const beforeAuditR2Eval2=threads;
     await executeEvaluation(auditOnR2ViaEval2,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     assert.equal(threads-beforeAuditR2Eval2,2,'audit on r2 (parentId=eval2) executes criteria-mobile and completeness-1 while reusing resolved issue and reviewed slices');
@@ -352,7 +349,7 @@ test('chained byte-equal round cannot launder un-audited incremental judgments i
     delete legacyBaseline.report!.review!.deferredPagePaths;
     store.put(legacyBaseline);
     const auditLegacy=store.create({resourceIds:[resource.id],kind:'evaluation',scope:'site',environmentId,generatedSiteId:siteId,requirements:'audit legacy',parentId:legacyBaseline.id,optimizationRootId:root.id,optimizationRound:2,ruleSnapshot:root.rule!},settings)[0];
-    auditLegacy.requirementsId=manifest.id;auditLegacy.siteRevision='r2';auditLegacy.fullAuditRequired=true;auditLegacy.status='running';auditLegacy.stopped=false;auditLegacy.learningPolicy={...defaultLearningSettings,use:false,collect:false};store.put(auditLegacy);
+    auditLegacy.requirementsId=manifest.id;auditLegacy.siteRevision='r2';auditLegacy.fullAuditRequired=true;auditLegacy.status='running';auditLegacy.stopped=false;store.put(auditLegacy);
     currentTask=auditLegacy;batchesRun.length=0;const beforeAuditLegacy=threads;
     await executeEvaluation(auditLegacy,store,vault,directory,new AbortController().signal,{openBrowser,createClient});
     assert.equal(threads-beforeAuditLegacy,3,'legacy report without deferred* treats all inherited slices as deferred and runs full model review');

@@ -1,6 +1,6 @@
 # Kooboo AI Automation Lab — Harness 运行蓝图
 
-这里是 Automation Lab 的内置 **Agent Harness（运行规则与参考包）**，集中存放系统在建站、跟进、评测、完整度清单、持续优化、经验沉淀与跨环境交付核验阶段使用的真实执行规范与参考手册。
+这里是 Automation Lab 的内置 **Agent Harness（运行规则与参考包）**，集中存放系统在建站、跟进、评测、完整度清单、持续优化、反馈蒸馏与跨环境交付核验阶段使用的真实执行规范与参考手册。
 
 ## 核心设计原则
 
@@ -21,10 +21,10 @@
 | 5. `optimization` 持续优化 | 本地 Codex SDK（多模态识图） | 对照目标站与参考站真实截图及上轮问题，评估是否真实改善并委托 Kooboo 执行下一轮模板级修复 | [optimization/SKILL.md](optimization/SKILL.md) |
 | 6. `delivery` 交付核验 | Node 宿主 + 本地 Codex SDK | 可选将达标站点迁移到正式运行环境，并做双端真实截图与关键路径核验 | [delivery/SKILL.md](delivery/SKILL.md) |
 
-> 贯穿 `followup` / `evaluation` / `optimization` 的经验筛选与复盘规范见 [experience/SKILL.md](experience/SKILL.md)。
+> 外部反馈审计、四层规则分流（L1/L2/L3/L4）与脱敏规律台账见 [distillation/SKILL.md](distillation/SKILL.md) 与 [distillation/references/pattern-ledger.md](distillation/references/pattern-ledger.md)。
 
 ## 内置 Harness 与设置页自定义的关系
 
 - 当用户尚未在设置页手动修改某条 SOP（或仍停留在历史版本的内置默认值）时，系统启动会自动同步到当前 `harness/` 中的最新版本。
 - 如果用户已经在设置页保存过自定义修改，系统会完整保留用户的自定义内容，并在设置页提供“当前使用自定义规则 / 恢复为新版内置”的控制开关。
-- 运行时动态注入的任务上下文、场景约束、冻结清单与已采纳经验仍由宿主在每次执行时按需拼接到临时工作区，保证隔离与安全。
+- 运行时动态注入的任务上下文、场景约束与冻结清单均由宿主在每次执行时按需拼接到临时工作区，保证隔离与安全。

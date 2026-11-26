@@ -15,17 +15,13 @@ import { probeCodex } from './probe.js';
 import { brief, compactNotice, taskExecuting, taskSummary, canAdjustTaskSiteNames, canHandoffGenerationConversation } from '../../shared/task-presentation.js';
 import { registerExecutionLogApi } from './execution-log.js';
 import { completenessSettingsSchema } from './completeness.js';
-import { registerLearningApi } from './learning-api.js';
-import { learningSettingsSchema } from './experience-store.js';
 import { executionTaskIds } from '../../shared/execution-log.js';
 import { registerSiteDeliveryApi } from './site-delivery.js';
 import { deliveredSiteUrl } from '../../shared/site-delivery.js';
 import { registerTimingApi } from './timing.js';
 import { registerDashboardApi } from './dashboard.js';
 import { registerMigrationApi } from './migration-api.js';
-import { assertWorkflowStopped, retainStoppedFollowupReservations, retainWorkflowLearningReservations, correctUnsentPlanningAttempts, workflowBlockers, workflowActiveReason } from './budget-recovery.js';
-import { ExperienceStore } from './experience-store.js';
-import type { LearningRun } from '../../shared/experience.js';
+import { assertWorkflowStopped, retainStoppedFollowupReservations, correctUnsentPlanningAttempts, workflowBlockers, workflowActiveReason } from './budget-recovery.js';
 import { prepareManualFollowupResume } from './autonomy.js';
 import { retainRequestReservation } from './request-budget.js';
 import { trimTaskGenerationBrowserCache } from './generation-cache.js';
@@ -80,7 +76,7 @@ export const ruleInput=z.object({name:z.string().trim().min(1).max(200),kind:z.e
 const prompt=z.string().min(1).max(30000);
 const followupInput=z.object({enabled:z.boolean(),concurrency:z.number().int().min(1).max(3),maxAttempts:z.number().int().min(1).max(20),maxMinutes:z.number().int().min(1).max(120),maxTokens:z.number().int().min(1000).max(1000000000),maxRequests:z.number().int().min(1).max(1000).optional(),sop:z.string().trim().min(1).max(50000)});
 const optimizationInput=z.object({targetScore:z.number().min(1).max(100),maxRounds:z.number().int().min(1).max(10),maxCostCny:z.number().positive().max(1000000).nullable()});
-const settingsInput=z.object({showExecutionBrowser:z.boolean().optional(),completeness:completenessSettingsSchema.optional(),learning:learningSettingsSchema.optional(),optimization:optimizationInput.extend({sop:z.string().trim().min(1).max(50000)}).optional(),followup:followupInput.default(defaultFollowupSettings),enabled:z.boolean(),autoEvaluate:z.boolean().default(true),generationConcurrency:z.number().int().min(1).max(10),evaluationConcurrency:z.number().int().min(1).max(5),timeoutMinutes:z.number().int().min(1).max(240),evaluationModel:z.string().trim().min(1).max(100),evaluationEndpoint:url,prompts:z.object({materials:prompt,migration:prompt,upgrade:prompt,'site-template':prompt,'app-template':prompt})});
+const settingsInput=z.object({showExecutionBrowser:z.boolean().optional(),completeness:completenessSettingsSchema.optional(),optimization:optimizationInput.extend({sop:z.string().trim().min(1).max(50000)}).optional(),followup:followupInput.default(defaultFollowupSettings),enabled:z.boolean(),autoEvaluate:z.boolean().default(true),generationConcurrency:z.number().int().min(1).max(10),evaluationConcurrency:z.number().int().min(1).max(5),timeoutMinutes:z.number().int().min(1).max(240),evaluationModel:z.string().trim().min(1).max(100),evaluationEndpoint:url,prompts:z.object({materials:prompt,migration:prompt,upgrade:prompt,'site-template':prompt,'app-template':prompt})});
 const taskInput=z.object({resourceIds:z.array(uuid).min(1).max(1000).refine(ids=>new Set(ids).size===ids.length,'资源不能重复'),kind:z.enum(['generation','evaluation']),scope:z.enum(['homepage','site']),environmentId:z.string().max(100),siteName:siteNameSchema.optional(),subDomain:siteNameSchema.optional(),rootDomain:rootDomainSchema.optional(),generatedSiteId:uuid.optional(),requirements:z.string().max(100000).default(''),ruleId:uuid.optional(),parentId:uuid.optional(),collectionSnapshotId:uuid.optional(),collectionManifestId:uuid.optional(),autoEvaluate:z.boolean().optional(),autoDelivery:z.boolean().optional(),skipSourceTransfer:z.boolean().optional(),fallbackToMaterialsOnCloneFailure:z.boolean().optional(),optimization:optimizationInput.partial({maxRounds:true,maxCostCny:true}).optional()}).superRefine((input,ctx)=>{
   if(input.autoEvaluate===false&&input.optimization)ctx.addIssue({code:'custom',message:'开启自动优化时必须启用评测流程',path:['autoEvaluate']});
   if(input.autoEvaluate!==undefined&&input.kind!=='generation')ctx.addIssue({code:'custom',message:'自动评测开关仅适用于生成任务',path:['autoEvaluate']});
@@ -104,7 +100,6 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   registerTaskSupplementApi(app,store,vault,directory);
   registerWorkflowGraphApi(app,store,vault,directory,owns,workerReady);
   registerExecutionLogApi(app,store);
-  registerLearningApi(app,store,vault,directory,owns,cancel);
   registerSiteDeliveryApi(app,store,()=>vault.get().threshold);
   registerTimingApi(app,store);
   registerDashboardApi(app,store);
@@ -158,7 +153,6 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.post('/api/automation/tasks/:id/resume',async(request)=>{
     const{id}=params.parse(request.params);
     const{force}=z.object({force:z.boolean().default(false)}).parse(request.body||{});
-    const cancelledLearningIds=new Set<string>();
     if(force){
       const initial=store.task(id);
       if(!initial)throw new Conflict('任务不存在');
@@ -171,27 +165,15 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
         if(state&&state.revision!==initial.siteRevision)throw new Conflict('目标站版本已变化，不能恢复旧版本的评测任务');
       }
       const blockers=workflowBlockers(initial,store,owns);
-      for(const r of blockers.learning)cancelledLearningIds.add(r.id);
       const siteActive=initial.generatedSiteId?store.headers(initial.generatedSiteId).filter(t=>t.id!==initial.id&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false)):[];
-      const cancelIds=[...new Set([...(owns(id)||!initial.stopped||['running','cancelling'].includes(initial.status)?[id]:[]),...blockers.tasks.map(t=>t.id),...siteActive.map(t=>t.id),...blockers.learning.map(r=>r.id)])];
+      const cancelIds=[...new Set([...(owns(id)||!initial.stopped||['running','cancelling'].includes(initial.status)?[id]:[]),...blockers.tasks.map(t=>t.id),...siteActive.map(t=>t.id)])];
       if(cancelIds.length)await Promise.allSettled(cancelIds.map(targetId=>Promise.resolve(cancel(targetId))));
     }
     return store.db.transaction(()=>{
       const task=store.task(id);
       if(!task)throw new Conflict('只能恢复已确认停止的任务');
       if(force){
-        const experiences=new ExperienceStore(store),workflowId=experiences.workflow(task).id;
         const blockers=workflowBlockers(task,store,owns);
-        const workflowLearning=store.db.prepare("SELECT json FROM auto_learning_runs WHERE json_extract(json,'$.workflowId')=?").all(workflowId)
-          .map(r=>JSON.parse(r.json) as LearningRun)
-          .filter(r=>['queued','running'].includes(r.status)||(cancelledLearningIds.has(r.id)&&r.status!=='completed'));
-        for(const run of workflowLearning){
-          const wasQueued=run.status==='queued'&&!cancelledLearningIds.has(run.id);
-          run.status='failed';
-          run.reason=wasQueued?'操作者已取消排队的经验学习并恢复任务':'操作者强制中断执行中的经验学习并恢复任务';
-          experiences.put(run);store.event(run.taskId,run.reason);
-        }
-        retainWorkflowLearningReservations(workflowId,task.id,store,'强制中断并恢复');
         const siblingIds=[...new Set([...blockers.tasks.map(t=>t.id),...(task.generatedSiteId?store.headers(task.generatedSiteId).filter(t=>t.id!==task.id&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false)).map(t=>t.id):[])])].filter(tId=>tId!==task.id);
         for(const siblingId of siblingIds){
           const sibling=store.task(siblingId);if(!sibling)continue;
@@ -229,18 +211,6 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const wasCancelled=task.status==='cancelled';
       if(!force){
         assertWorkflowStopped(task,store,owns);
-        if(store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_learning_runs'").get()){
-          const experiences=new ExperienceStore(store),workflowId=experiences.workflow(task).id;
-          if(!task.report){
-            for(const row of store.db.prepare("SELECT json FROM auto_learning_runs WHERE json_extract(json,'$.taskId')=? AND status='queued' AND json_extract(json,'$.kind')='reflection'").all(task.id)){
-              const run=JSON.parse(row.json) as LearningRun;
-              run.status='completed';run.reason='跳过复盘：原中断任务已恢复继续执行。';experiences.put(run);
-            }
-          }
-          if(store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_model_requests'").get()){
-            for(const req of store.db.prepare("SELECT id FROM auto_model_requests WHERE account_id=? AND state='active'").all('experience:'+workflowId))retainRequestReservation(store.db,String(req.id));
-          }
-        }
       }
       retainStoppedFollowupReservations(task,store,force?()=>false:owns);
       if(task.autonomy){delete task.autonomy.stopReason;delete task.autonomy.checkpoint.nextAt;}
@@ -328,11 +298,11 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
   app.get('/api/automation/rules',async()=>({items:store.rules()}));
   app.post('/api/automation/rules',async(request,reply)=>reply.code(201).send(store.publish(ruleInput.parse(request.body))));
   app.get('/api/automation/settings',async()=>vault.automation());
-  app.put('/api/automation/settings',async(request)=>vault.updateAutomation({...vault.automation(),...settingsInput.parse(request.body),learning:settingsInput.parse(request.body).learning||vault.automation().learning,completeness:settingsInput.parse(request.body).completeness||vault.automation().completeness}));
+  app.put('/api/automation/settings',async(request)=>vault.updateAutomation({...vault.automation(),...settingsInput.parse(request.body),completeness:settingsInput.parse(request.body).completeness||vault.automation().completeness}));
   app.put('/api/automation/environments/:id/delivery-preference',async(request)=>{const{id}=params.parse(request.params);const{auto}=z.object({auto:z.boolean()}).parse(request.body);return vault.setEnvironmentDeliveryAuto(id,auto);});
   app.get('/api/automation/harness',async()=>buildHarnessCatalog(vault.rawAutomation()));
   app.post('/api/automation/harness/reset',async(request)=>{
-    const { key }=z.object({ key:z.enum(['followup.sop','optimization.sop','completeness.sop','learning.selectionSop','learning.reflectionSop','all']) }).parse(request.body||{});
+    const { key }=z.object({ key:z.enum(['followup.sop','optimization.sop','completeness.sop','all']) }).parse(request.body||{});
     const settings=vault.resetHarnessSop(key);
     return { settings, bindings: harnessBindings(vault.rawAutomation()) };
   });
@@ -419,7 +389,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const templatePreviewUrl=task.referencePreviewUrl||evaluation?.referencePreviewUrl||active?.referencePreviewUrl||(versionUrls?.referenceTemplateId&&task.generatedSiteId?store.headers(task.generatedSiteId).find(h=>h.referencePreviewUrl)?.referencePreviewUrl:'')||'';
     const canCompareLive=Boolean(siteUrl||versionUrls?.referenceUrl||versionUrls?.contentUrl||templatePreviewUrl);
     const blockers=workflowBlockers(task,store,owns);
-    const workflowActive=(blockers.tasks.length||blockers.learning.length)?{tasks:blockers.tasks.length,learning:blockers.learning.length,reason:workflowActiveReason(blockers.tasks.length,blockers.learning.length)}:undefined;
+    const workflowActive=blockers.tasks.length?{tasks:blockers.tasks.length,reason:workflowActiveReason(blockers.tasks.length)}:undefined;
     const siteHeaders=task.generatedSiteId?store.headers(task.generatedSiteId):[];
     const siteState=task.generatedSiteId?store.siteState(task.generatedSiteId):undefined;
     const deliveryHeader=(task.delivery?task:undefined)||(evaluation?.delivery?evaluation:undefined)||siteHeaders.find(h=>h.delivery&&(!siteState||h.siteRevision===siteState.revision))||siteHeaders.find(h=>h.delivery);

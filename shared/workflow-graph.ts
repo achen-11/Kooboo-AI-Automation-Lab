@@ -21,8 +21,7 @@ export type WorkflowNodeKind =
   | 'evaluation'
   | 'quality-gate'
   | 'optimization'
-  | 'delivery'
-  | 'learning';
+  | 'delivery';
 
 export type WorkflowLane = 'main' | 'branch';
 export type WorkflowEdgeKind = 'sequence' | 'branch' | 'pass' | 'fail' | 'loop';

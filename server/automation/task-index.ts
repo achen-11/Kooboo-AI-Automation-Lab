@@ -1,4 +1,3 @@
-import { createHash } from 'node:crypto';
 import type { AutomationReport, AutomationTask } from '../../shared/automation.js';
 import { brief, taskSummary, type TaskSummary } from '../../shared/task-presentation.js';
 
@@ -28,38 +27,9 @@ export type TaskHeader = Omit<TaskSummary, 'report' | 'optimization' | 'delivery
   workflowIds: string[];
 };
 
-export function reflectionDataKey(task: Pick<AutomationTask, 'id' | 'report' | 'interruption'>): string | null {
-  if (task.report) return `${task.id}:reflection:${createHash('sha256').update(JSON.stringify(task.report)).digest('hex')}`;
-  if (!task.interruption) return null;
-  const { time: _time, ...stable } = task.interruption;
-  return `${task.id}:reflection:${createHash('sha256').update(JSON.stringify(stable)).digest('hex')}`;
-}
-
-export function interruptionReflectionProgressKey(
-  task: Pick<AutomationTask, 'kind' | 'versionId' | 'generatedSiteId' | 'stage' | 'siteRevision' | 'generation' | 'artifacts'>,
-): string {
-  const generation = task.generation;
-  return createHash('sha256').update(JSON.stringify({
-    kind: task.kind,
-    versionId: task.versionId,
-    generatedSiteId: task.generatedSiteId ?? null,
-    stage: task.stage ?? null,
-    siteRevision: task.siteRevision ?? null,
-    createAttempted: Boolean(generation?.createAttempted),
-    prepared: Boolean(generation?.prepared),
-    deliveryId: generation?.deliveryId ?? null,
-    deliveryState: generation?.deliveryState ?? null,
-    runId: generation?.runId ?? null,
-    transferComplete: Boolean(generation?.transferComplete),
-    importedMaterialCount: Object.keys(generation?.importedMaterials || {}).length,
-    artifactCount: task.artifacts?.length ?? 0,
-  })).digest('hex');
-}
-
 export function taskHeader(task: AutomationTask): TaskHeader {
   const summary = taskSummary(task), report = task.report, optimization = task.optimization;
   delete summary.usage;
-  const reflection = task.learningPolicy?.collect && task.stopped && (report && task.status === 'completed' || task.interruption && task.status === 'interrupted');
   const referencePreviewUrl = task.generation?.referenceTemplate?.previewUrl?.trim() || task.generation?.referenceTemplateSandbox?.previewUrl?.trim() || undefined;
   return {
     ...summary, summary, versionId: task.versionId, siteRevision: task.siteRevision,
@@ -89,6 +59,6 @@ export function taskHeader(task: AutomationTask): TaskHeader {
     } : null,
     delivery: task.delivery ? { status: task.delivery.status, stopped: task.delivery.stopped, nextAt: task.delivery.nextAt, error: brief(task.delivery.error || ''), ...(task.delivery.target?.siteUrl ? { targetUrl: task.delivery.target.siteUrl } : {}), ...(task.delivery.verifiedAt ? { verifiedAt: task.delivery.verifiedAt } : {}) } : undefined,
     followup: task.followup ? { state: task.followup.state, nextAt: task.followup.nextAt } : undefined,
-    reflectionKey: reflection ? reflectionDataKey(task) : null,
+    reflectionKey: null,
   };
 }

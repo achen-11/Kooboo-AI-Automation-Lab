@@ -9,7 +9,7 @@ import type { MaterialFile } from '../../shared/automation.js';
 import { pageScreenshotPolicy, takePageScreenshots, type ScreenshotPosition, type ScreenshotReadiness, type ScreenshotReceipt } from './page-screenshots.js';
 import { runVisualPrecheck } from './visual-precheck.js';
 
-export const browserAction=z.object({action:z.enum(['inspect_layout','visual_precheck','snapshot','screenshot','navigate','take_page_screenshots','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),key:z.string().min(1).max(100).optional(),fullPage:z.boolean().default(false),safeReversible:z.boolean().default(false),scope:z.enum(['page','regions']).default('page'),selectors:z.array(z.string().min(1).max(500)).max(20).default([]),maxScreenshots:z.number().int().min(1).max(40).default(16),startY:z.number().int().min(0).max(10000000).default(0),startSelectorIndex:z.number().int().min(0).default(0),settleTimeoutMs:z.number().int().min(1000).max(10000).default(4000),templateName:z.string().max(200).optional(),skipMobileMenuProbe:z.boolean().optional()}).superRefine((input,ctx)=>{
+export const browserAction=z.object({action:z.enum(['inspect_layout','visual_precheck','snapshot','screenshot','navigate','take_page_screenshots','click','fill','select','press']),role:z.enum(['target','reference','content']).default('target'),viewport:z.enum(['desktop','mobile']).default('desktop'),url:z.string().optional(),name:z.string().max(1000).optional(),element:z.string().max(100).optional(),value:z.string().max(10000).optional(),key:z.string().min(1).max(100).optional(),fullPage:z.boolean().default(false),safeReversible:z.boolean().default(false),scope:z.enum(['page','regions']).default('page'),selectors:z.array(z.string().min(1).max(500)).max(20).default([]),maxScreenshots:z.number().int().min(1).max(40).default(16),startY:z.number().int().min(0).max(10000000).default(0),startSelectorIndex:z.number().int().min(0).default(0),settleTimeoutMs:z.number().int().min(1000).max(10000).default(4000),templateName:z.string().max(200).optional(),skipMobileMenuProbe:z.boolean().optional(),taskScope:z.enum(['homepage','site']).optional()}).superRefine((input,ctx)=>{
   if(input.action==='press'&&!input.value&&!input.key)ctx.addIssue({code:'custom',message:'press 需要 value 或 key 指定按键，不能默认触发 Enter',path:['value']});
   if(input.action==='press'&&input.value&&input.key&&input.value!==input.key)ctx.addIssue({code:'custom',message:'value 与 key 指定了不同按键',path:['key']});
   if(input.action==='take_page_screenshots'){
@@ -150,6 +150,7 @@ export async function evaluationBrowser(urls:{target:string;reference:string;con
         return await runVisualPrecheck(page,input.viewport,{
           templateName:input.templateName,
           skipMobileMenuProbe:input.skipMobileMenuProbe,
+          taskScope:input.taskScope,
           onCaptureEvidence:async(tag)=>{
             const pixels=await page!.screenshot({type:'png',fullPage:false,timeout:10000});
             const saved=await saveObservation(pixels,{settled:true,loaded:true,networkIdle:false,images:0,pendingImages:0,blankImageRatio:0},{probe:tag});

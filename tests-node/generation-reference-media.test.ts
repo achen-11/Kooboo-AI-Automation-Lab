@@ -211,8 +211,7 @@ for(const mode of ['workflow','legacy-repair','migration-baseline'] as const)tes
     await new Promise<void>(resolve=>server.listen(0,'127.0.0.1',resolve));const address=server.address();assert.ok(address&&typeof address!=='string');const origin=`http://127.0.0.1:${address.port}`;
     const vault=new Vault(f.directory);vault.update({...vault.get(),environments:[{id:f.task.environmentId,name:'Fixture',origin,apiOrigin:origin,token:'fixture-token'}]});
     const site={id:randomUUID(),siteId:f.target.siteId,resourceId:f.task.resourceId,versionId:f.task.versionId,environmentId:f.task.environmentId,name:'Generated',url:'',createdAt:Date.now()};
-    f.store.saveSite(site);f.task.generatedSiteId=site.id;f.task.learningPolicy={...f.task.learningPolicy!,use:false,collect:false};
-    const conversationId=randomUUID();f.task.generation={...f.task.generation,prepared:true,conversationId};f.store.put(f.task);let sends=0;
+    f.store.saveSite(site);f.task.generatedSiteId=site.id;const conversationId=randomUUID();f.task.generation={...f.task.generation,prepared:true,conversationId};f.store.put(f.task);let sends=0;
     const session:typeof generationSession=async()=>({
       snapshot:async()=>({version:1,taskId:f.task.id,siteId:site.siteId,conversationId,runId:'old-run',ready:true,running:false,state:'unknown',observedAt:Date.now(),pending:null,context:[],canSend:true,imageInput:false}),
       deliver:async payload=>{

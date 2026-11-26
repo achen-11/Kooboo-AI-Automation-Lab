@@ -13,7 +13,7 @@
 1. **目标生成站**：直接导入选定的 Kooboo 模板（原生语法、组件、样式与版式完整就绪）。
 2. **只读源站 Sandbox（`sourceSandbox`）**：通过 `AISandbox/TransferByLevel` 将用户的 **旧内容站（`contentUrl`）** 克隆到只读源站 Sandbox 中。
 3. **预览与评测对齐**：
-   - 在目标生成站中，AI 从 `sourceSandbox` 和已导入资料包读取真实业务文案、产品/文章数据与合法图片，套用并替换到目标 Kooboo 模板中。
+   - 在目标生成站中，AI 从 `sourceSandbox` 和已导入资料包读取真实业务文案、产品/文章数据与合法图片，套用并替换到目标 Kooboo 模板中；当原内容站克隆成功时，优先盘点并复用 `sourceSandbox` 中的原内容站真实图片资源替换模板演示图，仅在原站确无可用图时再用随附资料图或 `imagePlaceholder` 兜底。
    - 独立评测时，若需要视觉设计对照，仍以模板市场在当前环境的预览地址（`previewUrl`）作为视觉参考基准，而真实内容完整度以 `sourceSandbox` 与资料包为准。
 
 ## 2. 模板仅作 Sandbox 视觉参考（`reference-sandbox`）

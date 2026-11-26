@@ -11,7 +11,6 @@ import { CollectionBlocked, CollectionPending } from './errors.js';
 import { collectionHash, runCollectionBridge, collectionEngineFingerprint, collectionEngineRoot } from './runtime.js';
 import { localDecision, LocalDecisionInterrupted } from '../local-decision.js';
 import { recordAutonomousAttempt } from '../autonomy.js';
-import { selectExperience, adoptedGuidance } from '../experience.js';
 import { ManifestStore, manifestInput, evidenceWriter } from '../completeness.js';
 import { RequestBudget } from '../request-budget.js';
 import { planCollectionPageWindow } from './page-window.js';
@@ -90,8 +89,7 @@ export async function reviewCollection(task:AutomationTask,store:AutomationStore
  const initialAccount=run.reviewContinuation?.workId||id;
  new RequestBudget(store.db,{key:initialAccount,runKey:initialAccount,maxTokens:policy?.maxTokens||2000000,maxRequests:policy?.maxRequests||80,maxOutputTokens:16384});
  if(store.db.prepare("SELECT id FROM auto_model_requests WHERE account_id LIKE ? AND state='active' LIMIT 1").get('collection-'+run.id+'-%'))throw new CollectionBlocked('仍有采集复核请求执行中',['等待当前模型请求结束后恢复采集任务。']);
- await selectExperience(task,'generation',store,vault,directory,signal);
- const sop=readFileSync(resolve(process.cwd(),'sop/automation-collection-v1/review.md'),'utf8')+adoptedGuidance(task,store,'generation');
+ const sop=readFileSync(resolve(process.cwd(),'sop/automation-collection-v1/review.md'),'utf8');
  const binding=()=>collectionHash(JSON.stringify({contract:'collection-review-continuation-v1',schema:z.toJSONSchema(reviewSchema),task:{id:task.id,version:task.versionId,requirements:task.message,requirementsId:task.requirementsId,model:task.model||{name:vault.automation().evaluationModel,endpoint:vault.automation().evaluationEndpoint},policy},run:{input:run.inputVersionId,source:run.sourceUrl,engine:run.engineVersion,baseEngine:run.baseEngineVersion,currentEngine:collectionEngineFingerprint(),options:run.options,completed:run.completed,operations:run.operations,next:run.next,adoptions:run.adoptions,acceptedAssetGaps:run.acceptedAssetGaps,sourceRenderedEvidence:run.sourceRenderedEvidence},manifest:new ManifestStore(store).get(task.requirementsId),sop,files:['.work/state.json','site/a-checklist.json','site/discovery.json','site/completeness.json','site/coverage.csv','data/page-groups.json',acceptedAssetGapEvidencePath,sourceRenderedEvidencePath].map(path=>[path,existsSync(resolve(collections.workspace(run),path))?collectionHash(collections.read(run,path)):null])}));
  const receiptBytes=(receipt:CollectionReviewReceipt)=>receipt.kind==='requirements'?Buffer.from(task.message):receipt.kind==='engine'?readFileSync(resolve(collectionEngineRoot(),receipt.path.slice('engine:'.length))):collections.read(run,receipt.path);
  const receiptValid=(receipt:CollectionReviewReceipt)=>{try{const bytes=receiptBytes(receipt),text=bytes.toString('utf8');return collectionHash(bytes)===receipt.sha256&&Number.isSafeInteger(receipt.offset)&&Number.isSafeInteger(receipt.chars)&&receipt.offset>=0&&receipt.chars>=0&&receipt.offset<=text.length&&receipt.offset+receipt.chars<=text.length;}catch{return false;}};

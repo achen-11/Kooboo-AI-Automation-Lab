@@ -160,7 +160,7 @@ test('defaultSelectedNodeId prioritizes blocker over current node', () => {
   assert.equal(defaultSelectedNodeId(graph), 'prepare');
 });
 
-test('complex topology with optimization loop, pass label, followup, and learning has zero overlaps', () => {
+test('complex topology with optimization loop, pass label, and followup has zero overlaps', () => {
   const graph = baseGraph();
   graph.nodes.push(
     {
@@ -176,20 +176,6 @@ test('complex topology with optimization loop, pass label, followup, and learnin
       description: 'desc',
       durationMs: null,
     },
-    {
-      id: 'learning',
-      kind: 'learning',
-      lane: 'branch',
-      column: 4,
-      anchorNodeId: 'delivery',
-      title: '经验复盘沉淀',
-      subtitle: '待开始',
-      status: 'pending',
-      statusLabel: '待开始',
-      summary: 'ok',
-      description: 'desc',
-      durationMs: null,
-    },
   );
   graph.edges = [
     { id: 'e1', from: 'prepare', to: 'generation', kind: 'sequence', completed: true },
@@ -199,7 +185,6 @@ test('complex topology with optimization loop, pass label, followup, and learnin
     { id: 'e5', from: 'quality-gate', to: 'optimization', kind: 'fail', label: '未达标 · 进入修复' },
     { id: 'e6', from: 'optimization', to: 'evaluation', kind: 'loop', label: '修复后复评' },
     { id: 'e7', from: 'evaluation', to: 'followup', kind: 'branch', label: '异常自动跟进' },
-    { id: 'e8', from: 'delivery', to: 'learning', kind: 'branch', label: '结束后复盘' },
   ];
 
   const layout = computeWorkflowLayout(graph);
@@ -213,7 +198,7 @@ test('complex topology with optimization loop, pass label, followup, and learnin
     .map((e) => ({ id: e.edge.id, rect: estimateEdgeLabelBox(e) }))
     .filter((x): x is { id: string; rect: LayoutRect } => Boolean(x.rect));
 
-  assert.equal(labelRects.length, 5);
+  assert.equal(labelRects.length, 4);
 
   // 1. No two nodes overlap
   for (let i = 0; i < nodeRects.length; i++) {

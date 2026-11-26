@@ -11,7 +11,6 @@ import { runChecksRegressionSuite } from '../server/automation/checker-checks.js
 import type { evaluationBrowser } from '../server/automation/browser.js';
 import type { ScreenshotReceipt } from '../server/automation/page-screenshots.js';
 import { defaultAutomationSettings, type MaterialFile } from '../shared/automation.js';
-import { defaultLearningSettings } from '../shared/experience.js';
 
 const TINY_PNG = Buffer.from(
   'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mP8/x8AAwMCAO+aZ1cAAAAASUVORK5CYII=',
@@ -41,7 +40,6 @@ async function createChecksApp() {
     environments: [{ id: envId, name: 'TestEnv', origin, apiOrigin: origin, token: 'test-token' }],
   });
   const settings = structuredClone(defaultAutomationSettings);
-  settings.learning = { ...defaultLearningSettings, use: false, collect: false };
   f.vault.updateAutomation({
     ...settings,
     evaluationEndpoint: `${origin}/v1`,
@@ -66,14 +64,15 @@ test('CheckerChecksStore seeds defaults, versions human-promoted rules, enforces
   const f = await createChecksApp();
   try {
     const initial = f.automationStore.checks.snapshot();
-    assert.equal(initial.rules.length, 7);
+    assert.equal(initial.rules.length, 8);
     assert.deepEqual(
       initial.rules.map(r => r.id),
-      ['R-VISUAL-01', 'R-VISUAL-02', 'R-LAYOUT-03', 'R-COVER-04', 'R-LAYOUT-04', 'R-TYPO-01', 'R-DUPE-01'],
+      ['R-VISUAL-01', 'R-VISUAL-02', 'R-LAYOUT-03', 'R-COVER-04', 'R-LAYOUT-04', 'R-TYPO-01', 'R-DUPE-01', 'R-TRUST-01'],
     );
-    assert.equal(initial.calibrations.length, 8);
+    assert.equal(initial.calibrations.length, 9);
     assert.match(initial.markdown, /R-VISUAL-01/);
     assert.match(initial.markdown, /R-LAYOUT-04/);
+    assert.match(initial.markdown, /R-TRUST-01/);
     assert.match(initial.hash, /^[a-f0-9]{64}$/);
 
     const suggested = f.automationStore.checks.nextSuggestedIds();
@@ -146,8 +145,8 @@ test('runChecksRegressionSuite verifies built-in seeds, catches custom rules, an
       f.automationStore.checks.listCalibrations(),
       f.directory,
     );
-    assert.equal(baseReport.total, 8);
-    assert.equal(baseReport.passed, 8);
+    assert.equal(baseReport.total, 9);
+    assert.equal(baseReport.passed, 9);
     assert.equal(baseReport.failed, 0);
 
     f.automationStore.checks.createRule(
@@ -206,8 +205,8 @@ test('runChecksRegressionSuite verifies built-in seeds, catches custom rules, an
       f.automationStore.checks.listCalibrations(),
       f.directory,
     );
-    assert.equal(withCustom.total, 10);
-    assert.equal(withCustom.passed, 10);
+    assert.equal(withCustom.total, 11);
+    assert.equal(withCustom.passed, 11);
     assert.equal(withCustom.failed, 0);
 
     f.automationStore.checks.updateRule('R-CONTENT-01', { enabled: false }, 1, '临时停用测试');
@@ -216,7 +215,7 @@ test('runChecksRegressionSuite verifies built-in seeds, catches custom rules, an
       f.automationStore.checks.listCalibrations(),
       f.directory,
     );
-    assert.equal(afterDisable.total, 10);
+    assert.equal(afterDisable.total, 11);
     assert.equal(afterDisable.failed, 1);
     const failedCase = afterDisable.results.find(r => r.ruleId === 'R-CONTENT-01')!;
     assert.equal(failedCase.passed, false);
@@ -231,7 +230,7 @@ test('CHECKS REST API supports full lifecycle, false-positive exemption promotio
     const getRes = await f.app.inject({ url: '/api/automation/checks', headers: f.headers });
     assert.equal(getRes.statusCode, 200);
     const getBody = getRes.json();
-    assert.equal(getBody.snapshot.rules.length, 7);
+    assert.equal(getBody.snapshot.rules.length, 8);
     assert.equal(getBody.suggestedIds['R-CONTENT'], 'R-CONTENT-01');
 
     const postRes = await f.app.inject({
@@ -302,8 +301,8 @@ test('CHECKS REST API supports full lifecycle, false-positive exemption promotio
     });
     assert.equal(regRes.statusCode, 200);
     const reg = regRes.json();
-    assert.equal(reg.total, 10);
-    assert.equal(reg.passed, 10);
+    assert.equal(reg.total, 11);
+    assert.equal(reg.passed, 11);
     assert.equal(reg.failed, 0);
 
     const delRes = await f.app.inject({
@@ -679,8 +678,8 @@ test('CheckerChecksStore incrementally seeds new builtin rules and calibrations 
     const reopenedStore = new CheckerChecksStore(db);
     const snap = reopenedStore.snapshot();
 
-    assert.equal(snap.rules.length, 7);
-    assert.equal(snap.calibrations.length, 8);
+    assert.equal(snap.rules.length, 8);
+    assert.equal(snap.calibrations.length, 9);
     assert.equal(snap.rules.find(r => r.id === 'R-VISUAL-01')?.viewportCap, 73);
     assert.equal(snap.rules.find(r => r.id === 'R-LAYOUT-04')?.viewportCap, 78);
     assert.equal(snap.rules.find(r => r.id === 'R-TYPO-01')?.criterionCap, 75);

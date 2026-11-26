@@ -322,7 +322,6 @@ test('fresh upgrade task falls back from HK to DE on 0-page clone, deletes HK si
     )[0];
     delete task.autonomy;
     task.requirementsEnabled = false;
-    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task);
 
     await executeGeneration(
@@ -401,7 +400,6 @@ test('remote Site/Delete HTTP 500 still unbinds local HK site and completes on D
     )[0];
     delete task.autonomy;
     task.requirementsEnabled = false;
-    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task);
 
     await executeGeneration(task, f.automationStore, f.vault, directory, AbortSignal.timeout(10000), mockGenerationSession(task.id, () => de.siteId), passPreflight);
@@ -456,7 +454,6 @@ test('both HK and DE returning 0 pages interrupts cleanly with source-access wit
     )[0];
     delete task.autonomy;
     task.requirementsEnabled = false;
-    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task);
 
     await assert.rejects(
@@ -520,7 +517,6 @@ test('POST /resume on already-interrupted HK task switches to DE when HK still h
     )[0];
     delete taskInterrupted.autonomy;
     taskInterrupted.requirementsEnabled = false;
-    taskInterrupted.learningPolicy = { ...taskInterrupted.learningPolicy!, use: false, collect: false };
     const hkLocalSite = {
       id: randomUUID(),
       resourceId: res.id,
@@ -580,7 +576,6 @@ test('POST /resume on already-interrupted HK task switches to DE when HK still h
       )[0];
       delete taskManual.autonomy;
       taskManual.requirementsEnabled = false;
-      taskManual.learningPolicy = { ...taskManual.learningPolicy!, use: false, collect: false };
       const hkLocalSite2 = {
         id: randomUUID(),
         resourceId: res.id,
@@ -680,7 +675,6 @@ test('never deletes or switches environment when site is shared with another tas
     )[0];
     delete task1.autonomy;
     task1.requirementsEnabled = false;
-    task1.learningPolicy = { ...task1.learningPolicy!, use: false, collect: false };
     task1.generation = { transferTaskId: 'shared-transfer-1' };
     f.automationStore.put(task1);
     assert.ok(task2.id);
@@ -745,7 +739,6 @@ test('direct-template upgrade switches from HK to DE when DE supports AISandbox/
     )[0];
     delete task1.autonomy;
     task1.requirementsEnabled = false;
-    task1.learningPolicy = { ...task1.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task1);
 
     await executeGeneration(task1, f.automationStore, f.vault, directory, AbortSignal.timeout(10000), mockGenerationSession(task1.id, () => deSupported.siteId));
@@ -770,7 +763,6 @@ test('direct-template upgrade switches from HK to DE when DE supports AISandbox/
     )[0];
     delete task2.autonomy;
     task2.requirementsEnabled = false;
-    task2.learningPolicy = { ...task2.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task2);
 
     await assert.rejects(
@@ -836,7 +828,6 @@ test('site-creation failure records HTTP status and Kooboo error body in task ev
     )[0];
     delete task.autonomy;
     task.requirementsEnabled = false;
-    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task);
 
     await assert.rejects(
@@ -927,7 +918,6 @@ test('POST /api/automation/tasks enforces priority: explicit skipSourceTransfer 
     assert.match(skipTask.message, /已显式配置跳过原站克隆/);
     delete skipTask.autonomy;
     skipTask.requirementsEnabled = false;
-    skipTask.learningPolicy = { ...skipTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(skipTask);
 
     await executeGeneration(
@@ -1033,7 +1023,6 @@ test('POST /api/automation/tasks enforces priority: explicit skipSourceTransfer 
       assert.equal(degradeTask.generation?.skipSourceTransfer, undefined);
       delete degradeTask.autonomy;
       degradeTask.requirementsEnabled = false;
-      degradeTask.learningPolicy = { ...degradeTask.learningPolicy!, use: false, collect: false };
       f.automationStore.put(degradeTask);
 
       await executeGeneration(
@@ -1133,7 +1122,6 @@ test('3-hop fallback chain DE -> HK -> XM -> skipSourceTransfer materials fallba
     const task = f.automationStore.task(taskId)!;
     delete task.autonomy;
     task.requirementsEnabled = false;
-    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task);
 
     await executeGeneration(
@@ -1212,7 +1200,6 @@ test('3-hop fallback continues from HK GetStatus timeout to XM clone success wit
     )[0];
     delete task.autonomy;
     task.requirementsEnabled = false;
-    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task);
 
     await executeGeneration(
@@ -1283,7 +1270,6 @@ test('3-hop chain stops at HK when HK clone succeeds without touching XM', async
     )[0];
     delete task.autonomy;
     task.requirementsEnabled = false;
-    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task);
 
     await executeGeneration(

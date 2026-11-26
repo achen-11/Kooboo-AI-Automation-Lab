@@ -484,7 +484,6 @@ test('executeGeneration handles direct-template, missing previewUrl rejection, u
       defaultAutomationSettings,
     )[0];
     badTask.requirementsEnabled = false;
-    badTask.learningPolicy = { ...badTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(badTask);
     await assert.rejects(
       executeGeneration(badTask, f.automationStore, f.vault, f.directory, AbortSignal.timeout(3000)),
@@ -514,7 +513,6 @@ test('executeGeneration handles direct-template, missing previewUrl rejection, u
       defaultAutomationSettings,
     )[0];
     matTask.requirementsEnabled = false;
-    matTask.learningPolicy = { ...matTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(matTask);
     const matPayloads: Array<{ text?: string }> = [];
     await executeGeneration(
@@ -558,7 +556,6 @@ test('executeGeneration handles direct-template, missing previewUrl rejection, u
     )[0];
     delete upgTask.autonomy;
     upgTask.requirementsEnabled = false;
-    upgTask.learningPolicy = { ...upgTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(upgTask);
     const upgPayloads: Array<{ text?: string }> = [];
     await executeGeneration(
@@ -615,7 +612,6 @@ test('executeGeneration handles direct-template, missing previewUrl rejection, u
       defaultAutomationSettings,
     )[0];
     sbTask.requirementsEnabled = false;
-    sbTask.learningPolicy = { ...sbTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(sbTask);
     const sbPayloads: Array<{ text?: string }> = [];
     await executeGeneration(
@@ -853,7 +849,6 @@ test('executeGeneration blocks incompatible template modes BEFORE creating any s
     )[0];
     delete upgTask.autonomy;
     upgTask.requirementsEnabled = false;
-    upgTask.learningPolicy = { ...upgTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(upgTask);
 
     await assert.rejects(
@@ -887,7 +882,6 @@ test('executeGeneration blocks incompatible template modes BEFORE creating any s
     )[0];
     delete sbTask.autonomy;
     sbTask.requirementsEnabled = false;
-    sbTask.learningPolicy = { ...sbTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(sbTask);
 
     await assert.rejects(
@@ -920,7 +914,6 @@ test('executeGeneration blocks incompatible template modes BEFORE creating any s
       defaultAutomationSettings,
     )[0];
     matTask.requirementsEnabled = false;
-    matTask.learningPolicy = { ...matTask.learningPolicy!, use: false, collect: false };
     f.automationStore.put(matTask);
     const payloads: Array<{ text?: string }> = [];
     await executeGeneration(

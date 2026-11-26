@@ -16,10 +16,8 @@ import { adaptRepairImages } from '../server/automation/repair-images.js';
 import { validateResult } from '../server/automation/evaluator.js';
 import { siteRetryBlocked, rememberSiteRetry } from '../server/automation/retry-guard.js';
 import { EvaluationSliceYield } from '../server/automation/errors.js';
-import { AutomationWorker, syncReflectionCandidates } from '../server/automation/worker.js';
+import { AutomationWorker } from '../server/automation/worker.js';
 import { Vault } from '../server/lib/vault.js';
-import { ExperienceStore } from '../server/automation/experience-store.js';
-import { defaultLearningSettings } from '../shared/experience.js';
 
 const {PNG}=createRequire(import.meta.url)('playwright-core/lib/utilsBundle');
 const hash=(bytes:Buffer)=>createHash('sha256').update(bytes).digest('hex');
@@ -404,68 +402,5 @@ test('reviewTemplateBatches yields via EvaluationSliceYield at batch boundaries 
     assert.equal(runs,2);
     assert.equal(completed.status,'completed','progress-aware timeout renewal prevents mid-batch abort when checkpoints advance');
     assert.equal(followupCalls,0);
-  }finally{await worker?.stop();f.close();}
-});
-
-test('intermediate optimization round evaluations defer reflection while active and record skipped runs once superseded',async()=>{
-  const f=fixture();let worker:AutomationWorker|undefined;try{
-    const vault=new Vault(resolve(f.directory,'vault'));
-    const learning={...defaultLearningSettings,collect:true,use:false};
-    const settings={...structuredClone(defaultAutomationSettings),enabled:true,learning};
-    vault.updateAutomation(settings);
-    const siteId=randomUUID();
-    f.store.saveSite({id:siteId,resourceId:f.task.resourceId,versionId:f.task.versionId,environmentId:f.task.environmentId,siteId:randomUUID(),name:'OptTarget',url:'https://target.test/',createdAt:1});
-    const root=f.store.create({resourceIds:[f.task.resourceId],kind:'generation',scope:'site',environmentId:f.task.environmentId,generatedSiteId:siteId,requirements:'',optimization:{targetScore:90,maxRounds:3}},settings)[0];
-    root.learningPolicy=structuredClone(learning);root.status='completed';root.stopped=true;f.store.put(root);
-
-    const makeEval=(round:number,summary:string)=>{
-      const ev=f.store.create({resourceIds:[f.task.resourceId],kind:'evaluation',scope:'site',environmentId:f.task.environmentId,generatedSiteId:siteId,requirements:'',parentId:root.id,optimizationRootId:root.id,optimizationRound:round},settings)[0];
-      ev.learningPolicy=structuredClone(learning);ev.siteRevision=`rev-${round}`;ev.status='completed';ev.stopped=true;
-      ev.report={summary,assessments:[],issues:[],coverage:{verified:[],unverified:[],outOfScope:[]},scores:[{viewport:'desktop',value:70+round*10},{viewport:'mobile',value:70+round*10}],quality:round===2?'passed':'failed',artifacts:[]};
-      f.store.put(ev);return ev;
-    };
-
-    const eval0=makeEval(0,'Round 0 report');
-    const eval1=makeEval(1,'Round 1 report');
-    root.optimization!.rounds=[
-      {number:0,revision:'rev-0',generationTaskId:root.id,evaluationTaskId:eval0.id,startedAt:1},
-      {number:1,revision:'rev-1',generationTaskId:root.id,evaluationTaskId:eval1.id,startedAt:2},
-    ];
-    root.optimization!.state='planning';
-    root.optimization!.reportId=eval1.id;
-    f.store.put(root);
-
-    const experiences=new ExperienceStore(f.store);
-    const reflected:string[]=[];
-    worker=new AutomationWorker(f.store,vault,f.directory,{generation:async()=>{},evaluation:async()=>{}},()=>true,undefined,async run=>{
-      reflected.push(run.taskId);
-      run.status='completed';run.reason='Reflected final report';experiences.put(run);
-    });
-
-    syncReflectionCandidates(f.store,experiences);
-    assert.equal(experiences.runs(eval0.id).total,0,'active optimization defers reflection queueing');
-    assert.equal(experiences.runs(eval1.id).total,0,'active optimization defers reflection queueing');
-    assert.equal(experiences.claim(),undefined);
-
-    const eval2=makeEval(2,'Round 2 final report');
-    root.optimization!.rounds.push({number:2,revision:'rev-2',generationTaskId:root.id,evaluationTaskId:eval2.id,startedAt:3});
-    root.optimization!.state='completed';
-    root.optimization!.reportId=eval2.id;
-    root.optimization!.stoppedAt=Date.now();
-    f.store.put(root);
-
-    syncReflectionCandidates(f.store,experiences);
-    const run0=experiences.runs(eval0.id).items[0]!;
-    const run1=experiences.runs(eval1.id).items[0]!;
-    const run2=experiences.runs(eval2.id).items[0]!;
-    assert.equal(run0.status,'completed');assert.match(run0.reason,/跳过复盘/);
-    assert.equal(run1.status,'completed');assert.match(run1.reason,/跳过复盘/);
-    assert.equal(run2.status,'queued');
-    assert.deepEqual(f.store.reflectionCandidates(),[]);
-
-    await worker.tick();
-    while(worker.owns(run2.id))await new Promise(r=>setTimeout(r,10));
-    assert.deepEqual(reflected,[eval2.id],'only the final evaluation report is claimed for reflectExperience');
-    assert.equal(experiences.claim(),undefined);
   }finally{await worker?.stop();f.close();}
 });

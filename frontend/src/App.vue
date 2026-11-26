@@ -1,6 +1,6 @@
 <script setup lang="ts">
 import { computed, onMounted, onUnmounted, ref, watch } from 'vue';
-import { ClipboardCheck, SlidersHorizontal, FolderOpen, Settings2, ChevronLeft, RotateCw, BookOpen, ArrowUpCircle, ChartNoAxesCombined, Compass } from '@lucide/vue';
+import { ClipboardCheck, SlidersHorizontal, FolderOpen, Settings2, ChevronLeft, RotateCw, ArrowUpCircle, ChartNoAxesCombined, Compass } from '@lucide/vue';
 import { initialize, platform } from './api';
 import MessageHost from './components/MessageHost.vue';
 import SystemUpdateDialog from './components/SystemUpdateDialog.vue';
@@ -12,11 +12,8 @@ import ResourcesView from './views/automation/ResourcesView.vue';
 import AutomationTasks from './views/automation/TasksView.vue';
 import SettingsView from './views/automation/SettingsView.vue';
 import RulesView from './views/automation/RulesView.vue';
-import ExperiencesView from './views/automation/ExperiencesView.vue';
 import DashboardView from './views/automation/DashboardView.vue';
 import HarnessView from './views/automation/HarnessView.vue';
-const experienceEditor=ref<{dirty:boolean}>();
-const experienceId=computed(()=>/^\/experiences\/([a-f0-9-]+|new)$/.exec(route.value)?.[1]);
 
 const route = ref(window.location.hash.slice(1) || '/tasks');
 const collapsed = ref(localStorage.getItem('automation-sidebar-collapsed')===null?window.matchMedia('(max-width: 800px)').matches:localStorage.getItem('automation-sidebar-collapsed')==='true');
@@ -26,7 +23,6 @@ const nav = [
   { path: '/resources', label: '资源库', icon: FolderOpen },
   { path: '/tasks', label: '任务中心', icon: ClipboardCheck },
   { path: '/dashboard', label: '耗时与成本', icon: ChartNoAxesCombined },
-  {path:'/experiences',label:'经验库',icon:BookOpen},
   { path: '/rules', label: '评测规则', icon: SlidersHorizontal },
   { path: '/harness', label: 'AI 蓝图', icon: Compass },
   { path: '/settings', label: '系统设置', icon: Settings2 },
@@ -35,10 +31,10 @@ const detailId = computed(() => /^\/evaluations\/([a-f0-9-]+)$/.exec(route.value
 const resourceId = computed(() => /^\/resources\/([a-f0-9-]+)$/.exec(route.value)?.[1]);
 const taskId = computed(() => /^\/tasks\/([a-f0-9-]+)(?:\?.*)?$/.exec(route.value)?.[1]);
 const settingsEditor = ref<{dirty:boolean}>();
-const editorDirty = computed(() => Boolean(experienceEditor.value?.dirty || ruleEditor.value?.dirty || settingsEditor.value?.dirty));
+const editorDirty = computed(() => Boolean(ruleEditor.value?.dirty || settingsEditor.value?.dirty));
 watch(() => platform.ready, ready => { if (ready) void loadUpdateStatus().catch(() => {}); });
 function onHash(): void {
-  if (((route.value.startsWith('/experiences') && experienceEditor.value?.dirty) || (route.value === '/rules' && ruleEditor.value?.dirty) || (route.value.startsWith('/settings') && settingsEditor.value?.dirty)) && !window.confirm('有未保存的修改，确定离开？')) {
+  if (((route.value === '/rules' && ruleEditor.value?.dirty) || (route.value.startsWith('/settings') && settingsEditor.value?.dirty)) && !window.confirm('有未保存的修改，确定离开？')) {
     window.history.replaceState(null, '', `#${route.value}`); return;
   }
   route.value = window.location.hash.slice(1) || '/tasks';
@@ -82,7 +78,6 @@ onUnmounted(() => { window.removeEventListener('hashchange', onHash); window.rem
         <DashboardView v-else-if="route === '/dashboard'" />
         <AutomationTasks v-else-if="taskId" :key="taskId" :id="taskId" />
         <AutomationTasks v-else-if="route.startsWith('/reports')" :key="route" reports />
-        <ExperiencesView v-else-if="route.startsWith('/experiences')" ref="experienceEditor" :id="experienceId" />
         <RulesView v-else-if="route === '/rules'" ref="ruleEditor" />
         <HarnessView v-else-if="route.startsWith('/harness')" />
         <SettingsView v-else-if="route.startsWith('/settings') || route === '/environments'" :key="route" ref="settingsEditor" />

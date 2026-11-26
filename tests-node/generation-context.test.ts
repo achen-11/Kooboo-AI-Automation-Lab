@@ -62,7 +62,7 @@ test('media references travel through kfile without pixels and remain readable t
   }finally{await f.close();}
 });
 
-test('disabling experience removes historical baseline guidance from delivery while retaining the frozen baseline', async () => {
+test('historical baseline experienceGuidance is stripped from generation delivery while retaining frozen baseline record', async () => {
   const f = await fixture(); try {
     f.task.scenario = 'site-template';
     f.task.generatedSiteId = null;
@@ -72,12 +72,9 @@ test('disabling experience removes historical baseline guidance from delivery wh
     const guidance = [{ id: 'historical', revision: 1, guidance: 'OLD_EXPERIENCE_ONLY', reason: 'Earlier selection' }];
     record.baseline = { id: randomUUID(), revision: 1, createdAt: Date.now(), inputVersionId: f.task.versionId, referenceUrl: 'https://source.test/', contentUrl: null, scope: 'site', pages: [], contentMapping: 'Frozen copy', limitations: [], complete: true, evidence: [], checklistId: record.checklistId, experienceGuidance: guidance };
     registry.put(record);
-    for (const [globalUse, taskUse] of [[false, true], [true, false], [true, true]]) {
-      f.task.learningPolicy = { ...f.task.learningPolicy!, use: taskUse };
-      const result = await prepareGenerationContext(f.task, f.store, f.request, f.siteId, { instructions: 'Use baseline' }, globalUse);
-      assert.equal(result.text.includes('OLD_EXPERIENCE_ONLY'), globalUse && taskUse);
-      assert.deepEqual(registry.get(f.task)!.baseline!.experienceGuidance, guidance);
-    }
+    const result = await prepareGenerationContext(f.task, f.store, f.request, f.siteId, { instructions: 'Use baseline' });
+    assert.equal(result.text.includes('OLD_EXPERIENCE_ONLY'), false);
+    assert.deepEqual(registry.get(f.task)!.baseline!.experienceGuidance, guidance);
   } finally { await f.close(); }
 });
 
@@ -484,7 +481,7 @@ test('initial upgrade kfile context replaces reuse wording with rebuild instruct
 
     // Case 2a: isInitialDelivery: false
     const retryTask = makeTask();
-    const retryResult = await prepareGenerationContext(retryTask, f.store, f.request, f.siteId, { instructions: retryTask.message, materials }, true, { isInitialDelivery: false });
+    const retryResult = await prepareGenerationContext(retryTask, f.store, f.request, f.siteId, { instructions: retryTask.message, materials }, { isInitialDelivery: false });
     assert.match(retryResult.text, /沿用已有内容与实现/);
     assert.doesNotMatch(retryResult.text, /首轮 upgrade 重构任务/);
 
@@ -522,6 +519,37 @@ test('initial upgrade kfile context replaces reuse wording with rebuild instruct
     };
     const directTplResult = await prepareGenerationContext(directTplTask, f.store, f.request, f.siteId, { instructions: directTplTask.message, materials });
     assert.match(directTplResult.text, /沿用已有内容与实现/);
+
+    // Case 3a: kfile top-level prompt includes target-site image priority when transferComplete=true
+    const clonedTargetTask = makeTask();
+    clonedTargetTask.generation = { transferComplete: true };
+    const clonedTargetResult = await prepareGenerationContext(clonedTargetTask, f.store, f.request, f.siteId, { instructions: clonedTargetTask.message, materials });
+    assert.match(clonedTargetResult.text, /已成功克隆至当前目标站：重构页面与样式时优先直接复用当前站点媒体库/);
+
+    // Case 3b: kfile top-level prompt includes sourceSandbox image priority when direct-template + sourceSandbox.complete=true
+    const clonedSandboxTask = makeTask();
+    clonedSandboxTask.generation = {
+      referenceTemplate: {
+        templateId: 'tpl-1',
+        templateName: 'Direct Template',
+        previewUrl: 'https://tpl.test/',
+        mode: 'direct-template',
+      },
+      sourceSandbox: {
+        sandbox: 'src-test02',
+        siteId: randomUUID(),
+        previewUrl: 'https://src.test/',
+        complete: true,
+      },
+    };
+    const clonedSandboxResult = await prepareGenerationContext(clonedSandboxTask, f.store, f.request, f.siteId, { instructions: clonedSandboxTask.message, materials });
+    assert.match(clonedSandboxResult.text, /已成功克隆至只读源站 Sandbox「src-test02」：优先盘点并复用原内容站真实图片资源/);
+
+    // Case 3c: skipSourceTransfer=true suppresses both lines even if stale flags exist
+    const skippedTask = makeTask();
+    skippedTask.generation = { skipSourceTransfer: true, transferComplete: true };
+    const skippedResult = await prepareGenerationContext(skippedTask, f.store, f.request, f.siteId, { instructions: skippedTask.message, materials });
+    assert.doesNotMatch(skippedResult.text, /已成功克隆至(?:当前目标站|只读源站 Sandbox)/);
   } finally {
     await f.close();
   }

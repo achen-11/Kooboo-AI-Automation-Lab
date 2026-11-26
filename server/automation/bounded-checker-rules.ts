@@ -10,7 +10,8 @@ export type BuiltinAntiPatternRuleId =
   | 'R-COVER-04'
   | 'R-LAYOUT-04'
   | 'R-TYPO-01'
-  | 'R-DUPE-01';
+  | 'R-DUPE-01'
+  | 'R-TRUST-01';
 export type AntiPatternRuleId = BuiltinAntiPatternRuleId | (string & {});
 
 export interface AntiPatternRule {
@@ -43,14 +44,14 @@ export const DEFAULT_ANTI_PATTERN_RULES: readonly AntiPatternRule[] = [
   },
   {
     id: 'R-VISUAL-02',
-    title: '配图语义、语种与品牌语境一致',
+    title: '配图语义、语种与品牌语境一致（含主图匹配与防低清拉伸）',
     severity: 'minor',
     trigger:
-      '页面配图出现与站点语种/品牌违和的外语价签/招牌文字、无关第三方设备或竞品 Logo 抢镜，或配图与所属业务卡片语义明显不符。',
+      '页面配图出现与站点语种/品牌违和的外语价签/招牌文字、无关第三方设备或竞品 Logo 抢镜，或配图与所属业务卡片语义明显不符；Hero 主图与核心主营定位明显错位，或把原始宽度 < 600px 的低清老图强行拉伸铺满大横幅/大卡片导致明显发虚或主体残缺裁切。',
     exemptions: ['明确作为展示对象的真实商品原包装/跨国品牌原物'],
     criterionCap: 72,
     viewportCap: 78,
-    action: '局部卡片配图记 Minor 并要求替换；若出现在 Hero 或核心卖点主图则升格为 Major（对应维度 ≤ 72、视口 ≤ 78）。',
+    action: '局部卡片配图记 Minor 并要求替换；若出现在 Hero/核心卖点主图或低清图在首屏/大卡严重放大失真则升格为 Major（对应维度 ≤ 72、视口 ≤ 78）。',
   },
   {
     id: 'R-LAYOUT-03',
@@ -79,11 +80,11 @@ export const DEFAULT_ANTI_PATTERN_RULES: readonly AntiPatternRule[] = [
     title: '首屏安全线越界或分栏图文高度失衡',
     severity: 'major',
     trigger:
-      '首屏 CTA/内容主图越出视口安全线或 H1 贴近导航底，或桌面双栏图文高度差超过 max(48px, 短列 8%)（含直接沿用参考站失衡结构，未按 relative+absolute/纵排多图重构）。',
+      '首屏 CTA、内容主图或 Hero 浮层信息卡片越出视口安全线被底边腰斩裁切，或 H1 贴近导航底，或桌面双栏图文高度差超过 max(48px, 短列 8%)（含直接沿用参考站失衡结构，未按 relative+absolute/纵排多图重构）。',
     exemptions: ['媒体列使用 position: sticky，或 ≥3 列等宽纯卡片/服务网格不按双栏图文失衡判定。'],
     criterionCap: 75,
     viewportCap: 78,
-    action: '对应维度（hero/layout）封顶 ≤ 75、视口封顶 ≤ 78；标记 Major 并修正首屏安全线或补齐双栏等高/多图纵排。',
+    action: '对应维度（hero/layout）封顶 ≤ 75、视口封顶 ≤ 78；标记 Major 并修正首屏安全线（确保浮层卡与主图完整入屏）或补齐双栏等高/多图纵排。',
   },
   {
     id: 'R-TYPO-01',
@@ -98,14 +99,25 @@ export const DEFAULT_ANTI_PATTERN_RULES: readonly AntiPatternRule[] = [
   },
   {
     id: 'R-DUPE-01',
-    title: '同页联系方式、CTA 文案或正文段落重复超限',
+    title: '同页联系方式、CTA 文案、标签或图片重复超限',
     severity: 'minor',
     trigger:
-      '违背 H32「一次完整 + 一次精简」原则，同页电话/邮箱整页 > 3（正文 > 1）、相同 CTA 文案整页 > 3（正文 > 2，未按区块替换场景词）、正文/标题完全重复或内容图复用 > 2 次。',
+      '违背 H32「一次完整 + 一次精简」原则，同页电话/邮箱整页 > 3（正文 > 1）、相同 CTA 文案整页 > 3（正文 > 2，未按区块替换场景词）、正文/标题完全重复、同页内容图复用 > 1 次（如 Hero 图在下方板块复现），或首屏同一年份/定位短标签重复 ≥ 2 次。',
     exemptions: ['带 aria-hidden="true" 的轮播或跑马灯无缝循环副本除外。'],
     criterionCap: 82,
     viewportCap: 85,
-    action: '对应维度（content/dedup）封顶 ≤ 82、视口封顶 ≤ 85；标记 Minor 并清理冗余副本、按区块区分 CTA 文案。',
+    action: '对应维度（content/dedup）封顶 ≤ 82、视口封顶 ≤ 85；标记 Minor 并清理冗余副本、替换为不同实拍图及按区块区分 CTA 文案。',
+  },
+  {
+    id: 'R-TRUST-01',
+    title: '核心转化信息遗漏、假素材硬凑槽位或仅首页死链/未本地化资源',
+    severity: 'major',
+    trigger:
+      '旧站或资料包含多个联系电话（如白天座机 + 24/7 手机/WhatsApp 热线）却遗漏核心热线、未标用途或缺少 tel:/mailto: 链接；缺少真实合作品牌 Logo 却把实拍图缩成灰白小图冒充 Logo 墙，或为凑 4 格卡片硬编无意义数字指标；仅首页（homepage）模式导航/按钮仍指向未生成子页导致 404 风险；或残留未本地化的外部/http:// 混合内容图片与脚本。',
+    exemptions: ['全站（site）任务中已实际生成的站内子页链接', '真实合作伙伴官方品牌 Logo', 'HTTPS 公共字体 CDN'],
+    criterionCap: 72,
+    viewportCap: 76,
+    action: '对应维度封顶 ≤ 72、视口封顶 ≤ 76；标记 Major 并补全全部联系方式及用途、删除假素材槽位或改纯文字信任条、仅首页链接改为页内锚点并本地化资源。',
   },
 ] as const;
 
@@ -315,6 +327,11 @@ export function buildBoundedCheckerPrompt(input: BoundedCheckerPromptInput): str
     ``,
     `【任务背景】`,
     `- 场景：${input.scenario} | 范围：${input.scope} | 本批视口：${input.viewports?.length ? input.viewports.join(' + ') : 'desktop + mobile'} | 目标站：${input.siteUrl || '离线历史证据'} | 视觉参考站：${input.hasReference ? '有（见附带 reference 截图）' : '无'}`,
+    ...(input.scenario === 'upgrade' && input.hasReference
+      ? [
+          `- 升级场景配色口径（重要）：旧站升级（upgrade）中，参考站用于基准化页头结构、Hero 构图、字体层级、留白与区块节奏；品牌主色、强调色与 Logo 优先承接原内容站与商家行业气质（仅在原站无明确品牌色时沿用参考站色板）。目标站若按商家品牌色做了协调适配，严禁在“视觉还原/参考一致性”维度因此扣分；反之，若照搬与商家行业严重违和的参考模板高饱和配色，应指出品牌气质脱节。`,
+        ]
+      : []),
     ...(input.pageScopeNote?.trim() ? [`- 本批核验范围：${input.pageScopeNote.trim()}`] : []),
     `- 业务/建站需求摘要：\n${input.description.trim() || '（无额外描述）'}`,
   ];

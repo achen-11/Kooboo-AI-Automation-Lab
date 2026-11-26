@@ -460,6 +460,7 @@ test('TemplateWorkflowOverview and TemplateBaselinePanel render frozen baseline,
     assert.ok(rendered.includes('联系表单提交后弹窗需交互触发'));
     assert.ok(rendered.includes('单列堆叠并保留 16px 左右留白'));
     assert.ok(rendered.includes('生成前命中的简短适用经验（1 条）'));
+    assert.ok(!rendered.includes('#/experiences'));
   } finally {
     baselineView.unmount();
   }

@@ -509,6 +509,7 @@ export async function executeBoundedSiteEvaluation(params: {
           role: 'target',
           viewport,
           url: fullUrl,
+          taskScope: task.scope,
           ...(pagePath !== '/' ? { skipMobileMenuProbe: true } : {}),
           ...(directTemplateName ? { templateName: directTemplateName } : {}),
         })) as ViewportVisualPrecheck;

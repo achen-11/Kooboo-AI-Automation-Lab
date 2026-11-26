@@ -273,7 +273,6 @@ test('executeGeneration records visible waiting and completion events for legacy
     )[0];
     delete task.autonomy;
     task.requirementsEnabled = false;
-    task.learningPolicy = { ...task.learningPolicy!, use: false, collect: false };
     f.automationStore.put(task);
 
     await executeGeneration(

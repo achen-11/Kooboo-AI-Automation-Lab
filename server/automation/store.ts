@@ -9,7 +9,6 @@ import type { AutomationRule, AutomationSettings, AutomationTask, AutomationNoti
 import { defaultOptimizationPolicy, effectiveReferenceUrl, effectiveTemplateUsageMode, supportsAutomaticOptimization } from '../../shared/automation.js';
 import type { NoticePage } from '../../shared/task-presentation.js';
 import { defaultCompletenessSettings } from '../../shared/completeness.js';
-import { defaultLearningSettings } from '../../shared/experience.js';
 import { accessibleSiteUrl } from '../../shared/site-delivery.js';
 import { createAutonomousExecution } from '../../shared/autonomy.js';
 import { TimingLedger } from './timing.js';
@@ -191,9 +190,6 @@ export class AutomationStore {
     if(task.optimization&&task.optimization.reportId!==source.id)return undefined;
     return source;
   }
-  reflectionCandidates() {
-    return this.db.prepare("SELECT h.id FROM auto_task_index h WHERE h.reflection_key IS NOT NULL AND NOT EXISTS(SELECT 1 FROM auto_learning_runs r WHERE r.key=h.reflection_key) AND NOT EXISTS(SELECT 1 FROM auto_dispositions d WHERE d.kind='delivery' AND d.target_id=COALESCE(h.site_key,h.id) AND d.state='discarded')").all().map(row=>row.id as string);
-  }
   root(task: AutomationTask) {
     if(task.optimizationRootId)return this.task(task.optimizationRootId);
     const parent=task.parentId?this.task(task.parentId):undefined;
@@ -293,7 +289,7 @@ export class AutomationStore {
             ? version.scenario === 'upgrade'
               ? effectiveSkipSourceTransfer
                 ? '本任务基于所选 Kooboo 原生模板直接建站并升级旧内容站（已配置跳过原站克隆）：目标站直接从 Kooboo 模板创建，不克隆原内容站 Sandbox，请直接以已导入的资料包作为业务事实来源，保留原生模板框架与视觉体系完成内容与结构替换，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
-                : '本任务基于所选 Kooboo 原生模板直接建站并升级旧内容站：目标站直接从 Kooboo 模板创建，旧内容站将克隆到只读源站 Sandbox。保留原生模板框架与视觉体系，只做内容、字段与结构迁移替换，严禁把旧站模板/CSS 全盘搬入目标站，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
+                : '本任务基于所选 Kooboo 原生模板直接建站并升级旧内容站：目标站直接从 Kooboo 模板创建，旧内容站将克隆到只读源站 Sandbox。保留原生模板框架与视觉体系，只做内容、字段与结构迁移替换；旧内容站克隆成功后，必须优先复用原内容站中的真实图片资源替换模板演示图（仅在原站确无可用图时再用随附资料图或 imagePlaceholder 兜底），严禁把旧站模板/CSS 全盘搬入目标站，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
               : '本任务基于所选 Kooboo 原生模板建站：目标站直接从 Kooboo 模板创建。遵循 kooboo-coding 与 kooboo-site-redesign 的模板原位适配规范，保留原生模板语法、布局结构与资源组织，在原位完成内容替换、品牌重设与动态数据结构对齐，完成后必须彻底清除原模板演示文案、品牌名、演示图片及无用示例页面。'
             : templateMode === 'reference-sandbox'
               ? `${settings.prompts[version.scenario]}\n\n参考模板已预先导入隔离研究 Sandbox（tpl-*），请优先复用该 Sandbox 中的原生 Kooboo 对象与结构研究，不要再对参考站运行 transfer_page。`
@@ -349,7 +345,6 @@ export class AutomationStore {
       }else if(!parent&&!site&&input.kind==='generation'&&input.scope==='site'&&['migration','upgrade'].includes(version.scenario)){
         task.autonomy=createAutonomousExecution(task.message,{hardMaxRounds:input.optimization?.maxRounds,hardCostCny:input.optimization?.maxCostCny??undefined});
       }
-      task.learningPolicy=structuredClone(parent?parent.learningPolicy:siteWorkflowSource?siteWorkflowSource.learningPolicy:settings.learning||defaultLearningSettings);
       task.completenessPolicy=structuredClone(parent&&parent.scope===input.scope?parent.completenessPolicy:siteWorkflowSource?siteWorkflowSource.completenessPolicy:settings.completeness||defaultCompletenessSettings);
       task.requirementsEnabled=parent&&parent.scope===input.scope?parent.requirementsEnabled:siteWorkflowSource?siteWorkflowSource.requirementsEnabled:input.scope==='site'&&(task.completenessPolicy?.enabled??true);
       const workflowRoot=siteWorkflowSource?.templateWorkflow?this.task(siteWorkflowSource.templateWorkflow.rootTaskId,false):undefined;

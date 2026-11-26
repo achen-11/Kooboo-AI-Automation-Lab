@@ -246,6 +246,33 @@ const BUILTIN_CALIBRATION_SEEDS: readonly Omit<CheckerCalibrationCase, 'createdA
       requireRuleInPrompt: true,
     },
   },
+  {
+    id: 'cal-r-trust-01-catch',
+    ruleId: 'R-TRUST-01',
+    title: '遗漏 24/7 紧急热线、灰白实拍图充 Logo 墙或 homepage 指向子页死链',
+    kind: 'should-catch',
+    scenario: 'upgrade',
+    scope: 'homepage',
+    source: 'builtin',
+    notes: '源于经典车修复站反馈：旧站含座机与 24/7 手机热线但页面漏掉手机，用 4 张极小灰白实拍图充合作品牌墙，且仅首页模式下卡片跳往未建子页。',
+    evidenceFiles: [],
+    viewport: 'desktop',
+    criterionId: 'sections',
+    simulatedIssue: {
+      severity: 'major',
+      title: '遗漏 24/7 手机热线、灰白实拍图充 Logo 墙且存在仅首页子页死链',
+      detail: '[R-TRUST-01] 页面只留白天座机却宣称 24/7 接听，缺少真实 Logo 强行放 4 张灰白缩略图，且 HOMEPAGE_SUBPAGE_LINK 检测到子页链接。',
+      ruleId: 'R-TRUST-01',
+      viewport: 'desktop',
+      criterionId: 'sections',
+    },
+    expected: {
+      quality: 'failed',
+      maxDesktopScore: 76,
+      requireRuleInPrompt: true,
+      requireCapNote: true,
+    },
+  },
 ];
 
 function validateCap(value: number | null, label: string): number | null {

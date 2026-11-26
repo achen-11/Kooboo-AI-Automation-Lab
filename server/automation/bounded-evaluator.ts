@@ -1175,6 +1175,7 @@ export async function executeBoundedHomepageEvaluation(params: {
             action: 'visual_precheck',
             role: 'target',
             viewport,
+            taskScope: task.scope,
             ...(directTemplateName ? { templateName: directTemplateName } : {}),
           })) as ViewportVisualPrecheck;
           if (precheck && precheck.snapshot && Array.isArray(precheck.signals)) {

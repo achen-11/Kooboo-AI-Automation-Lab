@@ -19,7 +19,6 @@ import { advanceOptimization, applyOptimizationAction, optimizationBudgetReason 
 function fixture() {
   const directory=mkdtempSync(join(tmpdir(),'autonomous-recovery-')),db=new Database(':memory:'),store=new AutomationStore(db),vault=new Vault(directory);
   const settings=structuredClone({...defaultAutomationSettings,enabled:true,autoEvaluate:false,generationConcurrency:1,evaluationConcurrency:1});
-  settings.learning!.collect=false;
   vault.updateAutomation(settings);
   const resource=store.saveResource({name:'Autonomous task',scenario:'site-template',contentUrl:'https://source.invalid/',referenceUrl:'',description:'',files:[],externalSource:'',externalId:''});
   const create=(autonomous=true)=>{const task=store.create({resourceIds:[resource.id],kind:'generation',scope:'homepage',environmentId:'',requirements:''},settings)[0];if(autonomous)task.autonomy=createAutonomousExecution('Finish original objective');store.put(task);return task;};

@@ -209,14 +209,16 @@ function handleMockKscript(code: string) {
   return { contents: [{ isError: false, result: true }] };
 }
 
-test('Harness catalog exposes intake/SKILL.md (17 docs, 8 stages)', async () => {
+test('Harness catalog exposes intake/SKILL.md (16 docs, 8 stages)', async () => {
   const f = await createTestApp();
   try {
     const catalog = buildHarnessCatalog(f.vault.rawAutomation());
     assert.equal(catalog.stages.length, 8);
-    assert.equal(catalog.documents.length, 17);
+    assert.equal(catalog.documents.length, 16);
     assert.ok(catalog.stages.some(stage => stage.id === 'intake'));
     assert.ok(catalog.documents.some(doc => doc.path === 'intake/SKILL.md'));
+    assert.ok(catalog.documents.some(doc => doc.path === 'distillation/SKILL.md'));
+    assert.ok(catalog.documents.some(doc => doc.path === 'distillation/references/pattern-ledger.md'));
     assert.ok(catalog.documents.some(doc => doc.path === 'generation/references/site-ui-rules.md'));
   } finally {
     await f.close();

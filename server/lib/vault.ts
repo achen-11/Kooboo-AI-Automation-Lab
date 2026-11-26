@@ -176,9 +176,6 @@ export class Vault {
     optimization.sop = resolveHarnessSop('optimization.sop', saved?.optimization?.sop).value;
     const completeness = { ...defaultAutomationSettings.completeness!, ...saved?.completeness };
     completeness.sop = resolveHarnessSop('completeness.sop', saved?.completeness?.sop).value;
-    const learning = { ...defaultAutomationSettings.learning!, ...saved?.learning };
-    learning.selectionSop = resolveHarnessSop('learning.selectionSop', saved?.learning?.selectionSop).value;
-    learning.reflectionSop = resolveHarnessSop('learning.reflectionSop', saved?.learning?.reflectionSop).value;
     const rawEndpoint = saved?.evaluationEndpoint?.trim() || '';
     const runtimeEndpoint = this.current.model.endpoint?.trim() || '';
     const normalizedRuntimeEndpoint = runtimeEndpoint
@@ -194,7 +191,6 @@ export class Vault {
       evaluationEndpoint,
       evaluationModel,
       completeness,
-      learning,
       optimization,
       followup,
       prompts: { ...defaultAutomationSettings.prompts, ...saved?.prompts },
@@ -206,8 +202,6 @@ export class Vault {
     if (key === 'all' || key === 'followup.sop') current.followup.sop = builtInHarnessSop('followup.sop');
     if (key === 'all' || key === 'optimization.sop') current.optimization!.sop = builtInHarnessSop('optimization.sop');
     if (key === 'all' || key === 'completeness.sop') current.completeness!.sop = builtInHarnessSop('completeness.sop');
-    if (key === 'all' || key === 'learning.selectionSop') current.learning!.selectionSop = builtInHarnessSop('learning.selectionSop');
-    if (key === 'all' || key === 'learning.reflectionSop') current.learning!.reflectionSop = builtInHarnessSop('learning.reflectionSop');
     return this.updateAutomation(current);
   }
   updateSource(): UpdateSource { return structuredClone(this.get().updateSource || { repository: defaultUpdateRepository, token: '' }); }

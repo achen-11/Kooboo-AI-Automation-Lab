@@ -48,8 +48,7 @@ const idle:Execute=async()=>{};
 test('followup may pass five minutes but still stops at its original cumulative remaining time',async(context)=>{
   const f=await fixture();let worker:AutomationWorker|undefined,signal:AbortSignal|undefined;
   try{
-    const task=f.create();task.learningPolicy={...task.learningPolicy!,use:false,collect:false};
-    f.automationStore.scheduleFollowup(task,{...f.settings.followup,maxMinutes:20});task.followup!.elapsedMs=2*60000;task.followup!.tokens=123;f.automationStore.put(task);
+    const task=f.create();f.automationStore.scheduleFollowup(task,{...f.settings.followup,maxMinutes:20});task.followup!.elapsedMs=2*60000;task.followup!.tokens=123;f.automationStore.put(task);
     context.mock.timers.enable({apis:['setTimeout']});
     worker=new AutomationWorker(f.automationStore,f.vault,f.directory,{generation:idle,evaluation:idle},()=>true,async(_task,_store,_vault,_directory,activeSignal)=>{
       signal=activeSignal;return await new Promise<FollowupAction>((_resolve,reject)=>{activeSignal.addEventListener('abort',()=>reject(activeSignal.reason),{once:true});});
@@ -529,8 +528,7 @@ test('failed generation retry sends once, ignores the previous run and consumes 
     await new Promise<void>(r=>server.listen(0,'127.0.0.1',r));origin=`http://127.0.0.1:${(server.address() as {port:number}).port}`;
     try{
       f.vault.update({...f.vault.get(),environments:[{id:f.environmentId,name:'Test',origin,apiOrigin:origin,token:'test-only-token'}]});
-      task.generation!.runId=runId;task.generation!.state='failed';task.learningPolicy={...task.learningPolicy!,use:false,collect:false};
-      f.automationStore.scheduleFollowup(task,f.settings.followup);
+      task.generation!.runId=runId;task.generation!.state='failed';f.automationStore.scheduleFollowup(task,f.settings.followup);
       const conversationId=task.generation!.conversationId!,oldDelivery=task.generation!.deliveryId!;
       const old:GenerationObservation={version:1,taskId:task.id,siteId:site.siteId,conversationId,runId,ready:true,running:false,state:'failed',observedAt:Date.now(),pending:null,context:[{role:'assistant',text:'Insufficient Balance'}],delivery:{id:oldDelivery,state:'accepted',conversationId},outcome:{conversationId,runId,status:'failed',time:Date.now()-3600000}};
       if(result==='answer'){

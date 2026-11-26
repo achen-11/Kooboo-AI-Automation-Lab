@@ -24,7 +24,7 @@ before(async () => {
         : 'export const notify={success:(t)=>globalThis.__recoveryServices.notified?.push({type:"success",text:t}),info:(t)=>globalThis.__recoveryServices.notified?.push({type:"info",text:t})};', loader: 'js' }));
       builder.onLoad({ filter: /\.vue$/ }, args => {
         if (args.path.endsWith('/ExecutionLog.vue')) return { contents: "import {h} from 'vue';export default {emits:['stage-change'],setup:(_, {emit})=>()=>h('button',{'data-stage':true,onClick:()=>emit('stage-change','child')},'选择评测轮次')};", loader: 'js' };
-        if (!/\/(TaskDetail|TaskExecution|TaskRecoveryActions|TaskLearning)\.vue$/.test(args.path)) return { contents: "import {h} from 'vue';export default {setup:(_, {slots})=>()=>h('div',slots.default?.())};", loader: 'js' };
+        if (!/\/(TaskDetail|TaskExecution|TaskRecoveryActions)\.vue$/.test(args.path)) return { contents: "import {h} from 'vue';export default {setup:(_, {slots})=>()=>h('div',slots.default?.())};", loader: 'js' };
         const { descriptor } = parse(readFileSync(args.path, 'utf8'), { filename: args.path });
         return { contents: compileScript(descriptor, { id: args.path, inlineTemplate: true }).content, loader: 'ts', resolveDir: dirname(args.path) };
       });
@@ -64,34 +64,25 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
   if (namingConflict) Object.assign(root, { generatedSiteId: null, stopped: true, canAdjustSiteNames: true, attention: '自定义站点名或子域名已被占用' });
   if (workflowActive) Object.assign(root, { stopped: true, attention: 'AI 跟进已达到配置的次数、时间或 token 预算，当前流程仍未完成。' });
   if (taskStatus) Object.assign(root, { status: taskStatus, stopped: !['running', 'cancelling'].includes(taskStatus), attention: '', nextStep: '' });
-  let activeBlocker = workflowActive ? { tasks: 0, learning: 1, reason: '同工作流仍有活动执行（1 个经验学习执行中），请等待全部停止或强制中断后恢复' }
-    : taskStatus ? { tasks: 1, learning: 0, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' } : undefined;
-  const learningItems = workflowActive ? [{ id: 'learn-1', taskId: 'root', workflowId: 'root', phase: 'followup', kind: 'reflection', key: 'k1', status: 'running', policy: {}, createdAt: 1, updatedAt: 1, threadId: '', reason: '执行中', adoptions: [], produced: [], budgetId: 'experience:root' }] : [];
+  let activeBlocker = workflowActive ? { tasks: 1, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' }
+    : taskStatus ? { tasks: 1, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' } : undefined;
   const calls = [], notified = [];
   const request = async (path, options = {}) => {
     calls.push({ path, method: options.method || 'GET', body: options.body });
     if (options.method === 'POST') {
-      if (path === '/automation/learning/learn-1/cancel') {
-        learningItems[0].status = 'failed';
-        learningItems[0].reason = '模型服务拒绝请求（HTTP 402）';
-        activeBlocker = undefined;
-        return { run: structuredClone(learningItems[0]), alreadyStopped: true };
-      }
       if (fail) throw Error('执行器仍有占用');
       const task = path.includes('/child/') ? child : root;
       if (path.endsWith('/confirm-stopped')) task.stopped = true;
       if (path.endsWith('/resume')) {
         const parsed = options.body ? JSON.parse(options.body) : {};
         if (activeBlocker && !parsed.force) throw Error(activeBlocker.reason);
-        activeBlocker = retainActiveOnResume ? { tasks: 1, learning: 0, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' } : undefined;
-        for (const item of learningItems) if (['running', 'queued'].includes(item.status)) item.status = 'failed';
+        activeBlocker = retainActiveOnResume ? { tasks: 1, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' } : undefined;
         task.status = 'queued'; task.attention = '';
       }
       if (path.endsWith('/adjust-site-names')) { task.status = 'queued'; task.attention = ''; task.canAdjustSiteNames = false; }
       task.updatedAt++;
       return structuredClone(task);
     }
-    if (path.includes('/learning?')) return structuredClone({ items: learningItems, page: 1, pages: 1, total: learningItems.length });
     if (path.endsWith('/summary')) return structuredClone({ task: path.includes('/child/') ? child : root, evaluation: pair ? child : null, active: null, deliveryEnabled: false, latest: null, ...(activeBlocker ? { workflowActive: activeBlocker } : {}) });
     if (path.includes('/sections/execution')) {
       const task = path.includes('taskId=child') ? child : root;
@@ -238,20 +229,6 @@ test('active workflow learning upgrades primary recovery buttons in header and e
     assert.deepEqual(JSON.parse(post.body), { force: true });
     assert.equal(f.root.status, 'queued');
     assert.equal(f.buttons('强制中断并恢复').length, 0);
-  } finally { f.close(); }
-});
-
-test('cancelling a just-finished learning run in TaskLearning shows info instead of 409 error and immediately clears TaskDetail workflowActive banner', async () => {
-  const f = await fixture({ workflowActive: true });
-  try {
-    assert.equal(f.buttons('强制中断').length, 1);
-    assert.ok(f.text().includes('同工作流仍有活动执行'));
-    await f.buttons('强制中断')[0].props.onClick(); await settle();
-    assert.ok(!f.text().includes('只能中断排队中或执行中的经验学习'));
-    assert.ok(!f.text().includes('同工作流仍有活动执行'));
-    assert.deepEqual(f.notified, [{ type: 'info', text: '该经验学习已结束' }]);
-    assert.equal(f.buttons('强制中断').length, 0);
-    assert.equal(f.buttons('恢复任务').length, 2, 'once learning finishes, primary buttons return to normal resume');
   } finally { f.close(); }
 });
 

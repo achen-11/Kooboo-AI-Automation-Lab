@@ -360,7 +360,6 @@ test('non-optimization generation with autoDelivery=true skips evaluation when a
       f.vault.automation(),
     )[0];
     assert.equal(gen1.autoEvaluate, false);
-    gen1.learningPolicy = { ...gen1.learningPolicy!, collect: false, use: false };
     f.automationStore.put(gen1);
 
     worker = new AutomationWorker(
@@ -429,7 +428,6 @@ test('non-optimization generation with autoDelivery=true skips evaluation when a
       },
       f.vault.automation(),
     )[0];
-    eval2.learningPolicy = { ...eval2.learningPolicy!, collect: false, use: false };
     f.automationStore.put(eval2);
 
     await worker.tick();
@@ -463,7 +461,6 @@ test('non-optimization generation with autoDelivery=true skips evaluation when a
       f.vault.automation(),
     )[0];
     assert.equal(f.automationStore.task(evalLegacy.id)!.autoDelivery, undefined);
-    evalLegacy.learningPolicy = { ...evalLegacy.learningPolicy!, collect: false, use: false };
     f.automationStore.put(evalLegacy);
     f.vault.updateAutomation({ ...f.vault.automation(), enabled: true });
 
@@ -520,7 +517,6 @@ test('optimization workflow holds auto-delivery until optimization reaches targe
       },
       f.vault.automation(),
     )[0];
-    root.learningPolicy = { ...root.learningPolicy!, collect: false, use: false };
     root.status = 'completed';
     root.stopped = true;
     root.generation = { prepared: true, conversationId: randomUUID() };
@@ -531,7 +527,6 @@ test('optimization workflow holds auto-delivery until optimization reaches targe
 
     // Round 0 evaluation completes at 65 (< 85 target): must NOT queue delivery yet
     const round0Eval = f.automationStore.ensureEvaluation(root, f.vault.automation());
-    round0Eval.learningPolicy = { ...round0Eval.learningPolicy!, collect: false, use: false };
     f.automationStore.put(round0Eval);
 
     let evalScore = 65;
@@ -1499,9 +1494,7 @@ test('per-task autoEvaluate overrides global setting and manual delivery works d
 
     // Disable auto-delivery on genEvalOff temporarily so we can test manual POST /delivery on generation task
     genEvalOff.autoDelivery = false;
-    genEvalOff.learningPolicy = { ...genEvalOff.learningPolicy!, collect: false, use: false };
     f.automationStore.put(genEvalOff);
-    genEvalOn.learningPolicy = { ...genEvalOn.learningPolicy!, collect: false, use: false };
     f.automationStore.put(genEvalOn);
 
     worker = new AutomationWorker(
@@ -1627,7 +1620,6 @@ test('worker followup evaluate action respects autoEvaluate=false and queues dir
     const site = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'FollowupDirectSite', url: 'https://hk-followup-direct.test/', createdAt: Date.now() };
     f.automationStore.saveSite(site);
     const gen = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: site.id, autoEvaluate: false, autoDelivery: true, requirements: '' }, f.vault.automation())[0];
-    gen.learningPolicy = { ...gen.learningPolicy!, collect: false, use: false };
     gen.status = 'following-up';
     gen.stopped = true;
     gen.followup = { state: 'queued', attempts: 0, elapsedMs: 0, startedAt: Date.now(), nextAt: Date.now() - 1000, tokens: 0, threadId: '', policy: f.vault.automation().followup, executionStopped: true, observations: [], budgetId: randomUUID() };

@@ -96,10 +96,9 @@ export class BackgroundWorkers {
     if (this.owned.has(id)) return true;
     // A claim is committed before the executor can publish its first IPC update.
     const header = this.store.header(id);
-    if (header && (taskExecuting(header)
+    return Boolean(header && (taskExecuting(header)
       || !header.stopped && header.status === 'following-up' && header.followup?.state === 'running'
-      || header.delivery?.stopped === false && ['running', 'verifying'].includes(header.delivery.status))) return true;
-    return this.store.db.prepare("SELECT id FROM auto_learning_runs WHERE id=? AND status='running'").get(id) !== undefined;
+      || header.delivery?.stopped === false && ['running', 'verifying'].includes(header.delivery.status)));
   }
   async stop() {
     if (!this.child || !this.exited) return;

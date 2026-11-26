@@ -6,7 +6,6 @@ import type { TaskSupplementContext } from '../../../../shared/supplement';
 import { deriveHumanNotice, diagnosticCategoryLabels, type HumanNotice } from '../../../../shared/human-diagnostics';
 import type { TaskRecoveryAction, TaskRecoveryTarget } from '../../../../shared/task-presentation';
 import Disclosure from '../../components/Disclosure.vue';
-import TaskLearning from '../../components/TaskLearning.vue';
 import ExecutionLog from '../../components/ExecutionLog.vue';
 import TaskRecoveryActions from './TaskRecoveryActions.vue';
 import TaskSupplementDialog from './TaskSupplementDialog.vue';
@@ -15,7 +14,6 @@ import { useTaskSection } from './use-task-section';
 const props = defineProps<{ taskId: string; updatedAt: number; task?: TaskRecoveryTarget; busy?: boolean; workflowActive?: boolean }>();
 const emit = defineEmits<{ action: [action: TaskRecoveryAction, taskId: string]; changed: [] }>();
 const selected = ref('');
-const learning = ref<{ refresh?: () => Promise<void> }>();
 const supplementDialog = ref<InstanceType<typeof TaskSupplementDialog>>();
 const supplementContext = shallowRef<TaskSupplementContext | null>(null);
 const { data, error, load } = useTaskSection<{ task?: TaskRecoveryTarget; context: string; error: string; followup?: FollowupRun; interruption?: TaskInterruption; humanNotice?: HumanNotice }>(
@@ -84,7 +82,7 @@ const followupWindow = computed(() => {
     totalSeconds: Math.round(totalMs / 1000),
   };
 });
-defineExpose({ refresh: async () => { await Promise.all([load(), learning.value?.refresh?.(), loadSupplementSummary()]); } });
+defineExpose({ refresh: async () => { await Promise.all([load(), loadSupplementSummary()]); } });
 const actionNames: Record<string, string> = { repair: '委托站点修复',retry: '重试当前阶段', continue: '继续原会话', answer: '补充待输入内容', evaluate: '交接独立评测', wait: '等待执行', interrupt: '中断并说明原因' };
 </script>
 <template>
@@ -136,7 +134,6 @@ const actionNames: Record<string, string> = { repair: '委托站点修复',retry
     <section v-if="data.followup" class="panel settings-panel task-section-stack"><div class="section-heading"><h2>AI 跟进</h2><span class="text-muted small-text">{{ followupWindow?.windowed ? `本轮 ${followupWindow.currentAttempts} / ${followupWindow.maxAttempts} 次（累计 ${followupWindow.totalAttempts} 次）` : `${data.followup.attempts} / ${data.followup.policy.maxAttempts} 次` }}</span></div><p class="text-muted">{{ followupWindow?.windowed ? `本轮执行 ${followupWindow.windowSeconds} 秒 / ${data.followup.policy.maxMinutes} 分钟预算（累计 ${followupWindow.totalSeconds} 秒）` : `累计执行 ${followupWindow?.totalSeconds ?? 0} 秒 / ${data.followup.policy.maxMinutes} 分钟预算` }}</p><template v-if="data.followup.lastAction"><h3>{{ actionNames[data.followup.lastAction.action] }}</h3><p v-if="data.followup.lastAction.userSummary" class="task-prose"><strong>{{ data.followup.lastAction.userSummary.headline }}：</strong>{{ data.followup.lastAction.userSummary.explanation }}</p><p v-else class="task-prose">{{ data.followup.lastAction.reason }}</p></template><Disclosure label="跟进策略与诊断标识"><p class="text-muted small-text">跟进预算仅计 AI 跟进实际执行时间，生成与独立评测另行计时。</p><p v-if="data.followup.lastAction?.userSummary" class="task-prose"><strong>原始决策说明：</strong>{{ data.followup.lastAction.reason }}</p><pre class="task-technical">{{ data.followup.policy.sop }}</pre><p class="text-muted small-text">会话：{{ data.followup.threadId || '尚未建立' }}</p></Disclosure></section>
   </template>
   <ExecutionLog :task-id="taskId" :revision="updatedAt" @stage-change="selected = $event" />
-  <TaskLearning ref="learning" :task-id="taskId" mode="execution" :revision="updatedAt" @changed="emit('changed')" />
   <section v-if="data?.context" class="panel settings-panel"><Disclosure label="最近会话上下文"><pre class="task-technical">{{ data.context }}</pre></Disclosure></section>
   <TaskSupplementDialog
     v-if="recoveryTask"

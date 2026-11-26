@@ -447,7 +447,6 @@ test('standalone evaluation task shows adapted evaluation workflow without gener
     assert.equal(body.nodes.find((n) => n.id === 'quality-gate'), undefined);
     assert.equal(body.nodes.find((n) => n.id === 'optimization'), undefined);
     assert.equal(body.nodes.find((n) => n.id === 'delivery'), undefined);
-    assert.equal(body.nodes.find((n) => n.id === 'learning'), undefined);
     assert.equal(body.edges.length, 0);
     assert.ok(body.blocker);
     assert.equal(body.blocker!.severity, 'warning');
@@ -544,20 +543,18 @@ test('multi-hop manual re-evaluation walks ancestry back to generation and omits
     assert.equal(body.nodes.find((n) => n.id === 'quality-gate'), undefined);
     assert.equal(body.nodes.find((n) => n.id === 'optimization'), undefined);
     assert.equal(body.nodes.find((n) => n.id === 'delivery'), undefined);
-    assert.equal(body.nodes.find((n) => n.id === 'learning'), undefined);
   } finally {
     await f.close();
   }
 });
 
-test('workflow graph omits evaluation/quality-gate/optimization/learning when disabled and reflects HTTP-only direct delivery', async () => {
+test('workflow graph omits evaluation/quality-gate/optimization when disabled and reflects HTTP-only direct delivery', async () => {
   const f = await fixture({ deliveryEnabled: true });
   try {
     f.vault.updateAutomation({
       ...defaultAutomationSettings,
       enabled: true,
       autoEvaluate: false,
-      learning: { ...defaultAutomationSettings.learning!, collect: false, use: false },
     });
     const res = await f.saveResource();
     const version = f.automationStore.versions(res.id)[0];
@@ -619,7 +616,6 @@ test('workflow graph omits evaluation/quality-gate/optimization/learning when di
     assert.equal(body.nodes.find((n) => n.id === 'evaluation'), undefined);
     assert.equal(body.nodes.find((n) => n.id === 'quality-gate'), undefined);
     assert.equal(body.nodes.find((n) => n.id === 'optimization'), undefined);
-    assert.equal(body.nodes.find((n) => n.id === 'learning'), undefined);
     const prepNode = body.nodes.find((n) => n.id === 'prepare');
     assert.ok(prepNode?.checks?.some((c) => c.id === 'prepare-manifest' && c.label === '锁定交付清单与上下文'));
     const genNode = body.nodes.find((n) => n.id === 'generation');
@@ -636,14 +632,13 @@ test('workflow graph omits evaluation/quality-gate/optimization/learning when di
   }
 });
 
-test('generate-only task without evaluation/delivery/learning shows compact 2-node graph and omits learning copy', async () => {
+test('generate-only task without evaluation/delivery shows compact 2-node graph', async () => {
   const f = await fixture({ deliveryEnabled: false });
   try {
     f.vault.updateAutomation({
       ...defaultAutomationSettings,
       enabled: true,
       autoEvaluate: false,
-      learning: { ...defaultAutomationSettings.learning!, collect: false, use: false },
     });
     const res = await f.saveResource();
     const version = f.automationStore.versions(res.id)[0];
@@ -702,14 +697,13 @@ test('generate-only task without evaluation/delivery/learning shows compact 2-no
   }
 });
 
-test('generate-only task omits learning even when global learning.collect is true until manual evaluation appears', async () => {
+test('generate-only task omits evaluation until manual evaluation appears', async () => {
   const f = await fixture();
   try {
     f.vault.updateAutomation({
       ...defaultAutomationSettings,
       enabled: true,
       autoEvaluate: false,
-      learning: { ...defaultAutomationSettings.learning!, collect: true, use: false },
     });
     const res = await f.saveResource();
     const version = f.automationStore.versions(res.id)[0];
@@ -746,7 +740,6 @@ test('generate-only task omits learning even when global learning.collect is tru
 
     const beforeEval = await f.fetchWorkflow(gen.id);
     assert.deepEqual(beforeEval.body.nodes.map((n) => n.id), ['prepare', 'generation']);
-    assert.equal(beforeEval.body.nodes.find((n) => n.id === 'learning'), undefined);
 
     const manualEval = f.automationStore.create(
       {
@@ -773,7 +766,6 @@ test('generate-only task omits learning even when global learning.collect is tru
       afterEval.body.nodes.filter((n) => n.lane === 'main').map((n) => n.id),
       ['prepare', 'generation', 'evaluation'],
     );
-    assert.ok(afterEval.body.nodes.some((n) => n.id === 'learning'));
   } finally {
     await f.close();
   }

@@ -8,7 +8,11 @@ import {
   type MaterialFile,
   type RequiredKoobooSandboxCapability,
 } from '../../shared/automation.js';
-import { buildSiteUiHardRulesPrompt } from './site-ui-rules.js';
+import {
+  buildSiteUiHardRulesPrompt,
+  buildClonedContentImageGuidance,
+  resolveClonedContentImageSource,
+} from './site-ui-rules.js';
 import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { Pending, GenerationInputError, FollowupRuntimeError } from './errors.js';
@@ -27,7 +31,6 @@ import { readMaterial } from './materials.js';
 import { mergeTaskMaterials, resolveTaskMaterialEntry, syncMaterialManifestToSite, uploadMaterialsToKoobooSite } from './kooboo-materials.js';
 import { generationSession, matchingGenerationOutcome } from './generation-session.js';
 import { ensureManifest, ManifestStore } from './completeness.js';
-import { selectExperience, adoptedGuidance } from './experience.js';
 import { optimizationBudgetReason } from './optimization.js';
 import { ModelBudgetExceeded } from './request-budget.js';
 import { ensureSourceCollection } from './collection/orchestrator.js';
@@ -300,21 +303,23 @@ function buildTemplateExecutionGuidance(task:AutomationTask,input:InputVersion,t
   const ref=task.generation?.referenceTemplate;
   if(!ref)return undefined;
   if(ref.mode==='direct-template'){
+    const clonedSource=resolveClonedContentImageSource(task,input);
+    const hasClonedSourceSandbox=clonedSource?.kind==='source-sandbox';
     const facts={
       mode:ref.mode,
       templateId:ref.templateId,
       templateName:ref.templateName,
       previewUrl:ref.previewUrl,
       targetSiteId,
-      ...(task.generation?.sourceSandbox?{sourceSandbox:task.generation.sourceSandbox}:{}),
+      ...(hasClonedSourceSandbox?{sourceSandbox:task.generation!.sourceSandbox}:{}),
     };
     return [
       'Kooboo 原生模板原位适配执行说明（宿主已准备完成，不要重新建站或使用 transfer_page）：',
       JSON.stringify(facts),
       '1. 目标站已直接从该 Kooboo 模板创建。先按 kooboo-site-redesign 的 references/template-adaptation.md 检查目标站现有 Page / Layout / View / ContentType / Content / File / Menu / Style / Script，在原位适配替换，不从零重写全站模板。',
       '2. 强制零残留：完成改造后必须检查并清除所有模板原品牌名（含 '+ref.templateName+'）、演示文案、演示图片/占位图及多余示例页面或导航链接。',
-      ...(task.generation?.sourceSandbox
-        ?[`3. 旧站角色对调（只读源站 Sandbox）：旧内容站 ${input.contentUrl} 已克隆到只读源站 Sandbox「${task.generation.sourceSandbox.sandbox}」（siteId：${task.generation.sourceSandbox.siteId}）。请仅从该源站 Sandbox 读取旧站事实/路由/正文/动态数据/图片素材并映射到原生模板结构中，严禁把旧站整套 HTML/CSS 模板覆写进目标站。`]
+      ...(hasClonedSourceSandbox
+        ?[`3. 旧站角色对调（只读源站 Sandbox）：旧内容站 ${clonedSource.contentUrl} 已成功克隆到只读源站 Sandbox「${clonedSource.sandbox}」（siteId：${clonedSource.siteId}）。请从该源站 Sandbox 读取旧站事实/路由/正文/动态数据，并优先盘点复用其中的原内容站真实图片素材迁移至目标站替换模板演示图（仅在原站确无可用图片时再用随附资料图或 imagePlaceholder 兜底），严禁把旧站整套 HTML/CSS 模板覆写进目标站。`]
         :[]),
     ].join('\n');
   }
@@ -819,7 +824,6 @@ export async function executeGeneration(
   task.generation.prepared=true;store.put(task);
   if((!task.generation.deliveryId||task.generation.next)&&!task.generation.legacySubmitted&&(task.generation.deliveryState!=='completed'||task.generation.next)){
     if(!task.templateWorkflow)await ensureManifest(task,store,vault,directory,signal);
-    await selectExperience(task,'generation',store,vault,directory,signal);
   }
   // A finished chat loop may have produced no page. An explicit, validated
   // continuation must reach the pinned conversation even after that receipt.
@@ -856,7 +860,8 @@ export async function executeGeneration(
       const isContinuation=!initial||Boolean(task.parentId||task.repairEvidence||task.optimizationRound);
       const templateMode=templateRef?.mode??effectiveTemplateUsageMode(input,Boolean(task.parentId));
       const siteUiGuidance=buildSiteUiHardRulesPrompt({scenario:task.scenario,scope:task.scope,templateMode,isContinuation});
-      const combinedGuidance=[siteUiGuidance,adoptedGuidance(task,store,'generation',vault).trim(),collectionGuidance.trim(),acceptedAssetGuidance.trim()].filter(Boolean).join('\n\n');
+      const clonedContentImageGuidance=buildClonedContentImageGuidance(task,input,{isContinuation});
+      const combinedGuidance=[siteUiGuidance,clonedContentImageGuidance,collectionGuidance.trim(),acceptedAssetGuidance.trim()].filter(Boolean).join('\n\n');
       const prepared=action?.action==='answer'?undefined:await prepareGenerationContext(task,store,request,site.siteId,{
         instructions:action?.action==='continue'&&action.message!==task.message
           ?task.message+'\n\n本轮已核对的跟进要求：\n'+action.message:task.message,
@@ -866,7 +871,7 @@ export async function executeGeneration(
         materials,
         ...(referenceImages?{referenceImages}:{}),
         ...(task.scenario==='site-template'?{sourceEvidence:task.templateWorkflow?templateGenerationSources(task,store,directory):generationSourceEvidence(manifest,store,directory)}:{}),
-      },Boolean(vault.automation().learning?.use),{isInitialDelivery:initial});
+      },{isInitialDelivery:initial});
       assertGenerationInput(prepared?.text,undefined,action?.action==='answer'?action.answer:undefined);
       if(prepared){store.event(task.id,`生成委托资料：${prepared.mode}；最终文本 ${Buffer.byteLength(prepared.text)} bytes，媒体库图片 ${referenceImages?.entries.length||0} 张；平台原件 ${prepared.packageId}`);}
       const id=randomUUID(),conversationId=task.generation.conversationId||state.conversationId;

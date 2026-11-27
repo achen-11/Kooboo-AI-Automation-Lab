@@ -648,3 +648,129 @@ test('site deliveries requirePassed matches queueDelivery frozen threshold and i
     await f.close();
   }
 });
+
+test('site deliveries project forceEligible without loosening deliverableCount and update interrupted state after forced delivery completes', async () => {
+  const f = await fixture();
+  try {
+    const strictEnvId = randomUUID();
+    const plainEnvId = randomUUID();
+    f.vault.update({
+      threshold: 80,
+      paused: true,
+      model: { endpoint: 'https://model.test/v1', name: 'deepseek-flash-1017', apiKey: 'model-key' },
+      environments: [
+        {
+          id: strictEnvId,
+          name: 'StrictHK',
+          origin: 'https://strict-hk.test',
+          apiOrigin: 'https://strict-hk.test',
+          token: 'hk-tok',
+          delivery: { ...defaultDeliveryPolicy, enabled: true, auto: false, requirePassed: true, token: 'deliv-tok' },
+        },
+        {
+          id: plainEnvId,
+          name: 'PlainDE',
+          origin: 'https://plain-de.test',
+          apiOrigin: 'https://plain-de.test',
+          token: 'de-tok',
+        },
+      ],
+    });
+
+    // 1. Interrupted generation with accessible site URL -> eligible=false, forceEligible=true
+    const resInt = f.store.saveResource({ name: 'InterruptedWithUrl', scenario: 'upgrade', description: '', contentUrl: 'https://src.test', referenceUrl: '', files: [], externalSource: '', externalId: '' });
+    const siteInt = { id: randomUUID(), resourceId: resInt.id, versionId: f.store.versions(resInt.id)[0].id, environmentId: strictEnvId, siteId: randomUUID(), name: 'int_site', url: 'https://int-site.test/', createdAt: 10 };
+    f.store.saveSite(siteInt);
+    const genInt = f.store.create({ resourceIds: [resInt.id], generatedSiteId: siteInt.id, kind: 'generation', scope: 'homepage', environmentId: strictEnvId, requirements: '' }, f.settings)[0];
+    f.store.beginSiteChange(genInt);
+    genInt.status = 'interrupted';
+    genInt.stopped = true;
+    genInt.error = '生成收尾中断';
+    f.store.put(genInt);
+
+    // 2. Interrupted generation WITHOUT site URL -> forceEligible not set
+    const resNoUrl = f.store.saveResource({ name: 'InterruptedNoUrl', scenario: 'upgrade', description: '', contentUrl: 'https://src.test', referenceUrl: '', files: [], externalSource: '', externalId: '' });
+    const siteNoUrl = { id: randomUUID(), resourceId: resNoUrl.id, versionId: f.store.versions(resNoUrl.id)[0].id, environmentId: strictEnvId, siteId: randomUUID(), name: 'no_url_site', url: '', createdAt: 11 };
+    f.store.saveSite(siteNoUrl);
+    const genNoUrl = f.store.create({ resourceIds: [resNoUrl.id], generatedSiteId: siteNoUrl.id, kind: 'generation', scope: 'homepage', environmentId: strictEnvId, requirements: '' }, f.settings)[0];
+    genNoUrl.status = 'interrupted';
+    genNoUrl.stopped = true;
+    f.store.put(genNoUrl);
+
+    // 3. Interrupted generation in unsupported env -> forceEligible not set
+    const resPlain = f.store.saveResource({ name: 'InterruptedPlainEnv', scenario: 'upgrade', description: '', contentUrl: 'https://src.test', referenceUrl: '', files: [], externalSource: '', externalId: '' });
+    const sitePlain = { id: randomUUID(), resourceId: resPlain.id, versionId: f.store.versions(resPlain.id)[0].id, environmentId: plainEnvId, siteId: randomUUID(), name: 'plain_site', url: 'https://plain-site.test/', createdAt: 12 };
+    f.store.saveSite(sitePlain);
+    const genPlain = f.store.create({ resourceIds: [resPlain.id], generatedSiteId: sitePlain.id, kind: 'generation', scope: 'homepage', environmentId: plainEnvId, requirements: '' }, f.settings)[0];
+    genPlain.status = 'interrupted';
+    genPlain.stopped = true;
+    f.store.put(genPlain);
+
+    // 4. Completed generation + failed evaluation on strict requirePassed -> eligible=false (require-passed), forceEligible=true
+    const resLow = f.store.saveResource({ name: 'LowScoreStrict', scenario: 'materials', description: '', contentUrl: '', referenceUrl: '', files: [], externalSource: '', externalId: '' });
+    const siteLow = { id: randomUUID(), resourceId: resLow.id, versionId: f.store.versions(resLow.id)[0].id, environmentId: strictEnvId, siteId: randomUUID(), name: 'low_site', url: 'https://low-site.test/', createdAt: 13 };
+    f.store.saveSite(siteLow);
+    const genLow = f.store.create({ resourceIds: [resLow.id], generatedSiteId: siteLow.id, kind: 'generation', scope: 'homepage', environmentId: strictEnvId, requirements: '' }, f.settings)[0];
+    f.store.beginSiteChange(genLow);
+    genLow.status = 'completed';
+    genLow.stopped = true;
+    f.store.put(genLow);
+    const evalLow = f.store.ensureEvaluation(genLow, f.settings);
+    evalLow.status = 'completed';
+    evalLow.stopped = true;
+    evalLow.report = {
+      summary: 'Score 60',
+      quality: 'failed',
+      scores: [{ viewport: 'desktop', value: 60 }, { viewport: 'mobile', value: 60 }],
+      assessments: [],
+      issues: [{ severity: 'major', title: 'Issue', detail: 'Detail', evidence: [] }],
+      coverage: { verified: ['首页'], unverified: [], outOfScope: [] },
+      artifacts: [],
+    };
+    f.store.publishSiteReport(evalLow);
+    f.store.put(evalLow);
+
+    const listRes = (await f.app.inject({ url: '/api/automation/site-deliveries?disposition=active&pageSize=50', headers: f.headers })).json();
+    const byName = (name: string) => listRes.items.find((item: any) => item.resourceName === name);
+
+    assert.equal(listRes.deliverableCount, 0);
+    assert.deepEqual(byName('InterruptedWithUrl').deliveryAction, {
+      eligible: false,
+      code: 'not-ready',
+      reason: '请先完成站点生成后再发起交付',
+      forceEligible: true,
+      forceTaskId: genInt.id,
+    });
+    assert.equal(byName('InterruptedNoUrl').deliveryAction.forceEligible, undefined);
+    assert.equal(byName('InterruptedPlainEnv').deliveryAction.code, 'unsupported-env');
+    assert.equal(byName('InterruptedPlainEnv').deliveryAction.forceEligible, undefined);
+    assert.deepEqual(byName('LowScoreStrict').deliveryAction, {
+      eligible: false,
+      code: 'require-passed',
+      reason: '当前交付策略要求源站评测通过',
+      forceEligible: true,
+      forceTaskId: evalLow.id,
+    });
+
+    // Simulate completed forced delivery on interrupted generation -> transitions from attention to generated
+    const forceRes = await f.app.inject({
+      method: 'POST',
+      url: `/api/automation/tasks/${genInt.id}/delivery`,
+      headers: f.headers,
+      payload: { force: true },
+    });
+    assert.equal(forceRes.statusCode, 200);
+    const updatedGen = f.store.task(genInt.id)!;
+    updatedGen.delivery!.status = 'completed';
+    updatedGen.delivery!.target = { siteId: randomUUID(), siteUrl: 'https://target-int.test/' };
+    updatedGen.delivery!.verifiedAt = Date.now();
+    f.store.put(updatedGen);
+
+    const afterRow = siteDeliveries(f.store, 80, siteInt.id, f.vault.get())[0];
+    assert.equal(afterRow.state, 'generated');
+    assert.equal(afterRow.recovery, undefined);
+    assert.match(afterRow.reason, /人工初步验收并强制完成跨环境交付/);
+  } finally {
+    await f.close();
+  }
+});

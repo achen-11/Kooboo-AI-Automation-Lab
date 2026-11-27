@@ -1715,3 +1715,195 @@ test('shouldAutoDeliver supports homepage tasks with autoDelivery=undefined when
     await f.close();
   }
 });
+
+test('force delivery supports interrupted generation/evaluation and requirePassed failures while preserving hard safety guards and force-retry', async () => {
+  const f = await fixture();
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(env =>
+        env.id === f.envId
+          ? { ...env, delivery: { ...env.delivery!, enabled: true, auto: false, requirePassed: true, token: 'secret-migrate-token' } }
+          : env,
+      ),
+    });
+
+    // Case 1: Interrupted generation with accessible URL
+    const site1 = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'ForceIntGen', url: 'https://force-int-gen.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(site1);
+    const gen1 = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: site1.id, requirements: '' }, f.vault.automation())[0];
+    f.automationStore.beginSiteChange(gen1);
+    gen1.status = 'interrupted';
+    gen1.stopped = true;
+    gen1.error = '模型流中断';
+    f.automationStore.put(gen1);
+
+    const sum1 = (await f.app.inject({ url: `/api/automation/tasks/${gen1.id}/summary`, headers: f.headers })).json();
+    assert.equal(sum1.deliveryEnabled, true);
+    assert.equal(sum1.canForceDeliver, true);
+    assert.equal(sum1.forceDeliverTaskId, gen1.id);
+
+    const sec1 = (await f.app.inject({ url: `/api/automation/tasks/${gen1.id}/sections/delivery`, headers: f.headers })).json();
+    assert.equal(sec1.canDeliver, false);
+    assert.equal(sec1.canForceDeliver, true);
+
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${gen1.id}/delivery`, headers: f.headers })).statusCode, 409);
+    const forcedGenRes = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${gen1.id}/delivery`, headers: f.headers, payload: { force: true } });
+    assert.equal(forcedGenRes.statusCode, 200);
+    const forcedGen = f.automationStore.task(gen1.id)!;
+    assert.equal(forcedGen.delivery?.status, 'queued');
+    assert.equal(forcedGen.delivery?.forced, true);
+    assert.equal(forcedGen.siteRevision, f.automationStore.siteState(site1.id)?.revision);
+    assert.ok(f.automationStore.events(gen1.id).some(e => /人工初步验收并强制排队跨环境交付/.test(e.message)));
+
+    // Uncertain delivery -> normal retry blocked (409), force retry allowed (200)
+    forcedGen.delivery!.status = 'uncertain';
+    forcedGen.delivery!.attemptedAt = Date.now();
+    forcedGen.delivery!.stopped = true;
+    forcedGen.delivery!.error = 'fetch failed';
+    f.automationStore.put(forcedGen);
+
+    const secUncertain = (await f.app.inject({ url: `/api/automation/tasks/${gen1.id}/sections/delivery`, headers: f.headers })).json();
+    assert.equal(secUncertain.canForceRetry, true);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${gen1.id}/delivery/retry`, headers: f.headers })).statusCode, 409);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${gen1.id}/delivery/retry`, headers: f.headers, payload: { force: true } })).statusCode, 200);
+    const retried = f.automationStore.task(gen1.id)!;
+    assert.equal(retried.delivery?.status, 'queued');
+    assert.equal(retried.delivery?.attemptedAt, undefined);
+    assert.equal(retried.delivery?.forced, true);
+
+    // If target exists or stopped=false, force retry MUST return 409
+    retried.delivery!.status = 'failed';
+    retried.delivery!.target = { siteId: randomUUID(), siteUrl: 'https://target-already.test/' };
+    f.automationStore.put(retried);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${gen1.id}/delivery/retry`, headers: f.headers, payload: { force: true } })).statusCode, 409);
+
+    // Case 2: Completed generation + interrupted evaluation
+    const site2 = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'CompGenIntEval', url: 'https://comp-gen-int-eval.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(site2);
+    const gen2 = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: site2.id, requirements: '' }, f.vault.automation())[0];
+    f.automationStore.beginSiteChange(gen2);
+    gen2.status = 'completed';
+    gen2.stopped = true;
+    f.automationStore.put(gen2);
+    const eval2 = f.automationStore.ensureEvaluation(gen2, f.vault.automation());
+    eval2.status = 'interrupted';
+    eval2.stopped = true;
+    eval2.error = 'stream disconnected';
+    f.automationStore.put(eval2);
+
+    // /sections/delivery on gen2 selects completed gen2 (not interrupted reportless eval2)
+    const sec2 = (await f.app.inject({ url: `/api/automation/tasks/${gen2.id}/sections/delivery`, headers: f.headers })).json();
+    assert.equal(sec2.task.id, gen2.id);
+    assert.equal(sec2.canDeliver, true);
+
+    // Force delivery on interrupted eval2 also works
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${eval2.id}/delivery`, headers: f.headers })).statusCode, 409);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${eval2.id}/delivery`, headers: f.headers, payload: { force: true } })).statusCode, 200);
+
+    // Case 3: Hard safety guards remain enforced even with force=true
+    const siteNoUrl = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'NoUrlForce', url: '', createdAt: Date.now() };
+    f.automationStore.saveSite(siteNoUrl);
+    const genNoUrl = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: siteNoUrl.id, requirements: '' }, f.vault.automation())[0];
+    genNoUrl.status = 'interrupted'; genNoUrl.stopped = true; f.automationStore.put(genNoUrl);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${genNoUrl.id}/delivery`, headers: f.headers, payload: { force: true } })).statusCode, 409);
+
+    const siteArchived = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'ArchivedForce', url: 'https://archived-force.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(siteArchived);
+    const genArch = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: siteArchived.id, requirements: '' }, f.vault.automation())[0];
+    genArch.status = 'interrupted'; genArch.stopped = true; f.automationStore.put(genArch);
+    f.automationStore.dispositions.set('delivery', [siteArchived.id], 'discarded', '');
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${genArch.id}/delivery`, headers: f.headers, payload: { force: true } })).statusCode, 409);
+
+    const siteSiblingBusy = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'BusySiblingForce', url: 'https://busy-sibling.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(siteSiblingBusy);
+    const genBusy1 = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: siteSiblingBusy.id, requirements: '' }, f.vault.automation())[0];
+    genBusy1.status = 'interrupted'; genBusy1.stopped = true; f.automationStore.put(genBusy1);
+    const evalBusy = f.automationStore.ensureEvaluation(genBusy1, f.vault.automation());
+    evalBusy.status = 'running'; evalBusy.stopped = false; f.automationStore.put(evalBusy);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${genBusy1.id}/delivery`, headers: f.headers, payload: { force: true } })).statusCode, 409);
+
+    const sitePlain = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.plainEnvId, siteId: randomUUID(), name: 'PlainForce', url: 'https://plain-force.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(sitePlain);
+    const genPlain = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.plainEnvId, generatedSiteId: sitePlain.id, requirements: '' }, f.vault.automation())[0];
+    genPlain.status = 'interrupted'; genPlain.stopped = true; f.automationStore.put(genPlain);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${genPlain.id}/delivery`, headers: f.headers, payload: { force: true } })).statusCode, 409);
+
+    // Crash-recovered uncertain delivery WITHOUT attemptedAt must still expose canForceRetry and succeed on force retry
+    const siteCrashed = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'CrashUncertain', url: 'https://crash-uncertain.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(siteCrashed);
+    const genCrashed = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: siteCrashed.id, requirements: '' }, f.vault.automation())[0];
+    genCrashed.status = 'interrupted';
+    genCrashed.stopped = true;
+    genCrashed.delivery = {
+      id: randomUUID(),
+      policy: { ...defaultDeliveryPolicy, enabled: true, verifyWithAi: false },
+      status: 'running',
+      forced: true,
+      stopped: false,
+      sourceEnvironmentId: f.envId,
+      sourceSiteId: siteCrashed.siteId,
+      sourceUrl: siteCrashed.url,
+      evaluationTaskId: '',
+      updatedAt: Date.now(),
+      error: '',
+      checks: [],
+    };
+    f.automationStore.put(genCrashed);
+    f.automationStore.recover();
+    const crashedSec = (await f.app.inject({ url: `/api/automation/tasks/${genCrashed.id}/sections/delivery`, headers: f.headers })).json();
+    assert.equal(crashedSec.task.delivery.status, 'uncertain');
+    assert.equal(crashedSec.task.delivery.attemptedAt, undefined);
+    assert.equal(crashedSec.canForceRetry, true);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${genCrashed.id}/delivery/retry`, headers: f.headers, payload: { force: true } })).statusCode, 200);
+    assert.equal(f.automationStore.task(genCrashed.id)!.delivery?.status, 'queued');
+
+    // Case 4: Force retry and worker pickup MUST block when owning task itself is unconfirmed-stopped or active
+    const siteUnstopped = { id: randomUUID(), resourceId: f.resource.id, versionId: f.automationStore.versions(f.resource.id)[0].id, environmentId: f.envId, siteId: randomUUID(), name: 'UnstoppedOwn', url: 'https://unstopped-own.test/', createdAt: Date.now() };
+    f.automationStore.saveSite(siteUnstopped);
+    const genUnstopped = f.automationStore.create({ resourceIds: [f.resource.id], kind: 'generation', scope: 'homepage', environmentId: f.envId, generatedSiteId: siteUnstopped.id, requirements: '' }, f.vault.automation())[0];
+    genUnstopped.status = 'interrupted';
+    genUnstopped.stopped = false;
+    genUnstopped.delivery = {
+      id: randomUUID(),
+      policy: { ...defaultDeliveryPolicy, enabled: true, verifyWithAi: false },
+      status: 'uncertain',
+      forced: true,
+      stopped: true,
+      sourceEnvironmentId: f.envId,
+      sourceSiteId: siteUnstopped.siteId,
+      sourceUrl: siteUnstopped.url,
+      evaluationTaskId: '',
+      attemptedAt: Date.now(),
+      updatedAt: Date.now(),
+      error: 'fetch failed',
+      checks: [],
+    };
+    f.automationStore.put(genUnstopped);
+    const secUnstopped = (await f.app.inject({ url: `/api/automation/tasks/${genUnstopped.id}/sections/delivery`, headers: f.headers })).json();
+    assert.equal(secUnstopped.canForceRetry, false);
+    assert.equal((await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${genUnstopped.id}/delivery/retry`, headers: f.headers, payload: { force: true } })).statusCode, 409);
+
+    genUnstopped.delivery.status = 'queued';
+    delete genUnstopped.delivery.attemptedAt;
+    f.automationStore.put(genUnstopped);
+    f.vault.updateAutomation({ ...defaultAutomationSettings, enabled: true });
+    const worker = new AutomationWorker(
+      f.automationStore,
+      f.vault,
+      f.directory,
+      { generation: async () => {}, evaluation: async () => {} },
+      () => true,
+    );
+    try {
+      await worker.tick();
+      await new Promise(r => setTimeout(r, 30));
+      assert.equal(f.automationStore.task(genUnstopped.id)!.delivery?.status, 'queued');
+    } finally {
+      await worker.stop();
+    }
+  } finally {
+    await f.close();
+  }
+});

@@ -480,5 +480,77 @@ test('general upgrade generation task hitting 413 can handoff to a clean same-si
     assert.equal(saved.followup!.threadId,'');
     assert.equal(createCalls,1);
     assert.equal(conversations.length,2);
+
+    // Non-template optimization task (both root and child) restores optimization state on handoff
+    const site2={id:randomUUID(),resourceId:f.resource.id,versionId:f.automationStore.versions(f.resource.id)[0].id,environmentId:f.env,siteId:randomUUID(),name:'OptSite',url:'https://opt-site.test',createdAt:Date.now()};
+    f.automationStore.saveSite(site2);
+    const optRoot=f.automationStore.create({resourceIds:[f.resource.id],kind:'generation',scope:'homepage',environmentId:f.env,generatedSiteId:site2.id,requirements:''},defaultAutomationSettings)[0];
+    optRoot.scenario='upgrade';optRoot.status='interrupted';optRoot.stopped=true;
+    optRoot.error='model stream failed';
+    optRoot.generation={prepared:true,conversationId:old,state:'failed',runId:'opt-root-run'};
+    optRoot.optimization={
+      policy:{targetScore:85,maxRounds:3,maxCostCny:null,sop:'opt'},
+      state:'stopped',
+      rounds:[{number:0,revision:'rev-0',generationTaskId:optRoot.id,startedAt:Date.now()}],
+      activeTaskId:optRoot.id,
+      currentRevision:'rev-0',
+      reportId:null,
+      noImprovement:0,
+      reason:'中断',
+      nextSteps:[],
+      stoppedAt:Date.now(),
+      recoveryPolicy:defaultAutomationSettings.followup,
+      threshold:85,
+    };
+    f.automationStore.put(optRoot);
+    const rootHandoff=await f.app.inject({method:'POST',url:`/api/automation/tasks/${optRoot.id}/generation-context/handoff`,headers:f.headers});
+    assert.equal(rootHandoff.statusCode,200,rootHandoff.body);
+    const savedRoot=f.automationStore.task(optRoot.id)!;
+    assert.equal(savedRoot.optimization!.state,'waiting-evaluation');
+    assert.equal(savedRoot.optimization!.stoppedAt,undefined);
+
+    // Repair child handoff restores root optimization to repairing
+    savedRoot.status='completed';
+    savedRoot.optimization!.state='stopped';
+    savedRoot.optimization!.stoppedAt=Date.now();
+    f.automationStore.put(savedRoot,true);
+    const child=f.automationStore.create({resourceIds:[f.resource.id],kind:'generation',scope:'homepage',environmentId:f.env,generatedSiteId:site2.id,optimizationRootId:optRoot.id,optimizationRound:1,requirements:'fix'},f.vault.automation())[0];
+    child.scenario='upgrade';child.status='interrupted';child.stopped=true;child.error='model failed';
+    child.generation={prepared:true,conversationId:old,state:'failed',runId:'child-run'};
+    f.automationStore.put(child);
+    const childHandoff=await f.app.inject({method:'POST',url:`/api/automation/tasks/${child.id}/generation-context/handoff`,headers:f.headers});
+    assert.equal(childHandoff.statusCode,200,childHandoff.body);
+    const savedRootAfterChild=f.automationStore.task(optRoot.id)!;
+    assert.equal(savedRootAfterChild.optimization!.state,'repairing');
+    assert.equal(savedRootAfterChild.optimization!.activeTaskId,child.id);
+    assert.equal(savedRootAfterChild.optimization!.stoppedAt,undefined);
+
+    // Concurrent forced delivery during handoff async Kooboo call must not be wiped by stale handoff write
+    const site3={id:randomUUID(),resourceId:f.resource.id,versionId:f.automationStore.versions(f.resource.id)[0].id,environmentId:f.env,siteId:randomUUID(),name:'RaceSite',url:'https://race-site.test',createdAt:Date.now()};
+    f.automationStore.saveSite(site3);
+    const raceTask=f.create('generation');raceTask.generatedSiteId=site3.id;raceTask.scenario='upgrade';raceTask.status='interrupted';raceTask.stopped=true;
+    raceTask.error='model stream failed';
+    raceTask.generation={prepared:true,conversationId:old,state:'failed',runId:'race-run'};
+    f.automationStore.put(raceTask);
+    let releaseCreate!:()=>void;
+    const createStarted=new Promise<void>(resolve=>{
+      const origEmit=server.listeners('request')[0] as (req:any,res:any)=>void;
+      server.removeAllListeners('request');
+      server.on('request',async(req:any,res:any)=>{
+        if(req.url?.startsWith('/_api/v2/AIConversation/Create')){
+          resolve();
+          await new Promise<void>(done=>{releaseCreate=done;});
+        }
+        return origEmit(req,res);
+      });
+    });
+    const handoffPromise=f.app.inject({method:'POST',url:`/api/automation/tasks/${raceTask.id}/generation-context/handoff`,headers:f.headers});
+    await createStarted;
+    const raceDeliveryRes=await f.app.inject({method:'POST',url:`/api/automation/tasks/${raceTask.id}/delivery`,headers:f.headers,payload:{force:true}});
+    assert.equal(raceDeliveryRes.statusCode,200,raceDeliveryRes.body);
+    releaseCreate();
+    const raceHandoffRes=await handoffPromise;
+    assert.equal(raceHandoffRes.statusCode,409,raceHandoffRes.body);
+    assert.equal(f.automationStore.task(raceTask.id)!.delivery?.status,'queued');
   }finally{await close(server);await f.close();}
 });

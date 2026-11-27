@@ -47,6 +47,8 @@ export type SiteDeliveryActionCode =
 export interface SiteDeliveryAction {
   eligible: boolean;
   taskId?: string;
+  forceEligible?: boolean;
+  forceTaskId?: string;
   code: SiteDeliveryActionCode;
   reason?: string;
 }

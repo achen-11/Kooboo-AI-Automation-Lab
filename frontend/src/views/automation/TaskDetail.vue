@@ -106,7 +106,31 @@ const optimizeDialog = ref<HTMLDialogElement>(), optimizeScore = ref(85), optimi
 const canEnableOptimization = computed(() => task.value?.kind === 'generation' && supportsAutomaticOptimization(task.value.scenario) && !task.value.optimization && task.value.status === 'completed' && evaluation.value?.status === 'completed' && canCreateRound.value);
 async function openOptimization() { more.value?.removeAttribute('open'); if (busy.value) return; busy.value = true; actionError.value = ''; try { const settings = await api<AutomationSettings>('/automation/settings'); optimizeScore.value = settings.optimization?.targetScore ?? 85; optimizeRounds.value = settings.optimization?.maxRounds ?? 3; optimizeCost.value = settings.optimization?.maxCostCny ?? ''; optimizeDialog.value?.showModal(); } catch (reason) { actionError.value = message(reason); } finally { busy.value = false; } }
 async function enableOptimization() { if (!task.value || busy.value) return; busy.value = true; actionError.value = ''; try { await api(`/automation/tasks/${task.value.id}/optimize`, { method: 'POST', body: JSON.stringify({ targetScore: optimizeScore.value, maxRounds: optimizeRounds.value, maxCostCny: optimizeCost.value === '' ? null : Number(optimizeCost.value) }) }); optimizeDialog.value?.close(); notify.success('已开启自动优化'); await load(); } catch (reason) { actionError.value = message(reason); } finally { busy.value = false; } }
-const followDialog = ref<HTMLDialogElement>(), more = ref<HTMLDetailsElement>();
+const followDialog = ref<HTMLDialogElement>(), forceDeliverDialog = ref<HTMLDialogElement>(), more = ref<HTMLDetailsElement>();
+const canForceDeliver = computed(() => !disposition.value && Boolean(data.value?.canForceDeliver && data.value?.forceDeliverTaskId));
+function openForceDeliver() {
+  more.value?.removeAttribute('open');
+  if (!canForceDeliver.value || busy.value) return;
+  actionError.value = '';
+  forceDeliverDialog.value?.showModal();
+}
+async function confirmForceDeliver() {
+  const targetId = data.value?.forceDeliverTaskId;
+  if (!targetId || busy.value) return;
+  busy.value = true;
+  actionError.value = '';
+  try {
+    await api(`/automation/tasks/${targetId}/delivery`, { method: 'POST', body: JSON.stringify({ force: true }) });
+    forceDeliverDialog.value?.close();
+    notify.success('已排队强制跨环境交付');
+    await load();
+    selectTab('delivery');
+  } catch (reason) {
+    actionError.value = message(reason);
+  } finally {
+    busy.value = false;
+  }
+}
 const diagnosticDialog = ref<InstanceType<typeof DiagnosticExportDialog>>();
 const execution = ref<InstanceType<typeof TaskExecution>>();
 const domainDialog = ref<InstanceType<typeof SiteDomainDialog>>();
@@ -335,11 +359,12 @@ onUnmounted(() => {
         <button v-if="canCompareLive" type="button" class="button secondary" @click="liveComparisonDialog?.open()"><Columns2 :size="16" />实时对比</button>
         <button v-if="disposition" class="button secondary" :disabled="busy" @click="openDisposition('active')"><RotateCcw :size="16" />移回在列</button>
         <TaskRecoveryActions v-if="!disposition || current?.stopped === false" :task="current" :busy="busy" :workflow-active="Boolean(workflowActive)" @action="action" />
+        <button v-if="canForceDeliver && ['interrupted', 'failed', 'cancelled'].includes(current?.status || '')" type="button" class="button secondary" :disabled="busy" @click="openForceDeliver"><Send :size="16" />强制交付</button>
         <button v-if="canSupplementCurrent && Boolean(current?.attention) && taskRecoveryAction(current) !== 'answer-pending-input'" type="button" class="button secondary" :disabled="busy" @click="supplementDialog?.open()"><Upload :size="16" />补充资料 / AI 收集</button>
         <button v-if="canContinue" class="button primary" :disabled="busy" @click="openContinuation"><LoaderCircle v-if="busy" class="spin" :size="16" /><Send v-else :size="16" />{{ task.scope === 'homepage' ? '补全全站' : '继续生成' }}</button>
         <button v-if="optimizationActive" class="button secondary" :disabled="busy||current?.status==='cancelling'" @click="action('optimization/stop',task.id)"><Ban :size="16" />停止优化</button>
         <button v-else-if="canCancel" class="button secondary" :disabled="busy || current?.status === 'cancelling'" @click="action('cancel')"><Ban :size="16" />{{ current?.status === 'cancelling' ? '正在停止' : '取消任务' }}</button>
-        <details ref="more" class="task-more"><summary class="button secondary"><MoreHorizontal :size="17" /><span>更多</span></summary><div class="task-action-menu"><a v-if="deliveredUrl && sourceUrl && sourceUrl !== deliveredUrl" :href="sourceUrl" target="_blank" rel="noopener noreferrer" @click="more?.removeAttribute('open')"><ExternalLink :size="15" />打开源站</a><button v-if="(report || templateWorkflow?.evaluation) && tab !== 'report'" @click="openTemplateReport"><FileText :size="15" />查看评测详情</button><template v-if="canCreateRound"><button v-if="canEnableOptimization" @click="openOptimization"><Play :size="15" />自动优化到目标</button><button v-if="!canContinue" @click="followup('generation')"><Send :size="15" />提交生成跟进</button><button :disabled="!task.siteUrl" @click="followup('evaluation')"><FileText :size="15" />{{ report || templateWorkflow?.evaluation ? '重新评测' : '发起评测' }}</button></template><button v-if="canArchiveComplete" @click="openDisposition('completed')"><Check :size="15" />标记为已完成</button><button v-if="canArchiveDiscard" @click="openDisposition('discarded')"><Trash2 :size="15" />舍弃此任务</button><button v-if="disposition" @click="openDisposition('active')"><RotateCcw :size="15" />移回在列</button><button v-if="task.generatedSiteId && !disposition" @click="openDomain"><Link :size="15" />换绑域名</button><button @click="openDiagnostic"><Download :size="15" />导出排障包</button></div></details>
+        <details ref="more" class="task-more"><summary class="button secondary"><MoreHorizontal :size="17" /><span>更多</span></summary><div class="task-action-menu"><a v-if="deliveredUrl && sourceUrl && sourceUrl !== deliveredUrl" :href="sourceUrl" target="_blank" rel="noopener noreferrer" @click="more?.removeAttribute('open')"><ExternalLink :size="15" />打开源站</a><button v-if="(report || templateWorkflow?.evaluation) && tab !== 'report'" @click="openTemplateReport"><FileText :size="15" />查看评测详情</button><button v-if="canForceDeliver" @click="openForceDeliver"><Send :size="15" />强制交付</button><template v-if="canCreateRound"><button v-if="canEnableOptimization" @click="openOptimization"><Play :size="15" />自动优化到目标</button><button v-if="!canContinue" @click="followup('generation')"><Send :size="15" />提交生成跟进</button><button :disabled="!task.siteUrl" @click="followup('evaluation')"><FileText :size="15" />{{ report || templateWorkflow?.evaluation ? '重新评测' : '发起评测' }}</button></template><button v-if="canArchiveComplete" @click="openDisposition('completed')"><Check :size="15" />标记为已完成</button><button v-if="canArchiveDiscard" @click="openDisposition('discarded')"><Trash2 :size="15" />舍弃此任务</button><button v-if="disposition" @click="openDisposition('active')"><RotateCcw :size="15" />移回在列</button><button v-if="task.generatedSiteId && !disposition" @click="openDomain"><Link :size="15" />换绑域名</button><button @click="openDiagnostic"><Download :size="15" />导出排障包</button></div></details>
       </div>
     </header>
     <DispositionDialog ref="dispositionDialog" @saved="onDispositionSaved" />
@@ -540,6 +565,7 @@ onUnmounted(() => {
     </div>
     <dialog ref="optimizeDialog" class="modal"><form @submit.prevent="enableOptimization"><div class="modal-head"><h2>开启自动优化</h2><button type="button" class="icon-button" :disabled="busy" aria-label="关闭" @click="optimizeDialog?.close()"><X :size="20" /></button></div><p class="text-muted">沿用当前站点、输入和规则；依据独立报告继续修复并复评。</p><div class="form-grid"><label class="field"><span>双端目标分数</span><input v-model.number="optimizeScore" class="input" type="number" min="1" max="100" required /></label><label class="field"><span>最多修复轮数</span><input v-model.number="optimizeRounds" class="input" type="number" min="1" max="10" required /></label><label class="field"><span>费用上限（元，可选）</span><input v-model.number="optimizeCost" class="input" type="number" min="0.0001" step="any" placeholder="不设置" /></label></div><p v-if="actionError" class="alert error">{{actionError}}</p><div class="modal-actions"><button type="button" class="button secondary" :disabled="busy" @click="optimizeDialog?.close()">取消</button><button class="button primary" :disabled="busy"><LoaderCircle v-if="busy" class="spin" :size="16" /><Play v-else :size="16" />开启优化</button></div></form></dialog>
     <dialog ref="followDialog" class="modal"><form @submit.prevent="submit"><div class="modal-head"><h2>{{ followKind === 'evaluation' ? '发起新一轮评测' : '提交生成跟进' }}</h2><button type="button" class="icon-button" aria-label="关闭" :disabled="busy" @click="followDialog?.close()"><X :size="20" /></button></div><p class="text-muted">在当前生成站创建新一轮任务，保留原任务及报告。</p><label class="field"><span>{{ followKind === 'evaluation' ? '评测要求' : '跟进消息' }}</span><textarea v-model="requirements" class="input" rows="6" required /></label><p v-if="actionError" class="alert error">{{ actionError }}</p><div class="modal-actions"><button type="button" class="button secondary" :disabled="busy" @click="followDialog?.close()">取消</button><button class="button primary" :disabled="busy"><LoaderCircle v-if="busy" class="spin" :size="16" /><Send v-else :size="16" />加入队列</button></div></form></dialog>
+    <dialog ref="forceDeliverDialog" class="modal" @cancel="!busy || $event.preventDefault()"><form @submit.prevent="confirmForceDeliver"><div class="modal-head"><h2>确认强制跨环境交付</h2><button type="button" class="icon-button" aria-label="关闭" :disabled="busy" @click="forceDeliverDialog?.close()"><X :size="20" /></button></div><p class="text-muted">当前任务尚未正常完成或未通过评测门禁，但生成站已有可访问地址。请确认已打开源站完成人工初步验收；强制交付会跳过完成态与评测门禁校验，直接将当前源站迁移到目标环境（源站保留不变）。</p><p v-if="actionError" class="alert error">{{ actionError }}</p><div class="modal-actions"><button type="button" class="button secondary" :disabled="busy" @click="forceDeliverDialog?.close()">取消</button><button class="button primary" :disabled="busy"><LoaderCircle v-if="busy" class="spin" :size="16" /><Send v-else :size="16" />确认强制交付</button></div></form></dialog>
   </template>
 </template>
 

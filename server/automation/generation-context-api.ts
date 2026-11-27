@@ -9,7 +9,12 @@ import { randomUUID } from 'node:crypto';
 import { retainStoppedFollowupReservations } from './budget-recovery.js';
 import { GenerationDeliveryStore, readDeliveryImage } from './generation-delivery.js';
 import { isConversationPayloadTooLarge } from '../../shared/task-presentation.js';
+import type { DeliveryRun } from '../../shared/automation.js';
 import { clearSiteRetry } from './retry-guard.js';
+
+function hasActiveDelivery(delivery?: Pick<DeliveryRun, 'status' | 'stopped'> | null): boolean {
+  return Boolean(delivery && (delivery.stopped === false || ['queued', 'running', 'verifying', 'uncertain'].includes(delivery.status)));
+}
 
 export function registerGenerationContextApi(app: FastifyInstance, store: AutomationStore, vault: Vault, owns: (id: string) => boolean, directory: string) {
   const params = z.object({ id: z.string().uuid() });
@@ -60,7 +65,8 @@ export function registerGenerationContextApi(app: FastifyInstance, store: Automa
     const payloadTooLarge=isConversationPayloadTooLarge(task.interruption?.reason,task.error,task.context);
     if(!['failed','interrupted'].includes(task.generation.state||'')&&!brokenPending&&!payloadTooLarge)throw new Conflict('缺少原会话失败终态，先核对执行状态');
     const site=store.site(task.generatedSiteId);
-    if(!site||store.headers().some(t=>t.id!==id&&t.generatedSiteId===task.generatedSiteId&&(!t.stopped||owns(t.id)||t.delivery?.stopped===false||['queued','following-up'].includes(t.status))))throw new Conflict('同站仍有活动执行，不能更换会话');
+    if(!site||hasActiveDelivery(task.delivery)||store.headers(task.generatedSiteId).some(t=>t.id!==id&&(!t.stopped||owns(t.id)||hasActiveDelivery(t.delivery)||['queued','following-up'].includes(t.status))))throw new Conflict('同站仍有活动执行，不能更换会话');
+    const hadTaskDelivery=Boolean(task.delivery);
     retainStoppedFollowupReservations(task,store,owns);
     handoffs.add(id);
     try{
@@ -70,30 +76,53 @@ export function registerGenerationContextApi(app: FastifyInstance, store: Automa
       if(!old)throw new Conflict('原会话不属于当前站点，禁止交接');
       const planned=task.generation.conversationHandoff;
       const handoff=planned&&planned.from===old.id?planned:{from:old.id,to:randomUUID()};
-      task.generation.conversationHandoff=handoff;store.put(task);
+      store.db.transaction(()=>{
+        const beforeCreate=store.task(id,false);
+        if(!beforeCreate||owns(id)||!beforeCreate.stopped||!['interrupted','failed','queued'].includes(beforeCreate.status)||beforeCreate.generatedSiteId!==task.generatedSiteId||!beforeCreate.generation||hasActiveDelivery(beforeCreate.delivery)||(beforeCreate.delivery&&!hadTaskDelivery)||store.headers(task.generatedSiteId!).some(t=>t.id!==id&&(!t.stopped||owns(t.id)||hasActiveDelivery(t.delivery)||['queued','following-up'].includes(t.status)))){
+          throw new Conflict('任务执行状态已变化，交接未发送');
+        }
+        beforeCreate.generation.conversationHandoff=handoff;
+        store.put(beforeCreate);
+      });
       if(!list.some((c:{id:string})=>c.id===handoff.to)){
         const title=(isRepairHandoff?'修复接续 · ':'新会话接续 · ')+task.resourceName;
         const receipt=await remote('AIConversation/Create',{id:handoff.to,path:old.path,title,modelSelection:old.modelSelection,workspaceId:old.workspaceId},site.siteId);
         if(receipt?.id!==handoff.to)throw new Conflict('新会话回执尚未确认；保留交接身份，禁止发送委托');
       }
-      const current=store.task(id)!;
-      if(owns(id)||!current.stopped||current.generatedSiteId!==task.generatedSiteId)throw new Conflict('任务执行状态已变化，交接未发送');
-      task.generation.conversationId=handoff.to;task.threadId=handoff.to;task.context='';
-      delete task.generation.deliveryId;delete task.generation.deliveryState;delete task.generation.runId;delete task.generation.pending;delete task.generation.repairBatch;
-      task.generation.state='unknown';
-      task.generation.next=isRepairHandoff
-        ?{action:'continue',reason:'保留原站与原会话记录，用独立干净会话接续修复',evidence:[],message:'这是同站修复交接。旧会话 '+handoff.from+' 保留供追溯；先读取当前真实实现，按本任务已有的独立报告和附件修复，保留完成内容与数据。'}
-        :{action:'continue',reason:'原生成会话已超载或无法继续，保留当前站点与资料并切换至干净新会话继续任务',evidence:[],message:'这是同站新会话交接。旧会话 '+handoff.from+' 保留供追溯；请先检查当前站点已有页面、样式与已导入资料（保留已完成内容，严禁重建站点），按原任务范围继续完成或收尾。视觉复核请控制单次截图读取数量，避免连续读取大量高清原图。'};
-      const root=store.root(task);
-      if(isRepairHandoff&&root?.optimization){root.optimization.state='repairing';root.optimization.activeTaskId=id;root.optimization.reason='';root.optimization.nextSteps=[];delete root.optimization.stoppedAt;store.put(root,true);}
-      task.status='queued';task.error='';delete task.interruption;
-      if(task.followup){task.followup.state='resolved';task.followup.threadId='';delete task.followup.imageThread;}
-      clearSiteRetry(task,store);
-      store.put(task);
-      store.event(id,isRepairHandoff
-        ?`同站修复会话交接：${handoff.from} → ${handoff.to}；保留旧会话、站点、报告与累计用量，未重复建站。`
-        :`同站生成会话交接：${handoff.from} → ${handoff.to}；保留旧会话、站点、资料与累计用量，未重复建站。`);
-      return task;
+      return store.db.transaction(()=>{
+        const current=store.task(id,false);
+        if(!current||owns(id)||!current.stopped||!['interrupted','failed','queued'].includes(current.status)||current.generatedSiteId!==task.generatedSiteId||!current.generation||hasActiveDelivery(current.delivery)||(current.delivery&&!hadTaskDelivery)||store.headers(task.generatedSiteId!).some(t=>t.id!==id&&(!t.stopped||owns(t.id)||hasActiveDelivery(t.delivery)||['queued','following-up'].includes(t.status)))){
+          throw new Conflict('任务执行状态已变化，交接未发送');
+        }
+        current.generation.conversationId=handoff.to;current.threadId=handoff.to;current.context='';
+        delete current.generation.deliveryId;delete current.generation.deliveryState;delete current.generation.runId;delete current.generation.pending;delete current.generation.repairBatch;
+        current.generation.state='unknown';
+        current.generation.next=isRepairHandoff
+          ?{action:'continue',reason:'保留原站与原会话记录，用独立干净会话接续修复',evidence:[],message:'这是同站修复交接。旧会话 '+handoff.from+' 保留供追溯；先读取当前真实实现，按本任务已有的独立报告和附件修复，保留完成内容与数据。'}
+          :{action:'continue',reason:'原生成会话已超载或无法继续，保留当前站点与资料并切换至干净新会话继续任务',evidence:[],message:'这是同站新会话交接。旧会话 '+handoff.from+' 保留供追溯；请先检查当前站点已有页面、样式与已导入资料（保留已完成内容，严禁重建站点），按原任务范围继续完成或收尾。视觉复核请控制单次截图读取数量，避免连续读取大量高清原图。'};
+        const root=store.root(current);
+        const resumeOptimization=Boolean(root?.optimization&&root.optimization.state!=='completed');
+        if(resumeOptimization&&root?.optimization){
+          root.optimization.state=current.id===root.id?'waiting-evaluation':'repairing';
+          root.optimization.activeTaskId=id;
+          root.optimization.reason='';
+          root.optimization.nextSteps=[];
+          delete root.optimization.stoppedAt;
+          if(current.id===root.id){
+            current.optimization=root.optimization;
+          }else{
+            store.put(root,true);
+          }
+        }
+        current.status='queued';current.error='';delete current.interruption;
+        if(current.followup){current.followup.state='resolved';current.followup.threadId='';delete current.followup.imageThread;}
+        clearSiteRetry(current,store);
+        store.put(current,resumeOptimization&&current.id===root?.id);
+        store.event(id,isRepairHandoff
+          ?`同站修复会话交接：${handoff.from} → ${handoff.to}；保留旧会话、站点、报告与累计用量，未重复建站。`
+          :`同站生成会话交接：${handoff.from} → ${handoff.to}；保留旧会话、站点、资料与累计用量，未重复建站。`);
+        return current;
+      });
     }finally{handoffs.delete(id);}
   });
   app.get('/api/automation/tasks/:id/generation-context', async request => {

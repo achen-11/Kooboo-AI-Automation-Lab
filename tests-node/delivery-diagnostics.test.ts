@@ -715,3 +715,89 @@ test('cleanupSiteTempScreenshots removes unreferenced /screenshots before sitemi
     await f.close();
   }
 });
+
+test('executeDelivery preserves nested fetch error cause details while keeping credentials redacted', async () => {
+  const f = await fixture();
+  const koobooServer = createServer((req, res) => {
+    const url = new URL(req.url!, 'http://127.0.0.1');
+    res.setHeader('Content-Type', 'application/json');
+    if (url.pathname === '/_api/v2/Site/List') {
+      res.end(JSON.stringify([{ siteId: f.site.siteId, homePageLink: f.site.url }]));
+      return;
+    }
+    if (url.pathname === '/_api/v2/Media/List') {
+      res.end(JSON.stringify({ folders: [], files: [] }));
+      return;
+    }
+    res.statusCode = 404;
+    res.end();
+  });
+  const koobooOrigin = await listen(koobooServer);
+  const deadEndpoint = 'http://127.0.0.1:1/api/sitemigrate';
+  const origFetch = globalThis.fetch;
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, origin: koobooOrigin, apiOrigin: koobooOrigin, delivery: { ...e.delivery!, endpoint: deadEndpoint, token: 'super-secret-migrate-tok' } } : e)),
+    });
+    const t = f.done();
+    queueDelivery(t, f.automationStore, f.vault);
+    globalThis.fetch = (async (input: RequestInfo | URL, init?: RequestInit) => {
+      if (String(input).startsWith(deadEndpoint)) {
+        const socketErr = Object.assign(new Error('other side closed token=super-secret-migrate-tok'), { code: 'UND_ERR_SOCKET' });
+        throw new TypeError('fetch failed', { cause: socketErr });
+      }
+      return origFetch(input, init);
+    }) as typeof fetch;
+
+    await executeDelivery(t, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000));
+    const saved = f.automationStore.task(t.id)!;
+    assert.equal(saved.delivery?.status, 'uncertain');
+    assert.match(saved.delivery?.error || '', /fetch failed \(UND_ERR_SOCKET: other side closed/);
+    assert.ok(!saved.delivery?.error.includes('super-secret-migrate-tok'));
+
+    // cleanupSiteTempScreenshots must preserve root and ancestor chain when depth >= 8 leaves an unscanned subtree
+    const truncCalls: Array<{ path: string; body: unknown }> = [];
+    const truncResult = await cleanupSiteTempScreenshots(async (path, body) => {
+      truncCalls.push({ path, body });
+      if (path.startsWith('Media/List?path=')) {
+        const listedPath = decodeURIComponent(path.slice('Media/List?path='.length));
+        const depth = listedPath === '/screenshots' ? 0 : listedPath.split('/').length - 2;
+        if (listedPath === '/screenshots') {
+          return {
+            folders: [{ fullPath: '/screenshots/d1' }, { fullPath: '/screenshots/clean-sibling' }],
+            files: [],
+          };
+        }
+        if (listedPath === '/screenshots/clean-sibling') {
+          return { folders: [], files: [{ id: 'sib-img', size: 100 }] };
+        }
+        if (depth < 8) {
+          return {
+            folders: [{ fullPath: `${listedPath}/d${depth + 1}` }],
+            files: [],
+          };
+        }
+        return {
+          folders: [{ fullPath: `${listedPath}/too-deep` }],
+          files: [{ id: 'd8-img', size: 200 }],
+        };
+      }
+      return true;
+    }, f.site.siteId);
+    assert.equal(truncResult.deletedImages, 2);
+    assert.equal(truncResult.deletedFolders, 1);
+    assert.deepEqual(
+      truncCalls.filter(c => c.path.startsWith('Media/Delete')),
+      [
+        { path: 'Media/DeleteImages', body: ['sib-img', 'd8-img'] },
+        { path: 'Media/DeleteFolders', body: ['/screenshots/clean-sibling'] },
+      ],
+    );
+  } finally {
+    globalThis.fetch = origFetch;
+    await close(koobooServer);
+    await f.close();
+  }
+});

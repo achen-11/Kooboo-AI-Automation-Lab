@@ -127,15 +127,27 @@ const batchResumeLabel = computed(() => {
     : '一键恢复';
 });
 const deliverableSelectedRows = computed(() => selectedRows.value.filter(isRowDeliverable));
+const forceDeliverableSelectedRows = computed(() => selectedRows.value.filter(row => !isRowDeliverable(row) && row.deliveryAction?.forceEligible === true && Boolean(row.deliveryAction.forceTaskId)));
 const nonDeliverableSelectedRows = computed(() => selectedRows.value.filter(row => !isRowDeliverable(row)));
 const canBatchDeliver = computed(() => deliverableSelectedRows.value.length > 0);
-const showDisabledBatchDeliver = computed(() => !batchDeliveryMode.value && selectedRows.value.length > 0 && !canBatchDeliver.value && selectedRows.value.some(row => row.deliveryAction && ['unsupported-env', 'missing-token', 'require-passed'].includes(row.deliveryAction.code)));
+const canBatchForceDeliver = computed(() => !batchDeliveryMode.value && forceDeliverableSelectedRows.value.length > 0);
+const forceDeliverConfirmOpen = ref(false);
+watch([selected, batchDeliveryMode], ([sel, inBatch]) => {
+  if (!sel.length || inBatch) forceDeliverConfirmOpen.value = false;
+});
+const showDisabledBatchDeliver = computed(() => !batchDeliveryMode.value && selectedRows.value.length > 0 && !canBatchDeliver.value && !canBatchForceDeliver.value && selectedRows.value.some(row => row.deliveryAction && ['unsupported-env', 'missing-token', 'require-passed'].includes(row.deliveryAction.code)));
 const disabledBatchDeliverTitle = computed(() => selectedRows.value.find(row => row.deliveryAction?.reason)?.deliveryAction?.reason || '当前所选站点暂不支持跨环境交付');
 const batchDeliverLabel = computed(() => {
   if (batchDelivering.value) return `正在排队交付 (${batchDeliverProgress.value.done}/${batchDeliverProgress.value.total})…`;
   return deliverableSelectedRows.value.length < selectedRows.value.length
     ? `一键交付 (${deliverableSelectedRows.value.length})`
     : '一键交付';
+});
+const batchForceDeliverLabel = computed(() => {
+  if (batchDelivering.value) return `正在排队强制交付 (${batchDeliverProgress.value.done}/${batchDeliverProgress.value.total})…`;
+  return forceDeliverableSelectedRows.value.length < selectedRows.value.length
+    ? `强制交付 (${forceDeliverableSelectedRows.value.length})`
+    : '强制交付';
 });
 function canDirectResumeRow(row: SiteDeliverySummary) {
   return !row.disposition && (row.recovery?.action === 'resume' || row.recovery?.action === 'adjust-site-names' || row.recovery?.action === 'handoff-conversation');
@@ -324,6 +336,65 @@ async function runBatchDeliver() {
   await load();
   void refreshStatus();
 }
+async function runBatchForceDeliver() {
+  if (batchBusy.value) return;
+  const targets = [...forceDeliverableSelectedRows.value];
+  const eligible: Array<{ row: SiteDeliverySummary; taskId: string }> = [];
+  const issues: BatchResumeIssue[] = [];
+  const seenTaskIds = new Set<string>();
+  for (const row of targets) {
+    const taskId = row.deliveryAction?.forceTaskId;
+    if (taskId && !seenTaskIds.has(taskId)) {
+      seenTaskIds.add(taskId);
+      eligible.push({ row, taskId });
+    }
+  }
+  if (!eligible.length) {
+    forceDeliverConfirmOpen.value = false;
+    return;
+  }
+  batchDelivering.value = true;
+  batchIssueKind.value = 'delivery';
+  batchIssues.value = [];
+  batchDeliverProgress.value = { done: 0, total: eligible.length };
+  let succeeded = 0;
+  const succeededIds = new Set<string>();
+  try {
+    for (const item of eligible) {
+      try {
+        await api(`/automation/tasks/${item.taskId}/delivery`, {
+          method: 'POST',
+          body: JSON.stringify({ force: true }),
+        });
+        succeeded++;
+        succeededIds.add(item.row.id);
+      } catch (reason) {
+        issues.push({
+          id: item.row.id,
+          detailTaskId: item.row.detailTaskId,
+          resourceName: item.row.resourceName,
+          reason: message(reason),
+        });
+      } finally {
+        batchDeliverProgress.value.done++;
+      }
+    }
+  } finally {
+    batchDelivering.value = false;
+    forceDeliverConfirmOpen.value = false;
+  }
+  selected.value = selected.value.filter(id => !succeededIds.has(id));
+  batchIssues.value = issues;
+  if (succeeded > 0 && issues.length === 0) {
+    notify.success(`已排队强制交付 ${succeeded} 个站点`);
+  } else if (succeeded > 0) {
+    notify.warning(`已排队强制交付 ${succeeded} 个站点，另有 ${issues.length} 项未能发起交付`);
+  } else if (issues.length > 0) {
+    notify.error(`${issues.length} 个站点未能强制发起交付，请查看原因`);
+  }
+  await load();
+  void refreshStatus();
+}
 function toggleAttentionMissingAddress() {
   batchDeliveryMode.value = false;
   deliveryFilter.value = '';
@@ -457,6 +528,11 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
           一键交付
         </button>
         <template v-if="!batchDeliveryMode">
+          <button v-if="canBatchForceDeliver" type="button" class="button secondary small" :disabled="batchBusy" @click="forceDeliverConfirmOpen = true">
+            <LoaderCircle v-if="batchDelivering" class="spin" :size="15" />
+            <Send v-else :size="15" />
+            {{ batchForceDeliverLabel }}
+          </button>
           <button v-if="canBatchResume" type="button" class="button small" :class="canBatchDeliver ? 'secondary' : 'primary'" :disabled="batchBusy" @click="runBatchResume">
             <LoaderCircle v-if="batchResuming" class="spin" :size="15" />
             <Play v-else :size="15" />
@@ -466,6 +542,17 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
           <button v-if="canBatchDiscard" type="button" class="button secondary small" :disabled="batchBusy" @click="openDisposition(selectedRows, 'discarded')"><Trash2 :size="15" />舍弃</button>
           <button v-if="canBatchComplete" type="button" class="button small" :class="(canBatchResume || canBatchDeliver) ? 'secondary' : 'primary'" :disabled="batchBusy" @click="openDisposition(selectedRows, 'completed')"><Check :size="15" />标为已完成</button>
         </template>
+      </div>
+    </div>
+    <div v-if="forceDeliverConfirmOpen && canBatchForceDeliver" class="batch-force-confirm" role="region" aria-label="确认强制交付">
+      <span>确认对已选 {{ forceDeliverableSelectedRows.length }} 个中断或未达标站点强制发起跨环境交付？请确认均已完成初步验收（跳过未完成/评测门禁，保留源站）。</span>
+      <div class="batch-force-actions">
+        <button type="button" class="button secondary small" :disabled="batchBusy" @click="forceDeliverConfirmOpen = false">取消</button>
+        <button type="button" class="button primary small" :disabled="batchBusy" @click="runBatchForceDeliver">
+          <LoaderCircle v-if="batchDelivering" class="spin" :size="15" />
+          <Send v-else :size="15" />
+          确认强制交付
+        </button>
       </div>
     </div>
     <div v-if="batchIssues.length" class="batch-issues" role="alert">
@@ -567,6 +654,8 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
 .quick-delivery-btn>span.count-ready{background:#dbeafe;color:#1d4ed8}
 .quick-delivery-btn.selected>span.count-ready{background:#fff;color:#1d4ed8}
 .batch-delivery-banner{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 24px;background:#f4f8ff;border-top:1px solid #dce8fd;color:#274472;font-size:12.5px}
+.batch-force-confirm{display:flex;align-items:center;justify-content:space-between;gap:12px;flex-wrap:wrap;padding:10px 24px;background:#fffaf2;border-top:1px solid #f4dfb8;color:#6e4714;font-size:12.5px}
+.batch-force-actions{display:flex;align-items:center;gap:8px;flex:none}
 .row-delivery-disabled{background:#fafbfd}
 .row-delivery-disabled td:not(:first-child){opacity:.62}
 .row-delivery-disabled input[type="checkbox"]:disabled{cursor:not-allowed}

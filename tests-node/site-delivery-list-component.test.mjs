@@ -772,3 +772,66 @@ test('SiteDeliveryList batch delivery mode prunes selections that lose delivery 
     f.close();
   }
 });
+
+test('SiteDeliveryList lets operator confirm and force-deliver interrupted rows with forceEligible', async () => {
+  const f = await fixture((path) => {
+    const res = pageResponse(path);
+    res.deliverableCount = 0;
+    res.undeliveredCount = 0;
+    res.items = [{
+      id: 'site-int-1',
+      generatedSiteId: 'site-int-1',
+      resourceId: 'res-int-1',
+      resourceName: 'Interrupted Site',
+      siteUrl: 'https://int-site.kooboo.io/',
+      environmentId: 'env-hk',
+      environmentName: '香港 kooboo',
+      scenario: 'upgrade',
+      scope: 'homepage',
+      detailTaskId: 'gen-int-1',
+      state: 'attention',
+      reason: '评测模型断连',
+      targetScore: 85,
+      report: null,
+      usage: { priced: false, knownCny: 0, missing: 0, requests: 0, input: 0, output: 0, cached: 0 },
+      stages: [],
+      taskCount: 2,
+      createdAt: 1,
+      updatedAt: 1,
+      deliveryAction: {
+        eligible: false,
+        code: 'not-ready',
+        reason: '请先完成站点生成后再发起交付',
+        forceEligible: true,
+        forceTaskId: 'gen-int-1',
+      },
+    }];
+    res.total = 1;
+    return res;
+  });
+
+  try {
+    const selectAll = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择本页全部生成站')[0];
+    selectAll.props.onChange({ target: { checked: true } });
+    await settle();
+
+    const forceBtn = f.button('强制交付');
+    assert.ok(forceBtn, '强制交付 button should appear for forceEligible selection');
+    forceBtn.props.onClick();
+    await settle();
+
+    const confirmRegion = f.nodes(n => n.props.class === 'batch-force-confirm')[0];
+    assert.ok(confirmRegion, 'inline force delivery confirmation should open');
+    const confirmBtn = f.button('确认强制交付');
+    assert.ok(confirmBtn);
+    await confirmBtn.props.onClick();
+    await settle();
+
+    const deliveryCall = f.calls.find(c => c.path === '/automation/tasks/gen-int-1/delivery');
+    assert.ok(deliveryCall, 'POST /delivery should be called for forceTaskId');
+    assert.equal(deliveryCall.options.method, 'POST');
+    assert.equal(deliveryCall.options.body, JSON.stringify({ force: true }));
+  } finally {
+    f.close();
+  }
+});

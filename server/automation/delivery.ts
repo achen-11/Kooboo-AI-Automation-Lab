@@ -14,6 +14,7 @@ import { usageCapture } from './usage-proxy.js';
 import { builtInHarnessSop } from './harness.js';
 import { exportRedactor } from '../diagnostics/redact.js';
 import { collectDeliverySecrets, resolveEnvironmentDelivery } from '../lib/delivery-config.js';
+import { hasAccessibleSiteUrl } from '../../shared/site-delivery.js';
 
 const receiptSchema=z.object({siteId:z.guid(),siteUrl:z.url().refine(v=>{const u=new URL(v);return /^https?:$/.test(u.protocol)&&!u.username&&!u.password;})});
 export function reportPassedDeliveryGate(task:AutomationTask,threshold:number):boolean{
@@ -41,29 +42,104 @@ export function reportPassedDeliveryGate(task:AutomationTask,threshold:number):b
       return typeof score==='number'&&score>=threshold;
     });
 }
-export function queueDelivery(task:AutomationTask,store:AutomationStore,vault:Vault){
+export interface TaskDeliveryEligibility {
+  canDeliver: boolean;
+  canForceDeliver: boolean;
+  forceReason: string;
+  canForceRetry: boolean;
+  blockReason: string;
+}
+
+function evaluateDeliveryGates(task: AutomationTask, store: AutomationStore, vault: Vault, site: NonNullable<ReturnType<AutomationStore['site']>>, config: NonNullable<ReturnType<typeof resolveEnvironmentDelivery>>) {
+  const isCompletedEvaluation = task.kind === 'evaluation' && task.status === 'completed' && task.stopped && Boolean(task.report);
+  const isCompletedGeneration = task.kind === 'generation' && task.status === 'completed' && task.stopped && Boolean(task.generatedSiteId);
+  const threshold = store.root(task)?.optimization?.threshold ?? vault.get().threshold;
+  const reportOwner = isCompletedEvaluation ? task : store.currentReport(task);
+  const failedPassedGate = Boolean(config.requirePassed && reportOwner && !reportPassedDeliveryGate(reportOwner, threshold));
+  const staleDomainEval = Boolean(isCompletedEvaluation && site.preferredDomain && store.currentReport(task)?.id !== task.id);
+  return { isCompletedEvaluation, isCompletedGeneration, reportOwner, failedPassedGate, staleDomainEval };
+}
+
+export function inspectTaskDeliveryEligibility(
+  task: AutomationTask,
+  store: AutomationStore,
+  vault: Vault,
+  owns?: (id: string) => boolean,
+): TaskDeliveryEligibility {
+  if (task.delivery) {
+    const canForceRetry = Boolean(
+      !owns?.(task.id)
+      && task.stopped
+      && !['queued', 'running', 'following-up', 'cancelling'].includes(task.status)
+      && !task.delivery.target
+      && task.delivery.stopped !== false
+      && ['uncertain', 'failed'].includes(task.delivery.status)
+      && (task.delivery.status === 'uncertain' || Boolean(task.delivery.attemptedAt))
+      && !store.dispositions.get('delivery', task.generatedSiteId || task.id)
+      && !store.domainReserved(task.generatedSiteId)
+      && !(task.generatedSiteId && store.tasks().some(t => t.id !== task.id && t.generatedSiteId === task.generatedSiteId && (!t.stopped || ['queued', 'following-up'].includes(t.status)))),
+    );
+    return { canDeliver: false, canForceDeliver: false, forceReason: '', canForceRetry, blockReason: '该任务已有交付记录' };
+  }
+  if (store.dispositions.get('delivery', task.generatedSiteId || task.id)) {
+    return { canDeliver: false, canForceDeliver: false, forceReason: '', canForceRetry: false, blockReason: '该生成站已归档，请先移回在列后再发起交付' };
+  }
+  if (store.domainReserved(task.generatedSiteId)) {
+    return { canDeliver: false, canForceDeliver: false, forceReason: '', canForceRetry: false, blockReason: '站点正在换绑域名，请稍后安排交付' };
+  }
+  const config = resolveEnvironmentDelivery(vault.get(), task.environmentId);
+  if (!config?.enabled || !config.token) {
+    return { canDeliver: false, canForceDeliver: false, forceReason: '', canForceRetry: false, blockReason: '当前连接未启用交付，或缺少迁移令牌' };
+  }
+  const site = task.generatedSiteId ? store.site(task.generatedSiteId) : undefined;
+  if (!site || !hasAccessibleSiteUrl(site.url)) {
+    return { canDeliver: false, canForceDeliver: false, forceReason: '', canForceRetry: false, blockReason: '缺少生成站身份或地址' };
+  }
+  const related = store.tasks().filter(t => t.generatedSiteId === site.id);
+  if (related.some(t => !t.stopped || ['queued', 'following-up'].includes(t.status))) {
+    return { canDeliver: false, canForceDeliver: false, forceReason: '', canForceRetry: false, blockReason: '同一个源站还有执行任务，请等待结束' };
+  }
+  if (related.some(t => t.id !== task.id && t.delivery)) {
+    return { canDeliver: false, canForceDeliver: false, forceReason: '', canForceRetry: false, blockReason: '这个源站已有关联交付；请查看原交付记录，首版不重复迁移或覆盖目标站' };
+  }
+  const { isCompletedEvaluation, isCompletedGeneration, failedPassedGate, staleDomainEval } = evaluateDeliveryGates(task, store, vault, site, config);
+  if ((isCompletedEvaluation || isCompletedGeneration) && !failedPassedGate && !staleDomainEval) {
+    return { canDeliver: true, canForceDeliver: false, forceReason: '', canForceRetry: false, blockReason: '' };
+  }
+  if (task.stopped && ['generation', 'evaluation'].includes(task.kind) && Boolean(task.generatedSiteId) && ['completed', 'interrupted', 'failed', 'cancelled', 'pending'].includes(task.status)) {
+    const forceReason = !isCompletedEvaluation && !isCompletedGeneration
+      ? (task.kind === 'generation' ? '站点生成尚未正常完成（任务已中断或未收尾），跳过完成态校验强制迁移当前源站。' : '独立评测尚未完成（任务已中断或无报告），跳过评测校验强制迁移当前源站。')
+      : staleDomainEval
+        ? '站点域名变更后尚未重新评测，强制按当前源站地址发起交付。'
+        : '源站评测未通过当前环境的强制达标门禁，跳过达标校验强制交付。';
+    return { canDeliver: false, canForceDeliver: true, forceReason, canForceRetry: false, blockReason: forceReason };
+  }
+  return { canDeliver: false, canForceDeliver: false, forceReason: '', canForceRetry: false, blockReason: task.kind === 'generation' ? '请先完成站点生成' : '请先完成源站的独立评测' };
+}
+
+export function queueDelivery(task:AutomationTask,store:AutomationStore,vault:Vault,options:{force?:boolean}={}){
+  const force=Boolean(options.force);
   if(store.domainReserved(task.generatedSiteId))throw new Conflict('站点正在换绑域名，请稍后安排交付');
-  const isCompletedEvaluation=task.kind==='evaluation'&&task.status==='completed'&&task.stopped&&Boolean(task.report);
-  const isCompletedGeneration=task.kind==='generation'&&task.status==='completed'&&task.stopped&&Boolean(task.generatedSiteId);
-  if(!isCompletedEvaluation&&!isCompletedGeneration)throw new Conflict(task.kind==='generation'?'请先完成站点生成':'请先完成源站的独立评测');
   if(task.delivery)return task;
   const config=resolveEnvironmentDelivery(vault.get(),task.environmentId);
   if(!config?.enabled||!config.token)throw new Conflict('当前连接未启用交付，或缺少迁移令牌');
-  const threshold=store.root(task)?.optimization?.threshold??vault.get().threshold;
-  const reportOwner=isCompletedEvaluation?task:store.currentReport(task);
-  if(config.requirePassed&&reportOwner&&!reportPassedDeliveryGate(reportOwner,threshold))throw new Conflict('当前交付策略要求源站评测通过');
-  const site=task.generatedSiteId&&store.site(task.generatedSiteId);if(!site||!site.url)throw new Conflict('缺少生成站身份或地址');
-  if(isCompletedEvaluation&&site.preferredDomain&&store.currentReport(task)?.id!==task.id)throw new Conflict('站点域名已变更，请先完成当前地址的独立评测再交付');
+  const site=task.generatedSiteId&&store.site(task.generatedSiteId);if(!site||!hasAccessibleSiteUrl(site.url))throw new Conflict('缺少生成站身份或地址');
   const related=store.tasks().filter(t=>t.generatedSiteId===site.id);
   if(related.some(t=>!t.stopped||['queued','following-up'].includes(t.status)))throw new Conflict('同一个源站还有执行任务，请等待结束');
   if(related.some(t=>t.id!==task.id&&t.delivery))throw new Conflict('这个源站已有关联交付；请查看原交付记录，首版不重复迁移或覆盖目标站');
-  if(isCompletedGeneration){
-    const siteState=store.siteState(site.id);
-    if(siteState?.revision)task.siteRevision=siteState.revision;
-  }
+  const {isCompletedEvaluation,isCompletedGeneration,reportOwner,failedPassedGate,staleDomainEval}=evaluateDeliveryGates(task,store,vault,site,config);
+  const isForceableTask=force&&task.stopped&&['generation','evaluation'].includes(task.kind)&&Boolean(task.generatedSiteId)&&['completed','interrupted','failed','cancelled','pending'].includes(task.status);
+  if(!isCompletedEvaluation&&!isCompletedGeneration&&!isForceableTask)throw new Conflict(task.kind==='generation'?'请先完成站点生成':'请先完成源站的独立评测');
+  if(!force&&failedPassedGate)throw new Conflict('当前交付策略要求源站评测通过');
+  if(!force&&staleDomainEval)throw new Conflict('站点域名已变更，请先完成当前地址的独立评测再交付');
+  const actuallyForced=force&&((!isCompletedEvaluation&&!isCompletedGeneration)||failedPassedGate||staleDomainEval);
+  const siteState=store.siteState(site.id);
+  if(siteState?.revision&&(isCompletedGeneration||force))task.siteRevision=siteState.revision;
   const {token:_token,hasCustomEndpoint:_hasCustomEndpoint,hasCustomToken:_hasCustomToken,...policy}=config;
-  task.delivery={id:randomUUID(),policy,status:'queued',stopped:true,sourceEnvironmentId:task.environmentId,sourceSiteId:site.siteId,sourceUrl:site.url,evaluationTaskId:reportOwner?.id||'',updatedAt:Date.now(),error:'',checks:[]};
-  store.put(task);store.event(task.id,reportOwner?'已排队跨环境交付；源站和评测报告保留不变':'已排队跨环境交付（跳过源站评测）；源站保留不变');return task;
+  task.delivery={id:randomUUID(),policy,status:'queued',...(actuallyForced?{forced:true}:{}),stopped:true,sourceEnvironmentId:task.environmentId,sourceSiteId:site.siteId,sourceUrl:site.url,evaluationTaskId:reportOwner?.id||'',updatedAt:Date.now(),error:'',checks:[]};
+  store.put(task);
+  store.event(task.id,actuallyForced?'操作者已人工初步验收并强制排队跨环境交付（跳过未完成状态或评测门禁）；源站保留不变':reportOwner?'已排队跨环境交付；源站和评测报告保留不变':'已排队跨环境交付（跳过源站评测）；源站保留不变');
+  return task;
 }
 export function deliveryReceipt(raw:unknown){return receiptSchema.parse(raw);}
 export function expectedDeliveryPaths(task:AutomationTask,directory:string){
@@ -224,6 +300,38 @@ function deliveryRedactor(vault: Vault, extraSecrets: string[] = []) {
 function formatElapsedMs(elapsedMs: number): string {
   const ms = Math.max(0, Math.round(elapsedMs));
   return ms < 1000 ? `${ms}ms` : `${(ms / 1000).toFixed(1)}s`;
+}
+
+export function formatFetchError(error: unknown): string {
+  if (!(error instanceof Error)) return String(error);
+  const parts: string[] = [];
+  const baseMessage = error.message || error.name || '请求失败';
+  let current: unknown = error.cause;
+  let depth = 0;
+  while (current && depth < 3) {
+    depth++;
+    if (current instanceof Error) {
+      const code = typeof (current as Error & { code?: unknown }).code === 'string'
+        ? (current as Error & { code: string }).code.trim()
+        : '';
+      const msg = current.message?.trim() || '';
+      const piece = code && msg && !msg.includes(code) ? `${code}: ${msg}` : (msg || code);
+      if (piece && !baseMessage.includes(piece) && !parts.includes(piece)) parts.push(piece);
+      current = current.cause;
+    } else if (typeof current === 'object') {
+      const obj = current as { code?: unknown; message?: unknown };
+      const code = typeof obj.code === 'string' ? obj.code.trim() : '';
+      const msg = typeof obj.message === 'string' ? obj.message.trim() : '';
+      const piece = code && msg && !msg.includes(code) ? `${code}: ${msg}` : (msg || code);
+      if (piece && !baseMessage.includes(piece) && !parts.includes(piece)) parts.push(piece);
+      break;
+    } else {
+      const text = String(current).trim();
+      if (text && !baseMessage.includes(text) && !parts.includes(text)) parts.push(text);
+      break;
+    }
+  }
+  return parts.length ? `${baseMessage} (${parts.join(' -> ')})` : baseMessage;
 }
 
 async function readBoundedBody(response: Response, maxBytes = 16384, timeoutMs = 5000): Promise<{ text: string; truncated: boolean }> {
@@ -399,9 +507,10 @@ export async function cleanupSiteTempScreenshots(
   const rootPath = '/screenshots';
   const visited = new Set<string>();
   const queue: Array<{ path: string; depth: number }> = [{ path: rootPath, depth: 0 }];
-  const folderNodes = new Map<string, { depth: number; children: string[]; hasOwnReferenced: boolean; hasOwnDeletable: boolean }>();
+  const folderNodes = new Map<string, { depth: number; children: string[]; hasOwnReferenced: boolean; hasOwnDeletable: boolean; hasOwnUnscanned: boolean }>();
   const deletableImages: Array<{ id: string; size: number }> = [];
   let skippedReferenced = 0;
+  let traversalTruncated = false;
 
   while (queue.length > 0 && visited.size < 200) {
     const current = queue.shift()!;
@@ -421,6 +530,7 @@ export async function cleanupSiteTempScreenshots(
     const childPaths: string[] = [];
     let hasOwnReferenced = false;
     let hasOwnDeletable = false;
+    let hasOwnUnscanned = false;
 
     for (const file of files) {
       if (!file || typeof file !== 'object') continue;
@@ -448,6 +558,9 @@ export async function cleanupSiteTempScreenshots(
         childPaths.push(subPath);
         queue.push({ path: subPath, depth: current.depth + 1 });
       }
+    } else if (folders.length > 0) {
+      hasOwnUnscanned = true;
+      traversalTruncated = true;
     }
 
     folderNodes.set(folderPath, {
@@ -455,13 +568,15 @@ export async function cleanupSiteTempScreenshots(
       children: childPaths,
       hasOwnReferenced,
       hasOwnDeletable,
+      hasOwnUnscanned,
     });
   }
+  if (queue.length > 0) traversalTruncated = true;
 
   const deletedBytes = deletableImages.reduce((sum, img) => sum + img.size, 0);
   const subfolderCount = [...folderNodes.keys()].filter((p) => p !== rootPath).length;
 
-  if (skippedReferenced === 0 && (deletableImages.length > 0 || subfolderCount > 0)) {
+  if (!traversalTruncated && skippedReferenced === 0 && (deletableImages.length > 0 || subfolderCount > 0)) {
     await request('Media/DeleteFolders', [rootPath], siteId);
     return {
       deletedImages: deletableImages.length,
@@ -476,16 +591,16 @@ export async function cleanupSiteTempScreenshots(
     await request('Media/DeleteImages', chunk, siteId);
   }
 
-  // Delete clean descendant folders bottom-up (only when neither the folder nor any descendant contains referenced files).
+  // Delete clean descendant folders bottom-up (only when neither the folder nor any descendant contains referenced or unscanned subtrees).
   const sortedNodes = [...folderNodes.entries()].sort((a, b) => b[1].depth - a[1].depth);
-  const hasReferencedInSubtree = new Map<string, boolean>();
+  const preserveSubtree = new Map<string, boolean>();
   for (const [path, node] of sortedNodes) {
-    const childRef = node.children.some((child) => hasReferencedInSubtree.get(child) === true);
-    hasReferencedInSubtree.set(path, node.hasOwnReferenced || childRef);
+    const childPreserve = node.children.some((child) => !folderNodes.has(child) || preserveSubtree.get(child) === true);
+    preserveSubtree.set(path, node.hasOwnReferenced || node.hasOwnUnscanned || childPreserve);
   }
 
   const cleanSubfolders = sortedNodes
-    .filter(([path]) => path !== rootPath && hasReferencedInSubtree.get(path) === false)
+    .filter(([path]) => path !== rootPath && preserveSubtree.get(path) === false)
     .map(([path]) => path);
   if (cleanSubfolders.length > 0) {
     await request('Media/DeleteFolders', cleanSubfolders, siteId);
@@ -563,7 +678,7 @@ export async function executeDelivery(task:AutomationTask,store:AutomationStore,
       delivery.target=target;delivery.status='verifying';store.put(task);store.event(task.id,delivery.policy.verifyWithAi===false?'目标站回执已保存；已关闭 AI 视觉核验，开始 HTTP 可达性检查':'目标站回执已保存；开始独立交付核验');
     }catch(error){
       const elapsed=formatElapsedMs(Date.now()-startedAt);
-      const rawMessage=redactor.text(error instanceof Error?error.message:String(error));
+      const rawMessage=redactor.text(formatFetchError(error));
       const headline=errorSummary?redactor.text(errorSummary):`${rawMessage}（耗时 ${elapsed}）`;
       delivery.status='uncertain';
       delivery.error=redactor.text(`${headline}；服务可能已经执行，禁止自动重发。请核查目标环境并补录回执。`);

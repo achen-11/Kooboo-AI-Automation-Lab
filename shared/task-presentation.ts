@@ -76,7 +76,7 @@ export function taskRecoveryAction(task?: TaskRecoveryTarget): TaskRecoveryActio
   if (task.stopped === false && ['pending', 'interrupted'].includes(task.status)) return 'confirm-stopped';
   return null;
 }
-export type DeliveryTask = Pick<AutomationTask, 'id' | 'kind' | 'environmentId' | 'status' | 'delivery'> & { report: Pick<AutomationReport, 'quality'> | null };
+export type DeliveryTask = Pick<AutomationTask, 'id' | 'kind' | 'environmentId' | 'status' | 'delivery'> & { stopped?: boolean; generatedSiteId?: string | null; report: Pick<AutomationReport, 'quality'> | null };
 export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'resourceName' | 'scenario' | 'scope' | 'environmentId' | 'generatedSiteId' | 'parentId' | 'evaluationTaskId' | 'stage' | 'status' | 'stopped' | 'createdAt' | 'updatedAt' | 'siteUrl' | 'usage'> & {
   report: (Pick<AutomationReport, 'quality' | 'scores'> & { issueCount: number; unverifiedCount: number }) | null;
   /** Compact list results remain accessible when a later task changes the site. */
@@ -101,7 +101,7 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   disposition?: ItemDisposition;
 };
 export interface WorkflowActiveSummary { tasks: number; learning: number; reason: string }
-export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; delivery?: SiteDeliveryTarget | null; canCompareLive?: boolean; disposition?: ItemDisposition; resourceDisposition?: ItemDisposition; workflowActive?: WorkflowActiveSummary; latest: { seq: number; time: number; message: string; taskId: string } | null }
+export interface TaskSnapshot { task: TaskSummary; evaluation: TaskSummary | null; active?: TaskSummary | null; currentReportId?: string | null; deliveryEnabled: boolean; delivery?: SiteDeliveryTarget | null; canForceDeliver?: boolean; forceDeliverTaskId?: string; canCompareLive?: boolean; disposition?: ItemDisposition; resourceDisposition?: ItemDisposition; workflowActive?: WorkflowActiveSummary; latest: { seq: number; time: number; message: string; taskId: string } | null }
 export interface CompactNotice { id: string; taskId: string; resourceName: string; title: string; summary: string; tab: TaskTab; createdAt: number; readAt: number | null; currentStatus?: TaskStatus; superseded: boolean }
 export interface NoticePage<T = CompactNotice> { items: T[]; total: number; unread: number; page: number; pages: number; pageSize: number }
 

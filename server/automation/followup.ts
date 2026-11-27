@@ -206,6 +206,9 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
     if(action.action==='answer'&&isReferenceSandboxCleanupConfirmAskUserInput(state.pending)&&action.answer?.confirmed!==false){
       throw new Error('临时参考研究 Sandbox 清理确认在无人值守模式下必须回答 confirmed=false（保留供后续评测与修复复用），禁止自动批准删除 Sandbox。');
     }
+    if(action.action==='answer'&&isBrowserVerificationConfirmAskUserInput(state.pending)&&action.answer?.confirmed!==false){
+      throw new Error('收尾阶段的浏览器/页面视觉验收确认在无人值守模式下必须回答 confirmed=false（跳过浏览器视觉验收并汇总结束），禁止自动批准打开浏览器。');
+    }
   }
   if(action.action==='evaluate') {
     if(task.generation?.next)throw new Error('仍有尚未发送的本轮委托，不能使用上一轮完成回执交接评测');

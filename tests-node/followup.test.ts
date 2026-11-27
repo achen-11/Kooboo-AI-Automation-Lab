@@ -1403,6 +1403,47 @@ test('isReferenceSandboxCleanupConfirmAskUserInput requires confirmed=false and 
         `expected false for: ${protectedQuestion.question}`,
       );
     }
+
+    const browserVerifyPending = {
+      callId: 'browser-verify-1',
+      name: 'ask_user_input',
+      args: {
+        kind: 'confirm',
+        question: '页面已写入，是否允许我打开页面做桌面和移动端视觉验收？',
+      },
+    } as any;
+    const browserExec = { ...baseExecution, pending: browserVerifyPending };
+    assert.throws(
+      () =>
+        validateFollowupAction(
+          {
+            action: 'answer',
+            callId: 'browser-verify-1',
+            reason: '允许打开浏览器验收',
+            evidence: ['obs-1'],
+            answer: { confirmed: true, kind: 'confirm', value: true },
+          },
+          task,
+          { execution: browserExec },
+          obs,
+        ),
+      /confirmed=false/,
+    );
+    assert.equal(
+      validateFollowupAction(
+        {
+          action: 'answer',
+          callId: 'browser-verify-1',
+          reason: '跳过浏览器视觉验收并汇总结束',
+          evidence: ['obs-1'],
+          answer: { confirmed: false, kind: 'confirm', value: false },
+        },
+        task,
+        { execution: browserExec },
+        obs,
+      ).action,
+      'answer',
+    );
   } finally {
     await f.close();
   }

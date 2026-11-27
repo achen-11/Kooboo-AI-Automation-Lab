@@ -65,13 +65,18 @@ function computeSiteDeliveryAction(params: {
   const genCandidate = members.find(task => task.kind === 'generation' && task.status === 'completed' && task.stopped && Boolean(task.generatedSiteId));
   const candidate = (!evalStaleDomain ? evalCandidate : undefined) || genCandidate;
   if (!candidate) {
+    const forceCandidate = site && hasAccessibleSiteUrl(site.url)
+      ? members.find(task => task.kind === 'generation' && task.stopped && Boolean(task.generatedSiteId))
+        || members.find(task => task.kind === 'evaluation' && task.stopped && Boolean(task.generatedSiteId))
+      : undefined;
     return {
       eligible: false,
       code: 'not-ready',
       reason: evalStaleDomain ? '站点域名已变更，请先完成当前地址的独立评测再交付' : '请先完成站点生成后再发起交付',
+      ...(forceCandidate ? { forceEligible: true, forceTaskId: forceCandidate.id } : {}),
     };
   }
-  if (!site || !site.url) {
+  if (!site || !hasAccessibleSiteUrl(site.url)) {
     return { eligible: false, code: 'missing-site-url', reason: '缺少生成站身份或地址' };
   }
   if (config.requirePassed) {
@@ -82,7 +87,7 @@ function computeSiteDeliveryAction(params: {
       const fullReportOwner = store.task(reportOwnerHeader.id, false);
       const gateThreshold = (fullReportOwner ? store.root(fullReportOwner)?.optimization?.threshold : undefined) ?? threshold;
       if (fullReportOwner && !reportPassedDeliveryGate(fullReportOwner, gateThreshold)) {
-        return { eligible: false, code: 'require-passed', reason: '当前交付策略要求源站评测通过' };
+        return { eligible: false, code: 'require-passed', reason: '当前交付策略要求源站评测通过', forceEligible: true, forceTaskId: candidate.id };
       }
     }
   }
@@ -155,12 +160,22 @@ export function siteDeliveries(store: AutomationStore, threshold: number, siteId
     const delivery = deliveryTask?.delivery;
     if (delivery && ['failed', 'uncertain'].includes(delivery.status)) { state = 'attention'; reason = delivery.error || '交付核验尚未完成。'; recovery = undefined; }
     else if (delivery && ['queued', 'running', 'verifying'].includes(delivery.status)) { state = 'running'; reason = '正在迁移交付或核验目标环境。'; recovery = undefined; }
-    else if (delivery?.status === 'completed' && (state === 'ready' || state === 'unverified' || state === 'generated')) {
-      reason = state === 'generated'
-        ? '已完成站点生成与跨环境交付（已跳过源站评测）。'
-        : state === 'ready'
+    else if (delivery?.status === 'completed') {
+      if (delivery.forced) {
+        if (['attention', 'awaiting-evaluation', 'needs-improvement', 'unverified'].includes(state)) {
+          state = 'generated';
+        }
+        recovery = undefined;
+        reason = state === 'ready'
           ? '已完成跨环境交付并通过核验。'
-          : '已完成跨环境交付并通过核验；源站报告含未验证说明。';
+          : '已通过人工初步验收并强制完成跨环境交付。';
+      } else if (state === 'ready' || state === 'unverified' || state === 'generated') {
+        reason = state === 'generated'
+          ? '已完成站点生成与跨环境交付（已跳过源站评测）。'
+          : state === 'ready'
+            ? '已完成跨环境交付并通过核验。'
+            : '已完成跨环境交付并通过核验；源站报告含未验证说明。';
+      }
     }
     const ids = members.map(task => task.id), entries=ids.flatMap(taskId=>[...(ledger.get(taskId)?.values()||[])]), usage = mergeUsage(entries,ids.slice(1));
     const stages = (Object.keys(usageStageNames) as UsageBreakdownStage[]).map(stage => ({ stage, usage: mergeUsage(members.flatMap(task=>[...(ledger.get(task.id)?.entries()||[])].filter(([raw])=>generationStage(raw,task.optimizationRound)===stage).map(([,value])=>value)),ids.slice(1)) }));

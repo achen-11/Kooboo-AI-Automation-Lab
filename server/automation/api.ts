@@ -9,7 +9,7 @@ import { materialPath, uniqueMaterialPaths } from '../../shared/materials.js';
 import { scenarios, defaultFollowupSettings, defaultOptimizationPolicy, shouldEvaluateAfterGeneration, supportsAutomaticOptimization, type AutomationTask } from '../../shared/automation.js';
 import { stopOptimization } from './optimization.js';
 import { Conflict } from '../lib/store.js';
-import { queueDelivery, deliveryReceipt } from './delivery.js';
+import { queueDelivery, deliveryReceipt, inspectTaskDeliveryEligibility } from './delivery.js';
 import { resolveEnvironmentDelivery } from '../lib/delivery-config.js';
 import { probeCodex } from './probe.js';
 import { brief, compactNotice, taskExecuting, taskSummary, canAdjustTaskSiteNames, canHandoffGenerationConversation, canSwitchGenerationConversation, canAnswerPendingInput, isConversationPayloadTooLarge } from '../../shared/task-presentation.js';
@@ -17,7 +17,7 @@ import { registerExecutionLogApi } from './execution-log.js';
 import { completenessSettingsSchema } from './completeness.js';
 import { executionTaskIds } from '../../shared/execution-log.js';
 import { registerSiteDeliveryApi } from './site-delivery.js';
-import { deliveredSiteUrl } from '../../shared/site-delivery.js';
+import { deliveredSiteUrl, hasAccessibleSiteUrl } from '../../shared/site-delivery.js';
 import { registerTimingApi } from './timing.js';
 import { registerDashboardApi } from './dashboard.js';
 import { registerMigrationApi } from './migration-api.js';
@@ -431,10 +431,24 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
     const siteHeaders=task.generatedSiteId?store.headers(task.generatedSiteId):[];
     const siteState=task.generatedSiteId?store.siteState(task.generatedSiteId):undefined;
     const deliveryHeader=(task.delivery?task:undefined)||(evaluation?.delivery?evaluation:undefined)||siteHeaders.find(h=>h.delivery&&(!siteState||h.siteRevision===siteState.revision))||siteHeaders.find(h=>h.delivery);
-    const envDeliveryEnabled=Boolean(vault.get().environments.find(e=>e.id===task.environmentId)?.delivery?.enabled);
-    const deliveryEnabled=Boolean(((task.kind==='evaluation'||evaluation||task.autoDelivery||(task.kind==='generation'&&task.generatedSiteId&&task.status==='completed'))&&envDeliveryEnabled)||deliveryHeader?.delivery);
+    const envDeliveryConfig=resolveEnvironmentDelivery(vault.get(),task.environmentId);
+    const envDeliveryEnabled=Boolean(envDeliveryConfig?.enabled);
+    const hasForceableGenSite=Boolean(task.kind==='generation'&&task.generatedSiteId&&task.stopped&&hasAccessibleSiteUrl(siteUrl));
+    const deliveryEnabled=Boolean(((task.kind==='evaluation'||evaluation||task.autoDelivery||(task.kind==='generation'&&task.generatedSiteId&&task.status==='completed')||hasForceableGenSite)&&envDeliveryEnabled)||deliveryHeader?.delivery);
     const currentDeliveryHeader=deliveryHeader&&(!siteState||!deliveryHeader.generatedSiteId||deliveryHeader.siteRevision===siteState.revision)?deliveryHeader:undefined;
-    return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled,...(currentDeliveryHeader?.delivery?{delivery:{taskId:currentDeliveryHeader.id,status:currentDeliveryHeader.delivery.status,...(currentDeliveryHeader.delivery.targetUrl?{targetUrl:currentDeliveryHeader.delivery.targetUrl}:{})}}:{}),canCompareLive,...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),...(workflowActive?{workflowActive}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
+    let canForceDeliver=false;let forceDeliverTaskId='';
+    if(!currentDeliveryHeader?.delivery&&!disposition&&envDeliveryEnabled&&hasAccessibleSiteUrl(siteUrl)){
+      const fullTask=store.task(task.id,false);
+      if(fullTask){
+        const evalFull=fullTask.evaluationTaskId?store.task(fullTask.evaluationTaskId,false):undefined;
+        const completedEval=evalFull?.status==='completed'&&Boolean(evalFull.report)?evalFull:undefined;
+        const currentFullReport=store.currentReport(fullTask);
+        const target=fullTask.kind==='evaluation'?fullTask:(currentFullReport||completedEval||fullTask);
+        const elig=inspectTaskDeliveryEligibility(target,store,vault,owns);
+        if(elig.canForceDeliver){canForceDeliver=true;forceDeliverTaskId=target.id;}
+      }
+    }
+    return {task:summaries.get(task.id),evaluation:evaluation?summaries.get(evaluation.id):null,active:active?summaries.get(active.id):null,currentReportId:store.currentReportHeader(task)?.id||null,deliveryEnabled,...(canForceDeliver?{canForceDeliver:true,forceDeliverTaskId}:{}),...(currentDeliveryHeader?.delivery?{delivery:{taskId:currentDeliveryHeader.id,status:currentDeliveryHeader.delivery.status,...(currentDeliveryHeader.delivery.targetUrl?{targetUrl:currentDeliveryHeader.delivery.targetUrl}:{})}}:{}),canCompareLive,...(disposition?{disposition}:{}),...(resourceDisposition?{resourceDisposition}:{}),...(workflowActive?{workflowActive}:{}),latest:latest?{...latest,message:brief(latest.message),taskId:latestId}:null};
   });
   app.get('/api/automation/tasks/:id/usage',async(request,reply)=>{
     const {id}=params.parse(request.params),task=store.task(id);
@@ -484,15 +498,48 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const siteHeaders=task.generatedSiteId?store.headers(task.generatedSiteId):[];
       const siteState=task.generatedSiteId?store.siteState(task.generatedSiteId):undefined;
       const siteDeliveryHeader=siteHeaders.find(h=>h.delivery&&(!siteState||h.siteRevision===siteState.revision))||siteHeaders.find(h=>h.delivery);
-      const deliverySource=task.delivery?task:evalTask?.delivery?evalTask:siteDeliveryHeader?store.task(siteDeliveryHeader.id):(task.kind==='evaluation'?task:store.currentReport(task)||evalTask||(task.kind==='generation'&&task.generatedSiteId&&task.status==='completed'?task:undefined));
-      return {task:deliverySource?{id:deliverySource.id,kind:deliverySource.kind,environmentId:deliverySource.environmentId,status:deliverySource.status,delivery:deliverySource.delivery,report:deliverySource.report?{quality:deliverySource.report.quality}:null}:null,...(autoDelivery!==undefined?{autoDelivery}:{}),...(task.kind==='generation'?{autoEvaluate:shouldEvaluateAfterGeneration(task,vault.automation())}:{})};
+      const completedEval=evalTask?.status==='completed'&&Boolean(evalTask.report)?evalTask:undefined;
+      const currentReport=store.currentReport(task);
+      const fallbackGen=task.kind==='generation'&&task.generatedSiteId?task:undefined;
+      const deliverySource=task.delivery
+        ?task
+        :evalTask?.delivery
+          ?evalTask
+          :siteDeliveryHeader
+            ?store.task(siteDeliveryHeader.id)
+            :(task.kind==='evaluation'?task:currentReport||completedEval||fallbackGen||evalTask);
+      const eligibility=deliverySource?inspectTaskDeliveryEligibility(deliverySource,store,vault,owns):undefined;
+      return {
+        task:deliverySource?{id:deliverySource.id,kind:deliverySource.kind,environmentId:deliverySource.environmentId,status:deliverySource.status,stopped:deliverySource.stopped,generatedSiteId:deliverySource.generatedSiteId,delivery:deliverySource.delivery,report:deliverySource.report?{quality:deliverySource.report.quality}:null}:null,
+        ...(eligibility?{canDeliver:eligibility.canDeliver,canForceDeliver:eligibility.canForceDeliver,...(eligibility.forceReason?{forceDeliverReason:eligibility.forceReason}:{}),canForceRetry:eligibility.canForceRetry}:{}),
+        ...(autoDelivery!==undefined?{autoDelivery}:{}),
+        ...(task.kind==='generation'?{autoEvaluate:shouldEvaluateAfterGeneration(task,vault.automation())}:{}),
+      };
     }
     const source=task.kind==='evaluation'?task:task.evaluationTaskId?store.task(task.evaluationTaskId):undefined;
     const round=z.coerce.number().int().min(0).max(10).optional().parse((request.query as Record<string,unknown>).round);const selected=round===undefined?undefined:task.optimization?.rounds.find(r=>r.number===round);if(round!==undefined&&!selected)throw new Conflict('优化轮次不存在');const current=selected?store.task(selected.evaluationTaskId||''):task.kind==='evaluation'?source:store.currentReport(task);return {taskId:current?.id||null,report:current?.report?{...current.report,...(current.report.completeness?{completeness:{...current.report.completeness,checks:[]}}:{})}:null,rule:task.rule||null,evaluation:current?{scope:current.scope,scenario:current.scenario,siteUrl:current.siteUrl,createdAt:current.createdAt,status:current.status}:undefined,historical:round!==undefined,selectedRound:selected?{brief:selected.brief,progress:selected.progress}:undefined,optimization:task.optimization?{state:task.optimization.state,reason:task.optimization.reason,rounds:task.optimization.rounds.map(r=>{const evaluation=r.evaluationTaskId?store.task(r.evaluationTaskId):undefined;return {number:r.number,generationTaskId:r.generationTaskId,evaluationTaskId:r.evaluationTaskId,status:evaluation?.status||store.task(r.generationTaskId)?.status,scores:evaluation?.report?.scores||null,summary:brief(r.progress?.reason||evaluation?.report?.summary||'等待本轮独立复评')};})}:undefined};
   });
-  app.post('/api/automation/tasks/:id/delivery',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task)throw new Conflict('任务不存在');if(store.dispositions.get('delivery',task.generatedSiteId||task.id))throw new Conflict('该生成站已归档，请先移回在列后再发起交付');return queueDelivery(task,store,vault);});
+  app.post('/api/automation/tasks/:id/delivery',async(request)=>{const{id}=params.parse(request.params);const body=z.object({force:z.boolean().optional()}).optional().parse(request.body??undefined);const task=store.task(id);if(!task)throw new Conflict('任务不存在');if(store.dispositions.get('delivery',task.generatedSiteId||task.id))throw new Conflict('该生成站已归档，请先移回在列后再发起交付');return queueDelivery(task,store,vault,{force:Boolean(body?.force)});});
   app.post('/api/automation/tasks/:id/delivery/receipt',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||!['uncertain','failed'].includes(task.delivery.status))throw new Conflict('只能为已停止且待核查的交付补录回执');if(task.delivery.target)throw new Conflict('已有目标回执，请恢复核验；不能替换目标');task.delivery.target=deliveryReceipt(request.body);task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'操作者补录目标回执；仅核验目标环境，不重发迁移');return task;});
-  app.post('/api/automation/tasks/:id/delivery/retry',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||task.delivery.target||task.delivery.status!=='failed'||task.delivery.attemptedAt)throw new Conflict('只有确认从未发出迁移请求的交付才可直接重试');task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'重新排队未发送过的迁移准备；保留源站与评测记录');return task;});
+  app.post('/api/automation/tasks/:id/delivery/retry',async(request)=>{
+    const{id}=params.parse(request.params);
+    const body=z.object({force:z.boolean().optional()}).optional().parse(request.body??undefined);
+    const force=Boolean(body?.force);
+    const task=store.task(id);
+    if(!force){
+      if(!task?.delivery||owns(id)||task.delivery.target||task.delivery.status!=='failed'||task.delivery.attemptedAt)throw new Conflict('只有确认从未发出迁移请求的交付才可直接重试');
+      task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';store.put(task);store.event(id,'重新排队未发送过的迁移准备；保留源站与评测记录');return task;
+    }
+    if(!task?.delivery||owns(id)||task.delivery.target||task.delivery.stopped===false||!['uncertain','failed'].includes(task.delivery.status))throw new Conflict('只能为已停止且尚无目标回执的异常交付强制重发');
+    if(!task.stopped||['queued','running','following-up','cancelling'].includes(task.status))throw new Conflict('当前任务尚未确认停止，请等待结束并确认停止后再重发交付');
+    if(store.dispositions.get('delivery',task.generatedSiteId||task.id))throw new Conflict('该生成站已归档，请先移回在列后再重发交付');
+    if(store.domainReserved(task.generatedSiteId))throw new Conflict('站点正在换绑域名，请稍后安排交付');
+    if(task.generatedSiteId&&store.tasks().some(t=>t.id!==task.id&&t.generatedSiteId===task.generatedSiteId&&(!t.stopped||['queued','following-up'].includes(t.status))))throw new Conflict('同一个源站还有执行任务，请等待结束');
+    delete task.delivery.attemptedAt;
+    task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';task.delivery.forced=true;task.delivery.updatedAt=Date.now();
+    store.put(task);store.event(id,'操作者已核查目标环境并强制重发跨环境迁移；源站及原报告保留');
+    return task;
+  });
   app.post('/api/automation/tasks/:id/delivery/verify',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery?.target||task.delivery.stopped===false||owns(id)||!['failed','completed'].includes(task.delivery.status))throw new Conflict('请先取得目标回执并等待本轮结束');task.delivery.status='queued';task.delivery.attempts=0;task.delivery.nextAt=Date.now();task.delivery.error='';delete task.delivery.verificationThreadId;store.put(task);store.event(id,'已安排恢复交付核验，保留原迁移目标');return task;});
   app.post('/api/automation/tasks/:id/delivery/confirm-stopped',async(request)=>store.db.transaction(()=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||owns(id)||task.delivery.stopped!==false||!['failed','uncertain'].includes(task.delivery.status))throw new Conflict('只能确认已中断且停止状态不明的交付');checkConfirmation(request.body,task);task.delivery.stopped=true;store.put(task);store.event(id,'操作者已确认原交付执行停止，可恢复原目标核验');return task;}));
   app.post('/api/automation/tasks/:id/delivery/cancel',async(request)=>{const{id}=params.parse(request.params);const task=store.task(id);if(!task?.delivery||!['queued','running','verifying'].includes(task.delivery.status))throw new Conflict('当前没有可停止的交付');if(owns(id))cancel(id);else{task.delivery.status=task.delivery.attemptedAt&&!task.delivery.target?'uncertain':'failed';task.delivery.error='操作者已停止交付。源站及原报告保留。';store.put(task);}return task;});

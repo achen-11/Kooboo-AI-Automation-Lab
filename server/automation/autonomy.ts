@@ -123,6 +123,8 @@ export function prepareManualFollowupResume(task: AutomationTask, store: Automat
     at: now,
     afterInterrupt,
     ...(afterInterrupt && followup.lastAction?.reason ? { previousInterruptReason: followup.lastAction.reason.slice(0, 600) } : {}),
+    ...(task.generation?.runId ? { previousRunId: task.generation.runId } : {}),
+    ...(task.generation?.deliveryId ? { previousDeliveryId: task.generation.deliveryId } : {}),
   };
   const rem = autonomousWindowRemaining(task);
   const hasRequestsTable = Boolean(store.db.prepare("SELECT name FROM sqlite_master WHERE name='auto_model_requests'").get());

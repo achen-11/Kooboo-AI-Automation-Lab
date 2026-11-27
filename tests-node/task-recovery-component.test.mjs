@@ -55,15 +55,16 @@ const descendants = node => node.children.flatMap(child => [child, ...descendant
 const text = node => ((node.tag === '#comment' ? '' : node.text) + node.children.map(text).join('')).trim();
 async function settle() { for (let i = 0; i < 4; i++) { await new Promise(resolve => setImmediate(resolve)); await nextTick(); } }
 const summary = (id, kind = 'evaluation') => ({ id, kind, resourceId: 'resource', resourceName: 'Car Repair', scenario: 'site-template', scope: 'site', environmentId: '', generatedSiteId: 'site', status: 'interrupted', stopped: false, createdAt: 1, updatedAt: 1, siteUrl: '', report: null, attention: '原评测执行尚未确认停止', nextStep: '确认停止后恢复' });
-async function fixture({ pair = false, fail = false, legacy = false, cancelled = false, namingConflict = false, pendingConfirm = false, workflowActive = false, windowedFollowup = false, taskStatus, retainActiveOnResume = false } = {}) {
+async function fixture({ pair = false, fail = false, legacy = false, cancelled = false, namingConflict = false, pendingConfirm = false, switchConversation = false, workflowActive = false, windowedFollowup = false, taskStatus, retainActiveOnResume = false } = {}) {
   const previous = new Map(['window', 'document', '__recoveryServices'].map(key => [key, Object.getOwnPropertyDescriptor(globalThis, key)]));
   const document = Object.assign(new EventTarget(), { hidden: false });
   const window = Object.assign(new EventTarget(), { location: { hash: cancelled ? '#/tasks/root' : '#/tasks/root?tab=execution' }, history: { replaceState() {} } });
-  const root = summary('root', pair || cancelled || namingConflict || pendingConfirm ? 'generation' : 'evaluation'), child = summary('child');
+  const root = summary('root', pair || cancelled || namingConflict || pendingConfirm || switchConversation ? 'generation' : 'evaluation'), child = summary('child');
   if (pair) Object.assign(root, { status: 'completed', stopped: true, attention: '', evaluationTaskId: child.id });
   if (cancelled) Object.assign(root, { generatedSiteId: null, status: 'cancelled', stopped: true, attention: '', nextStep: '' });
   if (namingConflict) Object.assign(root, { generatedSiteId: null, stopped: true, canAdjustSiteNames: true, attention: '自定义站点名或子域名已被占用' });
   if (pendingConfirm) Object.assign(root, { stopped: true, canAnswerPendingInput: true, attention: 'AI 需要人工确认或补充资料后才能继续' });
+  if (switchConversation) Object.assign(root, { stopped: true, canSwitchConversation: true, attention: '首页生成再次中断，已暂停自动重试' });
   if (workflowActive) Object.assign(root, { stopped: true, attention: 'AI 跟进已达到配置的次数、时间或 token 预算，当前流程仍未完成。' });
   if (taskStatus) Object.assign(root, { status: taskStatus, stopped: !['running', 'cancelling'].includes(taskStatus), attention: '', nextStep: '' });
   let activeBlocker = workflowActive ? { tasks: 1, reason: '同工作流仍有活动执行（1 个任务未停止），请等待全部停止或强制中断后恢复' }
@@ -82,6 +83,7 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
         task.status = 'queued'; task.attention = '';
       }
       if (path.endsWith('/adjust-site-names')) { task.status = 'queued'; task.attention = ''; task.canAdjustSiteNames = false; }
+      if (path.endsWith('/generation-context/handoff')) { task.status = 'queued'; task.attention = ''; task.canSwitchConversation = false; }
       task.updatedAt++;
       return structuredClone(task);
     }
@@ -89,7 +91,7 @@ async function fixture({ pair = false, fail = false, legacy = false, cancelled =
     if (path.includes('/sections/execution')) {
       const task = path.includes('taskId=child') ? child : root;
       const followup = windowedFollowup ? { state: 'interrupted', attempts: 6, elapsedMs: 42000, startedAt: 1, nextAt: 1, tokens: 500, threadId: 't-1', executionStopped: true, observations: [], policy: { enabled: true, maxAttempts: 5, maxMinutes: 20, maxTokens: 10000000, maxRequests: 80, concurrency: 1, sop: 'sop' }, window: { index: 1, startedAt: 2, attemptsBase: 5, tokensBase: 400, elapsedMsBase: 36000 } } : undefined;
-      return structuredClone({ task: legacy ? undefined : { id: task.id, kind: task.kind, status: task.status, stopped: task.stopped, canAdjustSiteNames: task.canAdjustSiteNames, canAnswerPendingInput: task.canAnswerPendingInput }, context: '', error: '', followup, interruption: task.status === 'interrupted' ? { reason: task.attention, evidence: [], nextSteps: ['先确认停止再恢复'], resumeFrom: '保留证据', attempted: [] } : undefined });
+      return structuredClone({ task: legacy ? undefined : { id: task.id, kind: task.kind, status: task.status, stopped: task.stopped, canAdjustSiteNames: task.canAdjustSiteNames, canSwitchConversation: task.canSwitchConversation, canAnswerPendingInput: task.canAnswerPendingInput }, context: '', error: '', followup, interruption: task.status === 'interrupted' ? { reason: task.attention, evidence: [], nextSteps: ['先确认停止再恢复'], resumeFrom: '保留证据', attempted: [] } : undefined });
     }
     throw Error(`Unexpected request ${path}`);
   };
@@ -276,5 +278,20 @@ test('pending ask_user_input promotes primary recovery button to 回答 AI 确�
     await f.buttons('回答 AI 确认')[0].props.onClick(); await settle();
     assert.deepEqual(f.openedSupplement, ['manual']);
     assert.equal(f.calls.filter(c => c.method === 'POST').length, 0, 'clicking answer button opens dialog without sending POST /resume');
+  } finally { f.close(); }
+});
+
+test('non-413 failed generation exposes secondary 换新会话继续 alongside 恢复任务 and routes to handoff endpoint', async () => {
+  const f = await fixture({ switchConversation: true });
+  try {
+    assert.equal(f.buttons('恢复任务').length, 2, 'header and execution panel expose primary resume');
+    assert.equal(f.buttons('换新会话继续').length, 2, 'header and execution panel expose secondary conversation switch');
+    await f.buttons('换新会话继续')[0].props.onClick(); await settle();
+    assert.deepEqual(
+      f.calls.filter(c => c.method === 'POST').map(c => c.path),
+      ['/automation/tasks/root/generation-context/handoff'],
+    );
+    assert.equal(f.root.status, 'queued');
+    assert.equal(f.buttons('换新会话继续').length, 0);
   } finally { f.close(); }
 });

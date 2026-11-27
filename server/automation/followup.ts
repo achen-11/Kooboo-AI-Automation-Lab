@@ -17,7 +17,7 @@ import { FollowupRuntimeError } from './errors.js';
 import { optimizationEvidence, planningImageInput } from './optimization-evidence.js';
 import { copyHarnessReferences } from './harness.js';
 import { migrationRepairContext } from './migration-verification.js';
-import { followupRequestPolicy, followupAccountState, isConfirmedCloneFailure, retainStoppedFollowupReservations } from './autonomy.js';
+import { followupRequestPolicy, followupAccountState, isConfirmedCloneFailure, isModelBillingOrAuthError, retainStoppedFollowupReservations } from './autonomy.js';
 import { collectionTargetRepairContext } from './collection/report.js';
 import { collectionSourceGaps, recollectionObjectiveSchema, validateRecollectionAction } from './collection/recollection.js';
 import { followupTaskContext, followupReportComparison, selectFollowupTaskEvents, PLATFORM_HARD_CONTRACTS } from './followup-context.js';
@@ -127,6 +127,26 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
   ){
     throw new Error('当前任务 transferComplete=true 且 prepared=true，克隆与资料准备已完成（cloneEnvironmentFallback 仅为原环境历史回退记录，不适用源站克隆失败止损契约）；严禁按 source-access 中断，请依据 generation 阶段实时桥接与会话状态继续推进（如桥接已就绪且尚未发出首条消息，应提交 retry）');
   }
+  if(
+    action.action==='interrupt'&&
+    task.kind==='generation'&&
+    task.followup?.manualResume?.afterInterrupt===true&&
+    task.generation?.prepared===true&&
+    inspection.execution?.ready===true&&
+    !inspection.execution.running&&
+    !inspection.execution.pending&&
+    inspection.execution.canSend!==false&&
+    ['failed','interrupted'].includes(inspection.execution.state)&&
+    matchingGenerationOutcome(task,inspection.execution)&&
+    Boolean(task.followup.manualResume.previousRunId)&&
+    inspection.execution.runId===task.followup.manualResume.previousRunId&&
+    !hasExecutionPayloadTooLarge(task,inspection)&&
+    !isConfirmedCloneFailure(task,action.reason)&&
+    !isModelBillingOrAuthError(action.reason)&&
+    !['target-auth','source-access','site-collision','need-human-input'].includes(action.userSummary?.category||'')
+  ){
+    throw new Error('当前为操作者人工点击「恢复任务」后的首轮跟进，inspect_execution 返回的仍是恢复前的同一历史失败 runId 且会话可继续发送（canSend=true、无待输入调用、无 413/鉴权/源站硬阻断）；人工恢复尚未触发任何新执行，禁止直接沿用历史失败状态再次 interrupt，请提交 retry 或 continue 发起一次新的生成执行。');
+  }
   if(['retry','continue','answer','evaluate'].includes(action.action)&&!task.followup?.executionStopped)throw new Error('尚未确认原执行停止，只能查证、等待或明确中断');
   if(action.action==='retry'&&isConfirmedCloneFailure(task,task.error))throw new Error('源站克隆已确认失败（导入 0 页），禁止继续自动 retry；请使用 interrupt 交由人工核查源网址、手动导入页面或跳过原站克隆');
   if(action.action==='retry'&&inspection.execution?.running)throw new Error('已观察到原会话仍在执行，不能重试');
@@ -231,6 +251,7 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
       diagnostics:{
         manualResumeAfterInterrupt:Boolean(task.followup?.manualResume?.afterInterrupt),
         manualResumedAt:task.followup?.manualResume?.at??null,
+        manualResumePreviousRunId:task.followup?.manualResume?.previousRunId??null,
         createAttempted:task.kind==='generation'?Boolean(task.generation?.createAttempted):null,
         hasGeneratedSite:Boolean(task.generatedSiteId),
         transferComplete:task.kind==='generation'?Boolean(task.generation?.transferComplete):null,
@@ -314,7 +335,7 @@ export async function executeFollowup(task:AutomationTask,store:AutomationStore,
     const windowAttempts=task.followup.attempts-(activeWindow?.attemptsBase||0);
     const promptNotes=[
       task.followup.manualResume?.afterInterrupt
-        ?'人工恢复上下文：这是人工确认后的重新检查（上一次跟进决策为 interrupt，已重置会话上下文）。请基于当前实时查证结果重新决策，不要沿用历史中断结论，也不要把“已转交内置 AI 跟进”事件误判为建站或调度失败。'
+        ?'人工恢复上下文：这是人工确认后的重新检查（上一次跟进决策为 interrupt，已重置会话上下文）。点击「恢复任务」本身不会改变 Kooboo 远端静态历史状态；若 inspect_execution 返回的仍是恢复前的同一历史失败 runId（manualResumePreviousRunId）且 canSend=true、无 pending、无 413/鉴权/源站硬阻断，严禁仅因“仍为 failed / 历史无进展”再次直接 interrupt，必须提交 retry 或 continue 发起一次新的生成执行。同时不要把“已转交内置 AI 跟进”事件误判为建站或调度失败。'
         :'',
       task.kind==='generation'&&!task.generatedSiteId&&!task.generation?.createAttempted
         ?'建站状态说明：当前 generatedSiteId=null 且 generation.createAttempted=false，表示尚未建站也未发出建站请求（无重复建站风险）；若前置网络或环境条件已恢复，应优先评估 retry 重新准备建站，不要仅因尚未绑定站点直接 interrupt。'

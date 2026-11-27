@@ -12,6 +12,7 @@ import { RequestBudget, retainRequestReservation } from '../server/automation/re
 import { retainStoppedFollowupReservations, correctUnsentPlanningAttempts } from '../server/automation/budget-recovery.js';
 import { optimizationBudgetReason } from '../server/automation/optimization.js';
 import { AutomationWorker } from '../server/automation/worker.js';
+import { taskRecoveryAction, taskSummary } from '../shared/task-presentation.js';
 
 test('only proven unsent current planning attempts can be corrected after the missing evidence is fixed',async()=>{
   const f=await fixture();try{
@@ -486,5 +487,113 @@ test('BackgroundWorkers IPC cancel awaits child-process settlement and immediate
   } finally {
     await f.app.close();
     rmSync(directory, { recursive: true, force: true });
+  }
+});
+
+test('POST /resume directly queues failed prepared generation task for same-session continuation while preserving 413 handoff routing', async () => {
+  const f = await fixture();
+  try {
+    const settings = f.vault.automation();
+    const deliveryId = randomUUID();
+    const runId = randomUUID();
+    const convId = randomUUID();
+    const task = f.store.create({
+      resourceIds: [f.task.resourceId],
+      kind: 'generation',
+      scope: 'homepage',
+      environmentId: '',
+      requirements: '',
+    }, settings)[0];
+    const site = { id: randomUUID(), resourceId: task.resourceId, versionId: task.versionId, environmentId: '', siteId: randomUUID(), name: 'FailedUpgradeSite', url: 'https://failed-upgrade.invalid/', createdAt: Date.now() };
+    f.store.saveSite(site);
+    task.generatedSiteId = site.id;
+    task.siteUrl = site.url;
+    task.stage = 'generation';
+    task.generation = {
+      prepared: true,
+      createAttempted: true,
+      transferComplete: true,
+      conversationId: convId,
+      deliveryId,
+      deliveryState: 'accepted',
+      state: 'failed',
+      runId,
+      pending: null,
+    };
+    f.store.scheduleFollowup(task, settings.followup);
+    task.followup!.attempts = 5;
+    task.followup!.tokens = 1871352;
+    task.followup!.elapsedMs = 399503;
+    task.followup!.threadId = 'old-interrupt-thread';
+    task.followup!.lastAction = { action: 'interrupt', reason: '人工恢复后仍未看到新的有效执行进展', evidence: ['obs-1'], nextSteps: ['检查'] };
+    task.stopped = true;
+    f.store.interrupt(task, {
+      reason: '执行仍为 failed、running=false、pending=null 且 canSend=true',
+      evidence: ['obs-1'],
+      attempted: [],
+      nextSteps: ['检查后恢复'],
+      resumeFrom: '沿用当前生成站继续',
+    });
+
+    const summary = taskSummary(f.store.task(task.id)!);
+    assert.equal(summary.canHandoffConversation, false);
+    assert.equal(summary.canSwitchConversation, true);
+    assert.equal(taskRecoveryAction(summary), 'resume');
+
+    const resumed = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${task.id}/resume`, headers: f.headers });
+    assert.equal(resumed.statusCode, 200, resumed.body);
+    const saved = f.store.task(task.id)!;
+    assert.equal(saved.status, 'queued');
+    assert.equal(saved.error, '');
+    assert.equal(saved.interruption, undefined);
+    assert.equal(saved.generation?.next?.action, 'continue');
+    assert.deepEqual(saved.generation?.next?.retryOf, { deliveryId, runId });
+    assert.equal(saved.followup?.state, 'resolved');
+    assert.equal(saved.followup?.threadId, '');
+    assert.equal(saved.followup?.attempts, 5);
+    assert.equal(saved.followup?.tokens, 1871352);
+    assert.equal(saved.followup?.window?.index, 1);
+
+    // 413 payload-too-large tasks must NOT take failedGenerationContinuation (must stay handoff-eligible instead):
+    const oversized = f.store.create({
+      resourceIds: [f.task.resourceId],
+      kind: 'generation',
+      scope: 'homepage',
+      environmentId: '',
+      requirements: '',
+    }, settings)[0];
+    oversized.generatedSiteId = site.id;
+    oversized.siteUrl = site.url;
+    oversized.stage = 'generation';
+    oversized.generation = {
+      prepared: true,
+      createAttempted: true,
+      transferComplete: true,
+      conversationId: convId,
+      deliveryId: randomUUID(),
+      deliveryState: 'accepted',
+      state: 'failed',
+      runId: randomUUID(),
+      pending: null,
+    };
+    oversized.stopped = true;
+    oversized.status = 'interrupted';
+    oversized.error = '413 Request Entity Too Large';
+    f.store.scheduleFollowup(oversized, settings.followup);
+    oversized.status = 'interrupted';
+    oversized.stopped = true;
+    f.store.put(oversized);
+
+    const oversizedSummary = taskSummary(f.store.task(oversized.id)!);
+    assert.equal(oversizedSummary.canHandoffConversation, true);
+    assert.equal(oversizedSummary.canSwitchConversation, false);
+    assert.equal(taskRecoveryAction(oversizedSummary), 'handoff-conversation');
+
+    const oversizedResume = await f.app.inject({ method: 'POST', url: `/api/automation/tasks/${oversized.id}/resume`, headers: f.headers });
+    assert.equal(oversizedResume.statusCode, 200, oversizedResume.body);
+    assert.equal(f.store.task(oversized.id)!.status, 'following-up');
+    assert.equal(f.store.task(oversized.id)!.generation?.next, undefined);
+  } finally {
+    await f.close();
   }
 });

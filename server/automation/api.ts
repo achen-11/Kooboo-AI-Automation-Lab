@@ -12,7 +12,7 @@ import { Conflict } from '../lib/store.js';
 import { queueDelivery, deliveryReceipt } from './delivery.js';
 import { resolveEnvironmentDelivery } from '../lib/delivery-config.js';
 import { probeCodex } from './probe.js';
-import { brief, compactNotice, taskExecuting, taskSummary, canAdjustTaskSiteNames, canHandoffGenerationConversation, canAnswerPendingInput } from '../../shared/task-presentation.js';
+import { brief, compactNotice, taskExecuting, taskSummary, canAdjustTaskSiteNames, canHandoffGenerationConversation, canSwitchGenerationConversation, canAnswerPendingInput, isConversationPayloadTooLarge } from '../../shared/task-presentation.js';
 import { registerExecutionLogApi } from './execution-log.js';
 import { completenessSettingsSchema } from './completeness.js';
 import { executionTaskIds } from '../../shared/execution-log.js';
@@ -271,6 +271,44 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
         if(task.followup)task.followup.state='resolved';
         store.put(task);store.event(id,'恢复已保存但尚未发出的修复委托；发送前重新校验图片批次与原会话状态。');return task;
       }
+      const failedGenerationContinuation=Boolean(
+        task.kind==='generation'&&
+        task.scenario!=='site-template'&&
+        task.generatedSiteId&&
+        task.generation?.prepared&&
+        task.generation?.conversationId&&
+        task.generation?.deliveryId&&
+        task.generation?.deliveryState==='accepted'&&
+        !task.generation?.pending&&
+        !task.generation?.next&&
+        ['failed','interrupted'].includes(task.generation?.state||'')&&
+        !wasCancelled&&
+        !(root?.optimization&&task.id===root.id&&root.optimization.reportId&&task.stage==='optimization')&&
+        !isConversationPayloadTooLarge(task.interruption?.reason,task.error,task.context),
+      );
+      if(failedGenerationContinuation){
+        task.generation!.next={
+          action:'continue',
+          reason:'人工确认恢复执行；上一轮 Kooboo 生成已确认结束，保留当前站点、已导入资料和历史进度继续完成本任务。',
+          evidence:[],
+          ...(task.generation!.runId?{retryOf:{deliveryId:task.generation!.deliveryId!,runId:task.generation!.runId}}:{}),
+          message:'人工已确认恢复执行。上一轮执行已确认中断且未完成当前任务。请保留当前站点、已导入资料和已完成内容，不要新建站点，避免重复读取已查看过的全部原文与截图，直接继续完成原定范围并收尾。',
+        };
+        task.status='queued';delete task.interruption;task.error='';
+        if(task.followup){
+          task.followup.policy=structuredClone(root?.optimization?.recoveryPolicy||vault.automation().followup);
+          prepareManualFollowupResume(task,store);
+          task.followup.state='resolved';
+          task.followup.executionStopped=true;
+          task.followup.threadId='';
+          delete task.followup.imageThread;
+          delete task.followup.manualResume;
+        }
+        clearSiteRetry(task,store);
+        store.put(task);
+        store.event(id,'人工恢复生成：上一轮执行已确认失败，已直接排入队列并在原站原会话继续执行（保留当前站点与已导入资料）。');
+        return task;
+      }
       correctUnsentPlanningAttempts(task,store,directory);
       // An explicit resume permits a fresh inspection after external conditions
       // change; a historical no-progress guard must not skip that inspection.
@@ -420,6 +458,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
       const items=store.db.prepare('SELECT seq,time,message FROM auto_events WHERE task_id=? ORDER BY seq DESC LIMIT ? OFFSET ?').all(selected.id,q.pageSize,(page-1)*q.pageSize);
       const canAdjustSiteNames=canAdjustTaskSiteNames(selected);
       const canHandoffConversation=canHandoffGenerationConversation(selected);
+      const canSwitchConversation=canSwitchGenerationConversation(selected);
       const canAnswerPending=canAnswerPendingInput(selected);
       const interruption=selected.interruption&&canAdjustSiteNames?{...selected.interruption,nextSteps:['点击“自动调整名称并继续”，检查可用的名称和子域名后恢复原任务。']}:selected.interruption;
       const humanNotice=(interruption||selected.error||['pending','failed','interrupted'].includes(selected.status))
@@ -437,7 +476,7 @@ export function registerAutomationApi(app:FastifyInstance,store:AutomationStore,
             lastAction:selected.followup?.lastAction,
           }))
         :undefined;
-      return {task:{id:selected.id,kind:selected.kind,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{}),...(canHandoffConversation?{canHandoffConversation:true}:{}),...(canAnswerPending?{canAnswerPendingInput:true}:{})},context:selected.context,followup:selected.followup,interruption,humanNotice,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
+      return {task:{id:selected.id,kind:selected.kind,status:selected.status,stopped:selected.stopped,...(canAdjustSiteNames?{canAdjustSiteNames:true}:{}),...(canHandoffConversation?{canHandoffConversation:true}:{}),...(canSwitchConversation?{canSwitchConversation:true}:{}),...(canAnswerPending?{canAnswerPendingInput:true}:{})},context:selected.context,followup:selected.followup,interruption,humanNotice,error:selected.error,items,total,pages,page,pageSize:q.pageSize,related:task.optimization?store.workflowIds(task).map(taskId=>{const item=store.task(taskId)!;return {id:taskId,label:taskId===task.id?'总流程':(item.optimizationRound?'修复 '+item.optimizationRound:'初始')+' · '+(item.kind==='generation'?'生成':'评测')};}):undefined};
     }
     if(section==='delivery'){
       const autoDelivery=task.autoDelivery??store.root(task)?.autoDelivery;

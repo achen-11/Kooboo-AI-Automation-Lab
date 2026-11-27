@@ -1100,3 +1100,150 @@ test('resolved cloneEnvironmentFallback is annotated for followup, cannot be int
     await f.close();
   }
 });
+
+test('validateFollowupAction blocks immediate interrupt on identical previousRunId after manual resume unless hard blocker or new runId appears', async () => {
+  const f = await fixture();
+  try {
+    const task = f.create();
+    const site = f.attach(task);
+    const convId = randomUUID();
+    const deliveryId = randomUUID();
+    const oldRunId = randomUUID();
+    task.scenario = 'upgrade';
+    task.stage = 'generation';
+    task.status = 'following-up';
+    task.stopped = true;
+    task.generation = {
+      prepared: true,
+      createAttempted: true,
+      transferComplete: true,
+      conversationId: convId,
+      deliveryId,
+      deliveryState: 'accepted',
+      state: 'failed',
+      runId: oldRunId,
+      pending: null,
+    };
+    f.automationStore.scheduleFollowup(task, f.settings.followup);
+    task.followup!.executionStopped = true;
+    task.followup!.manualResume = {
+      at: Date.now(),
+      afterInterrupt: true,
+      previousInterruptReason: '重复无进展',
+      previousRunId: oldRunId,
+      previousDeliveryId: deliveryId,
+    };
+    f.automationStore.put(task);
+
+    const obs = new Set(['obs-1']);
+    const execution: GenerationObservation = {
+      version: 1,
+      taskId: task.id,
+      siteId: site.siteId,
+      conversationId: convId,
+      runId: oldRunId,
+      ready: true,
+      running: false,
+      state: 'failed',
+      observedAt: Date.now(),
+      pending: null,
+      canSend: true,
+      delivery: { id: deliveryId, state: 'accepted', conversationId: convId },
+      outcome: { conversationId: convId, runId: oldRunId, status: 'failed', time: Date.now() },
+      context: [],
+    };
+
+    // 1. Same previousRunId + runtime interrupt must be rejected:
+    assert.throws(
+      () =>
+        validateFollowupAction(
+          {
+            action: 'interrupt',
+            reason: '人工恢复后执行仍为 failed、running=false 且无首页写入',
+            evidence: ['obs-1'],
+            nextSteps: ['排查运行日志'],
+            userSummary: {
+              headline: '生成再次中断',
+              category: 'runtime',
+              explanation: '执行仍处于失败状态',
+              userActions: ['联系管理员'],
+            },
+          },
+          task,
+          { execution },
+          obs,
+        ),
+      /同一历史失败 runId/,
+    );
+
+    // 2. Hard auth/target-auth blocker is still allowed to interrupt:
+    const authInterrupt = validateFollowupAction(
+      {
+        action: 'interrupt',
+        reason: 'Kooboo 登录令牌已失效，HTTP 401',
+        evidence: ['obs-1'],
+        nextSteps: ['刷新环境授权'],
+        userSummary: {
+          headline: 'Kooboo 授权失效',
+          category: 'target-auth',
+          explanation: '目标环境令牌失效',
+          userActions: ['重新登录 Kooboo'],
+        },
+      },
+      task,
+      { execution },
+      obs,
+    );
+    assert.equal(authInterrupt.action, 'interrupt');
+
+    // 3. 413 payload-too-large is still allowed to interrupt:
+    const oversizeInterrupt = validateFollowupAction(
+      {
+        action: 'interrupt',
+        reason: '模型接口返回 413 Request Entity Too Large',
+        evidence: ['obs-1'],
+        nextSteps: ['换新会话继续'],
+        userSummary: {
+          headline: '生成会话请求超限',
+          category: 'runtime',
+          explanation: '会话上下文过大',
+          userActions: ['换新会话继续'],
+        },
+      },
+      task,
+      { execution: { ...execution, context: [{ role: 'assistant', text: 'RequestEntityTooLarge 413 Request Entity Too Large' }] } },
+      obs,
+    );
+    assert.equal(oversizeInterrupt.action, 'interrupt');
+
+    // 4. A new runId (actually executed after manual resume and failed again) is allowed to interrupt:
+    const newRunId = randomUUID();
+    task.generation.runId = newRunId;
+    const newRunInterrupt = validateFollowupAction(
+      {
+        action: 'interrupt',
+        reason: '新一轮生成再次失败',
+        evidence: ['obs-1'],
+        nextSteps: ['人工处理'],
+        userSummary: {
+          headline: '新一轮生成失败',
+          category: 'runtime',
+          explanation: '新一轮已执行但再次失败',
+          userActions: ['换新会话继续'],
+        },
+      },
+      task,
+      {
+        execution: {
+          ...execution,
+          runId: newRunId,
+          outcome: { conversationId: convId, runId: newRunId, status: 'failed', time: Date.now() },
+        },
+      },
+      obs,
+    );
+    assert.equal(newRunInterrupt.action, 'interrupt');
+  } finally {
+    await f.close();
+  }
+});

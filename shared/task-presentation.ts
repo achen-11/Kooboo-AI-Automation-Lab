@@ -5,7 +5,7 @@ import type { SiteDeliveryTarget } from './site-delivery.js';
 export interface OptimizationSummary { state: OptimizationRun['state']; policy: Omit<OptimizationPolicy,'sop'>; round: number; activeTaskId: string; reportId: string | null; reason: string; nextStep: string }
 
 export type TaskTab = 'overview' | 'report' | 'execution' | 'usage' | 'input' | 'delivery';
-export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { kind?: AutomationTask['kind']; canAdjustSiteNames?: boolean; canHandoffConversation?: boolean; canAnswerPendingInput?: boolean };
+export type TaskRecoveryTarget = Pick<AutomationTask, 'id' | 'status' | 'stopped'> & { kind?: AutomationTask['kind']; canAdjustSiteNames?: boolean; canHandoffConversation?: boolean; canSwitchConversation?: boolean; canAnswerPendingInput?: boolean };
 export type TaskRecoveryAction = 'resume' | 'force-resume' | 'confirm-stopped' | 'adjust-site-names' | 'handoff-conversation' | 'answer-pending-input';
 
 export const CONVERSATION_PAYLOAD_TOO_LARGE_PATTERN =
@@ -24,6 +24,20 @@ export function canHandoffGenerationConversation(task: AutomationTask): boolean 
     && Boolean(generation?.prepared)
     && Boolean(generation?.conversationId)
     && isConversationPayloadTooLarge(task.interruption?.reason, task.error, task.context);
+}
+
+export function canSwitchGenerationConversation(task: AutomationTask): boolean {
+  const generation = task.generation;
+  return task.kind === 'generation'
+    && task.stopped === true
+    && ['failed', 'interrupted'].includes(task.status)
+    && Boolean(task.generatedSiteId)
+    && Boolean(generation?.prepared)
+    && Boolean(generation?.conversationId)
+    && generation?.deliveryState !== 'sending'
+    && !hasPendingAskUserInput(task)
+    && ['failed', 'interrupted'].includes(generation?.state || '')
+    && !canHandoffGenerationConversation(task);
 }
 
 export function hasPendingAskUserInput(task: Pick<AutomationTask, 'generation'>): boolean {
@@ -73,6 +87,7 @@ export type TaskSummary = Pick<AutomationTask, 'id' | 'kind' | 'resourceId' | 'r
   nextStep: string;
   canAdjustSiteNames?: boolean;
   canHandoffConversation?: boolean;
+  canSwitchConversation?: boolean;
   canAnswerPendingInput?: boolean;
   autoEvaluate?: boolean;
   autoDelivery?: boolean;
@@ -104,6 +119,7 @@ export function taskSummary(task: AutomationTask): TaskSummary {
   const needsAttention = ['pending', 'failed', 'interrupted'].includes(status);
   const adjustNames = canAdjustTaskSiteNames(task);
   const handoffConversation = canHandoffGenerationConversation(task);
+  const switchConversation = canSwitchGenerationConversation(task);
   const answerPendingInput = canAnswerPendingInput(task);
   const humanAttention = needsAttention
     ? deriveHumanNotice({
@@ -127,6 +143,7 @@ export function taskSummary(task: AutomationTask): TaskSummary {
     nextStep: adjustNames ? '自动调整被占用的站点名称或子域名后继续原任务。' : handoffConversation ? '保留当前站点和资料，自动切换干净新会话继续完成任务。' : answerPendingInput ? '打开回答窗口直接确认或补充输入，回复 Kooboo 挂起请求后继续执行。' : brief(humanAttention?.userActions[0] || task.interruption?.nextSteps[0] || ''),
     canAdjustSiteNames: adjustNames,
     canHandoffConversation: handoffConversation,
+    canSwitchConversation: switchConversation,
     canAnswerPendingInput: answerPendingInput,
     ...(task.autoEvaluate !== undefined ? { autoEvaluate: task.autoEvaluate } : {}),
     ...(task.autoDelivery !== undefined ? { autoDelivery: task.autoDelivery } : {}),

@@ -71,9 +71,9 @@ export function isReferenceDecisionAskUserInput(
 }
 
 const BROWSER_VERIFICATION_CONFIRM_PATTERN =
-  /打开页面|打开预览|打开浏览器|浏览(?:器)?(?:验收|检查|验证|预览|查看)|视觉(?:检查|验收|核验|核查)|桌面.*手机|手机.*桌面|browser\s*(?:verification|check|control|preview)|open\s*(?:the\s*)?(?:page|preview|browser)|visual\s*(?:check|verification|review|inspection)/i;
+  /打开页面|打开预览|打开浏览器|浏览(?:器)?(?:验收|检查|验证|预览|查看)|视觉(?:检查|验收|核验|核查)|桌面.*手机|手机.*桌面|browser\s*(?:verification|check|control|preview)|open\s*(?:the\s*)?(?:page|preview|browser)|visual\s*(?:check|verification|review|inspection)|(?:herladen|reload|refresh|laden|charger|recargar)\b.{0,40}\b(?:preview|browser|homepage|page|seite|pagina)\b|\b(?:preview|pagina)\b.{0,30}\b(?:herladen|reload|refresh|controleren|inspect|verify|check|prüfen|vérifier)\b|(?:desktop|1440(?:px)?).{0,40}(?:mobiel|mobile|mobil|390(?:px)?)|(?:mobiel|mobile|mobil|390(?:px)?).{0,40}(?:desktop|1440(?:px)?)|\b(?:maak|take|capture|make)\s+screenshots?\b|visu(?:eel|elle|ellen|al)\s*(?:check|controle|verific|review|inspect|prüfung)/i;
 const BROWSER_VERIFICATION_EXCLUDE_PATTERN =
-  /删除|delete|清空|覆盖|支付|payment|发送邮件|send\s*email|发布|publish|修改用户|账号|密码|登录|login|参考站|reference\s*site|放弃参考/i;
+  /删除|delete|verwijder|löschen|supprimer|清空|覆盖|支付|payment|发送邮件|send\s*email|发布|publish|修改用户|账号|密码|登录|login|参考站|reference\s*site|放弃参考/i;
 
 export function isBrowserVerificationConfirmAskUserInput(
   pending: GenerationObservation['pending'] | undefined,

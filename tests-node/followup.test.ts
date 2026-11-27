@@ -329,6 +329,54 @@ test('host validation rejects invented evidence, uncertain sends, wrong phases, 
       }),
       false,
     );
+
+    // Non-English/non-Chinese browser verification confirms (e.g. Dutch, German) must also auto-close
+    execution.pending = {
+      callId: 'nl-browser-visual-check',
+      name: 'ask_user_input',
+      args: {
+        kind: 'confirm',
+        question: 'Mag ik de preview herladen en de nieuwe homepage controleren op desktop (1440px) en mobiel (390px)?',
+        description: 'Ik lees dan de gerenderde pagina, maak screenshots en controleer header, hero, secties, leesbaarheid en overflow.',
+      },
+    } as any;
+    assert.equal(isBrowserVerificationConfirmAskUserInput(execution.pending), true);
+    assert.throws(
+      () => validate(decision('interrupt', { reason: '等待人工确认是否允许重载预览', nextSteps: ['确认后恢复'] }), { execution }),
+      /ask_user_input kind=confirm.*answer/,
+    );
+    assert.equal(
+      validate(
+        decision('answer', {
+          callId: 'nl-browser-visual-check',
+          answer: { confirmed: false, kind: 'confirm', value: false, feedback: '无人值守跳过浏览器验收' },
+        }),
+        { execution },
+      ).action,
+      'answer',
+    );
+    assert.equal(
+      isBrowserVerificationConfirmAskUserInput({
+        callId: 'de-browser-visual-check',
+        name: 'ask_user_input',
+        args: {
+          kind: 'confirm',
+          question: 'Darf ich die Vorschau neu laden und die Seite für Desktop und Mobil visuell prüfen?',
+        },
+      }),
+      true,
+    );
+    assert.equal(
+      isBrowserVerificationConfirmAskUserInput({
+        callId: 'nl-delete-confirm',
+        name: 'ask_user_input',
+        args: {
+          kind: 'confirm',
+          question: 'Mag ik de preview herladen en de oude pagina verwijderen?',
+        },
+      }),
+      false,
+    );
     execution.pending={callId:'call',name:'ask_user_input',args:{}} as any;
     t.generation!.deliveryState='sending';assert.throws(()=>validate(decision('answer',{callId:'call',answer:{}}),{execution}),/不确定/);
     t.kind='evaluation';assert.throws(()=>validate(decision('continue',{message:'edit'}),{execution}),/不能直接改站/);assert.equal(validate(decision('retry')).action,'retry');

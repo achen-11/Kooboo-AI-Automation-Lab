@@ -71,7 +71,7 @@ function toggleBatchDeliveryMode() {
     disposition.value = 'active';
     state.value = '';
     address.value = '';
-    deliveryFilter.value = 'undelivered';
+    deliveryFilter.value = 'deliverable';
   }
   page.value = 1;
   selected.value = [];
@@ -413,7 +413,7 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
           class="quick-delivery-btn"
           :class="{ selected: batchDeliveryMode }"
           :aria-pressed="batchDeliveryMode"
-          title="筛选未跨环境交付的站点，批量选择后一键交付；不支持交付的环境将置灰"
+          title="仅筛选当前可跨环境交付的站点，批量选择后一键交付"
           @click="toggleBatchDeliveryMode"
         >
           <Send :size="13" />批量交付<span :class="{ 'count-ready': (data?.deliverableCount ?? 0) > 0 }">{{ data?.deliverableCount ?? 0 }}</span>
@@ -437,7 +437,7 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
       <button class="icon-button" :disabled="loading" aria-label="刷新生成站" @click="reload"><RefreshCw :size="17" /></button>
     </div></div>
     <div v-if="batchDeliveryMode && !selectedRows.length" class="batch-delivery-banner">
-      <span>批量交付模式：仅支持跨环境交付的未交付站点可勾选，未配置交付环境或暂不满足条件的站点已置灰。</span>
+      <span>批量交付模式：仅展示当前满足跨环境交付条件的站点（已自动过滤未配置交付环境、已交付或暂不满足条件的站点）。</span>
       <button type="button" class="text-action" :disabled="batchBusy" @click="toggleBatchDeliveryMode">退出批量交付</button>
     </div>
     <div v-if="selectedRows.length" class="selection-bar">
@@ -545,7 +545,7 @@ onUnmounted(() => { clearInterval(timer); clearTimeout(debounce); });
         </td>
       </tr>
     </tbody></table></div>
-    <div v-if="data && !data.items.length" class="empty-state"><Clock3 :size="30" /><h2>{{ query || state || address ? '没有匹配的生成站' : disposition === 'completed' ? '暂无已完成的生成站' : disposition === 'discarded' ? '暂无已舍弃的生成站' : '暂无在列生成站' }}</h2><p>{{ disposition === 'active' ? '从资源库创建任务，生成、跟进、评测与后续修复会归入同一个生成站。' : '可切换归档状态返回“在列”查看当前任务。' }}</p></div>
+    <div v-if="data && !data.items.length" class="empty-state"><Clock3 :size="30" /><h2>{{ batchDeliveryMode ? '暂无可批量交付的站点' : query || state || address ? '没有匹配的生成站' : disposition === 'completed' ? '暂无已完成的生成站' : disposition === 'discarded' ? '暂无已舍弃的生成站' : '暂无在列生成站' }}</h2><p>{{ batchDeliveryMode ? '当前在列站点均已完成跨环境交付、所在环境未启用交付，或尚在执行中。' : disposition === 'active' ? '从资源库创建任务，生成、跟进、评测与后续修复会归入同一个生成站。' : '可切换归档状态返回“在列”查看当前任务。' }}</p></div>
     <TablePagination v-if="data" :page="data.page" :pages="data.pages" :total="data.total" :busy="loading" @change="page=$event" />
   </section>
   <DispositionDialog ref="dispositionDialog" @saved="onDispositionSaved" />

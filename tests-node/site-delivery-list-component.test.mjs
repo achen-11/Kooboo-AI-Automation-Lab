@@ -617,9 +617,8 @@ test('SiteDeliveryList batch delivery mode disables non-delivery environment che
       return { ok: true };
     }
     const res = pageResponse(path);
-    res.deliverableCount = 2;
-    res.undeliveredCount = 3;
-    res.items = [
+    const params = new URL('http://local' + path).searchParams;
+    const allItems = [
       rowTemplate('ok', 'HK Site OK', {
         deliveryAction: { eligible: true, taskId: 'task-ok', code: 'ready' },
       }),
@@ -632,7 +631,12 @@ test('SiteDeliveryList batch delivery mode disables non-delivery environment che
         deliveryAction: { eligible: false, code: 'unsupported-env', reason: '当前环境未启用跨环境交付' },
       }),
     ];
-    res.total = 3;
+    res.deliverableCount = 2;
+    res.undeliveredCount = 3;
+    res.items = params.get('delivery') === 'deliverable'
+      ? allItems.filter(item => item.deliveryAction.eligible)
+      : allItems;
+    res.total = res.items.length;
     return res;
   });
 
@@ -664,18 +668,15 @@ test('SiteDeliveryList batch delivery mode disables non-delivery environment che
     await settle();
 
     const params = new URL('http://local' + f.calls.at(-1).path).searchParams;
-    assert.equal(params.get('delivery'), 'undelivered');
+    assert.equal(params.get('delivery'), 'deliverable');
     assert.equal(batchModeBtn.props['aria-pressed'], true);
 
-    // Unsupported-env row checkbox must be disabled (置灰) in batch delivery mode with reason tag & title
+    // Non-deliverable DE row is filtered out in batch delivery mode; only the 2 deliverable rows remain
+    assert.equal(f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择 DE Plain Site').length, 0);
     const okCheckbox = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择 HK Site OK')[0];
-    const deCheckbox = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择 DE Plain Site')[0];
     assert.equal(okCheckbox.props.disabled, false);
-    assert.equal(deCheckbox.props.disabled, true);
-    assert.equal(deCheckbox.props.title, '当前环境未启用跨环境交付');
-    assert.ok(f.text().includes('当前环境未启用跨环境交付'));
 
-    // Select All in batch delivery mode only selects the 2 eligible rows
+    // Select All in batch delivery mode selects the 2 deliverable rows
     const selectAllBatch = f.nodes(n => n.tag === 'input' && n.props['aria-label'] === '选择本页全部生成站')[0];
     selectAllBatch.props.onChange({ target: { checked: true } });
     await settle();

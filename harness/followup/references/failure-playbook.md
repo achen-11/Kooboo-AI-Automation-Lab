@@ -26,7 +26,10 @@
 
 - **典型信号**：Kooboo 会话处于 `ask_user_input`，且原因是视觉截图取证失败、要求用户上传文件（`kind=upload`）、需要用户二选一业务确认或更换网址。
 - **正确处置**：严禁代答或跳过视觉验证，必须 `interrupt`，把 AI 真正问的问题翻译成人话放进 `userActions`。
-- **可自动收尾例外**：若页面已实际写入目标站（`probe_site` / `get_conversation` 已核实），仅在收尾阶段因 `ask_user_input(kind="confirm")` 询问“是否允许打开页面/浏览器进行桌面或手机视图视觉检查”，且不涉及删除/发布/支付/账号/参考站决策，应直接调用 `answer`（`confirmed: false, kind: "confirm", value: false` 并附无人值守跳过浏览器验收说明）让 Kooboo 结束本轮并交接后续评测。
+- **可自动收尾例外**：
+  - `ask_user_input(kind="confirm")` 的标准应答参数格式固定为 `{"confirmed": boolean, "kind": "confirm", "value": boolean, "feedback": "..."}`（严禁通过 `curl` 下载/反查 Kooboo `_Admin/assets/*.js` 前端脚本试探参数）。
+  - 若页面已实际写入目标站（`probe_site` / `get_conversation` 已核实），仅在收尾阶段因 `ask_user_input(kind="confirm")` 询问“是否允许打开页面/浏览器进行桌面或手机视图视觉检查”，且不涉及删除/发布/支付/账号/参考站决策，应直接调用 `answer`（`{"confirmed":false,"kind":"confirm","value":false,"feedback":"..."}`）让 Kooboo 结束本轮并交接后续评测。
+  - 若收尾阶段因 `ask_user_input(kind="confirm")` 询问是否删除临时 `reference-*` 参考研究 Sandbox（不涉及 `sourceSandbox`、`automation-ref-*`、`tpl-*` 或主站/正式站），同样应直接调用 `answer` 提交 `{"confirmed":false,"kind":"confirm","value":false,"feedback":"当前为无人值守自动化模式，保留临时参考研究 Sandbox 供后续评测与修复复用，无需删除，请直接汇总本轮成果并结束。"}` 保留该 Sandbox 并结束本轮，不要 `interrupt`。
 
 ## 5. AI 模型配置、额度或超时异常（`ai-model`）
 

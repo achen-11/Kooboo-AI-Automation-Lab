@@ -7,7 +7,7 @@ import { randomUUID } from 'node:crypto';
 import { createServer } from 'node:http';
 import { createApp } from '../server/app.js';
 import { defaultDeliveryPolicy } from '../shared/automation.js';
-import { queueDelivery, executeDelivery, deliveryReceipt, deliveryRequestUrl } from '../server/automation/delivery.js';
+import { queueDelivery, executeDelivery, deliveryReceipt, deliveryRequestUrl, cleanupSiteTempScreenshots } from '../server/automation/delivery.js';
 
 const KOOBOO_GUIDS = [
   '1adbf7f5-d119-0a84-53bb-2ecddb7d9ff1',
@@ -553,6 +553,163 @@ test('deliveryRequestUrl and executeDelivery append __engine_timeout__ aligned w
     assert.equal(capturedUrls.length, 2);
     assert.equal(capturedUrls[1], '/api/sitemigrate?__engine_timeout__=240');
     assert.equal(t2.delivery!.policy.endpoint, endpoint);
+  } finally {
+    await close(server);
+    await f.close();
+  }
+});
+
+test('cleanupSiteTempScreenshots removes unreferenced /screenshots before sitemigrate and stays non-fatal on errors', async () => {
+  const f = await fixture();
+  const callLog: Array<{ path: string; body?: unknown }> = [];
+  const server = createServer(async (req, res) => {
+    const url = new URL(req.url!, 'http://127.0.0.1');
+    let bodyText = '';
+    for await (const chunk of req) bodyText += chunk;
+    const parsedBody = bodyText ? JSON.parse(bodyText) : undefined;
+    res.setHeader('Content-Type', 'application/json');
+
+    if (url.pathname === '/_api/v2/Site/List') {
+      res.end(JSON.stringify([{ siteId: f.site.siteId, homePageLink: f.site.url }]));
+      return;
+    }
+    if (url.pathname === '/_api/v2/Media/List') {
+      const folderPath = url.searchParams.get('path') || '/';
+      callLog.push({ path: `Media/List?path=${folderPath}` });
+      if (folderPath === '/screenshots') {
+        res.end(
+          JSON.stringify({
+            folders: [{ name: 'processed', fullPath: '/screenshots/processed' }],
+            files: [{ id: 'img-root-1', size: 1024 * 1024, references: {} }],
+          }),
+        );
+        return;
+      }
+      if (folderPath === '/screenshots/processed') {
+        res.end(
+          JSON.stringify({
+            folders: [],
+            files: [{ id: 'img-sub-1', size: 2 * 1024 * 1024, references: null }],
+          }),
+        );
+        return;
+      }
+      res.end(JSON.stringify({ folders: [], files: [] }));
+      return;
+    }
+    if (url.pathname === '/_api/v2/Media/DeleteFolders') {
+      callLog.push({ path: 'Media/DeleteFolders', body: parsedBody });
+      res.end('true');
+      return;
+    }
+    if (url.pathname === '/api/sitemigrate') {
+      callLog.push({ path: 'sitemigrate' });
+      res.end(JSON.stringify({ siteId: KOOBOO_GUIDS[0], siteUrl: 'https://target.test' }));
+      return;
+    }
+    res.end('true');
+  });
+
+  const apiOrigin = await listen(server);
+  const endpoint = `${apiOrigin}/api/sitemigrate`;
+  try {
+    const raw = f.vault.get();
+    f.vault.update({
+      ...raw,
+      environments: raw.environments.map(e => (e.id === f.env ? { ...e, apiOrigin, delivery: { ...e.delivery!, endpoint } } : e)),
+    });
+
+    // 1. executeDelivery removes whole /screenshots folder before sitemigrate when nothing is referenced
+    const t1 = f.done();
+    queueDelivery(t1, f.automationStore, f.vault);
+    await executeDelivery(t1, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000), async task => {
+      task.delivery!.status = 'completed';
+    });
+    assert.deepEqual(callLog, [
+      { path: 'Media/List?path=/screenshots' },
+      { path: 'Media/List?path=/screenshots/processed' },
+      { path: 'Media/DeleteFolders', body: ['/screenshots'] },
+      { path: 'sitemigrate' },
+    ]);
+    assert.ok(
+      f.automationStore.events(t1.id).some(e => /跨环境交付前已清理媒体库 \/screenshots 临时截图（2 张，释放约 3\.00 MiB）/.test(e.message)),
+    );
+
+    // 2. cleanupSiteTempScreenshots preserves referenced images and only deletes unreferenced IDs + clean subfolders
+    const mixedCalls: Array<{ path: string; body?: unknown }> = [];
+    const mixedResult = await cleanupSiteTempScreenshots(async (path, body) => {
+      mixedCalls.push({ path, body });
+      if (path === 'Media/List?path=%2Fscreenshots') {
+        return {
+          folders: [{ fullPath: '/screenshots/processed' }],
+          files: [
+            { id: 'img-used', size: 500_000, references: { Page: 1 } },
+            { id: 'img-unused', size: 250_000, references: {} },
+          ],
+        };
+      }
+      if (path === 'Media/List?path=%2Fscreenshots%2Fprocessed') {
+        return {
+          folders: [],
+          files: [{ id: 'img-slice', size: 750_000 }],
+        };
+      }
+      return true;
+    }, f.site.siteId);
+    assert.deepEqual(mixedResult, {
+      deletedImages: 2,
+      deletedBytes: 1_000_000,
+      deletedFolders: 1,
+      skippedReferenced: 1,
+    });
+    assert.deepEqual(mixedCalls.slice(2), [
+      { path: 'Media/DeleteImages', body: ['img-unused', 'img-slice'] },
+      { path: 'Media/DeleteFolders', body: ['/screenshots/processed'] },
+    ]);
+
+    // 3. Failure during Media/List is non-fatal to executeDelivery
+    const site2 = { ...f.site, id: randomUUID(), siteId: randomUUID(), name: 'GeneratedErr', url: 'https://generated-err.test' };
+    const errServer = createServer((req, res) => {
+      const url = new URL(req.url!, 'http://127.0.0.1');
+      res.setHeader('Content-Type', 'application/json');
+      if (url.pathname === '/_api/v2/Site/List') {
+        res.end(JSON.stringify([{ siteId: site2.siteId, homePageLink: site2.url }]));
+        return;
+      }
+      if (url.pathname === '/_api/v2/Media/List') {
+        res.statusCode = 500;
+        res.end(JSON.stringify({ message: 'Media service unavailable' }));
+        return;
+      }
+      res.end(JSON.stringify({ siteId: KOOBOO_GUIDS[1], siteUrl: 'https://target2.test' }));
+    });
+    const errOrigin = await listen(errServer);
+    try {
+      f.automationStore.saveSite(site2);
+      const rawErr = f.vault.get();
+      f.vault.update({
+        ...rawErr,
+        environments: rawErr.environments.map(e => (e.id === f.env ? { ...e, apiOrigin: errOrigin, delivery: { ...e.delivery!, endpoint: `${errOrigin}/api/sitemigrate` } } : e)),
+      });
+      const t2 = f.automationStore.create(
+        { resourceIds: [f.resource.id], kind: 'evaluation', scope: 'site', environmentId: f.env, generatedSiteId: site2.id, requirements: '' },
+        f.vault.automation(),
+      )[0];
+      t2.requirementsEnabled = false;
+      t2.status = 'completed';
+      t2.report = t1.report;
+      f.automationStore.put(t2);
+      queueDelivery(t2, f.automationStore, f.vault);
+      await executeDelivery(t2, f.automationStore, f.vault, f.directory, AbortSignal.timeout(2000), async task => {
+        task.delivery!.status = 'completed';
+      });
+      assert.equal(t2.delivery!.status, 'completed');
+      assert.ok(
+        f.automationStore.events(t2.id).some(e => /跨环境交付前清理媒体库临时截图失败（不影响继续迁移）/.test(e.message)),
+      );
+    } finally {
+      await close(errServer);
+    }
   } finally {
     await close(server);
     await f.close();

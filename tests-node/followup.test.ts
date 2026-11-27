@@ -12,7 +12,7 @@ import type { ThreadEvent } from '@openai/codex-sdk';
 import { createApp } from '../server/app.js';
 import { defaultAutomationSettings, type AutomationTask, type FollowupAction } from '../shared/automation.js';
 import { AutomationWorker, type Execute } from '../server/automation/worker.js';
-import { executeFollowup, validateFollowupAction, isBrowserVerificationConfirmAskUserInput, type FollowupExecute, type RecoveryInspection } from '../server/automation/followup.js';
+import { executeFollowup, validateFollowupAction, isBrowserVerificationConfirmAskUserInput, isReferenceSandboxCleanupConfirmAskUserInput, type FollowupExecute, type RecoveryInspection } from '../server/automation/followup.js';
 import { httpRead, koobooClient, probeSite, siteIdentity, summarizeMessages } from '../server/automation/kooboo.js';
 import { selectFollowupTaskEvents, followupTaskContext } from '../server/automation/followup-context.js';
 import { executeGeneration } from '../server/automation/generator.js';
@@ -1243,6 +1243,118 @@ test('validateFollowupAction blocks immediate interrupt on identical previousRun
       obs,
     );
     assert.equal(newRunInterrupt.action, 'interrupt');
+  } finally {
+    await f.close();
+  }
+});
+
+test('isReferenceSandboxCleanupConfirmAskUserInput requires confirmed=false and blocks interrupt on temporary reference sandbox cleanup confirms', async () => {
+  const f = await fixture();
+  try {
+    const task = f.create();
+    const site = f.attach(task);
+    f.automationStore.scheduleFollowup(task, f.settings.followup);
+    const obs = new Set(['obs-1']);
+    const baseExecution: NonNullable<RecoveryInspection['execution']> = {
+      version: 1,
+      taskId: task.id,
+      siteId: site.siteId,
+      conversationId: task.generation!.conversationId!,
+      runId: 'run-1',
+      ready: true,
+      running: false,
+      state: 'waiting',
+      observedAt: Date.now(),
+      pending: {
+        callId: 'sandbox-clean-1',
+        name: 'ask_user_input',
+        args: {
+          kind: 'confirm',
+          question: 'Shall I delete the temporary reference study sandbox `reference-kuipers-ref` now that the homepage is finished?',
+          description: 'It contains only the captured reference page and screenshots used for visual study; nothing on the live site depends on it. Deleting it keeps the organization\'s site list clean.',
+        },
+      } as any,
+      context: [],
+    };
+
+    assert.equal(isReferenceSandboxCleanupConfirmAskUserInput(baseExecution.pending), true);
+    assert.throws(
+      () =>
+        validateFollowupAction(
+          {
+            action: 'interrupt',
+            reason: 'AI 询问是否删除临时参考站研读 Sandbox',
+            evidence: ['obs-1'],
+            nextSteps: ['人工确认'],
+          },
+          task,
+          { execution: baseExecution },
+          obs,
+        ),
+      /reference-\*.*answer/,
+    );
+    assert.throws(
+      () =>
+        validateFollowupAction(
+          {
+            action: 'answer',
+            callId: 'sandbox-clean-1',
+            reason: '批准删除临时 Sandbox',
+            evidence: ['obs-1'],
+            answer: { confirmed: true, kind: 'confirm', value: true },
+          },
+          task,
+          { execution: baseExecution },
+          obs,
+        ),
+      /confirmed=false/,
+    );
+    const accepted = validateFollowupAction(
+      {
+        action: 'answer',
+        callId: 'sandbox-clean-1',
+        reason: '保留临时参考研究 Sandbox 供后续评测与修复复用',
+        evidence: ['obs-1'],
+        answer: {
+          confirmed: false,
+          kind: 'confirm',
+          value: false,
+          feedback: '无人值守保留临时参考 Sandbox',
+        },
+      },
+      task,
+      { execution: baseExecution },
+      obs,
+    );
+    assert.equal(accepted.action, 'answer');
+
+    const cnPending = {
+      callId: 'sandbox-clean-cn',
+      name: 'ask_user_input',
+      args: {
+        kind: 'confirm',
+        question: '首页已完成，是否删除临时参考站研读 Sandbox？',
+      },
+    } as any;
+    assert.equal(isReferenceSandboxCleanupConfirmAskUserInput(cnPending), true);
+
+    for (const protectedQuestion of [
+      { question: '是否删除 sourceSandbox 源站沙箱？' },
+      { question: 'Shall I delete sandbox `automation-ref-1234`?' },
+      { question: 'Shall I delete template sandbox `tpl-demo`?' },
+      { question: 'Shall I delete the live site `reference-demo`?' },
+      { question: '参考站无法访问（403），是否放弃参考站并删除 reference-foo 沙箱改由 AI 自由设计？' },
+    ]) {
+      assert.equal(
+        isReferenceSandboxCleanupConfirmAskUserInput({
+          callId: 'protected',
+          name: 'ask_user_input',
+          args: { kind: 'confirm', ...protectedQuestion },
+        } as any),
+        false,
+        `expected false for: ${protectedQuestion.question}`,
+      );
+    }
   } finally {
     await f.close();
   }

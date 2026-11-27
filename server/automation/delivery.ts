@@ -7,7 +7,7 @@ import type { AutomationStore } from './store.js';
 import type { Vault } from '../lib/vault.js';
 import { UnconfirmedStop } from './errors.js';
 import { Conflict } from '../lib/store.js';
-import { koobooClient, siteIdentity, probeSite, publicSiteUrl } from './kooboo.js';
+import { koobooClient, siteIdentity, probeSite, publicSiteUrl, type KoobooRequestFn } from './kooboo.js';
 import { evaluationBrowser } from './browser.js';
 import { codexClient } from './evaluator.js';
 import { usageCapture } from './usage-proxy.js';
@@ -344,6 +344,161 @@ export function deliveryRequestUrl(endpoint: string, timeoutSeconds: number): st
   return url.href;
 }
 
+function formatCleanupBytes(bytes: number): string {
+  if (!Number.isFinite(bytes) || bytes <= 0) return '0 B';
+  if (bytes >= 1024 * 1024) return `${(bytes / (1024 * 1024)).toFixed(2)} MiB`;
+  if (bytes >= 1024) return `${(bytes / 1024).toFixed(1)} KiB`;
+  return `${Math.round(bytes)} B`;
+}
+
+function normalizeMediaFolderPath(raw: unknown): string {
+  const cleaned = String(raw ?? '').trim().replace(/\\/g, '/').replace(/\/+/g, '/');
+  if (!cleaned || cleaned === '/') return '/';
+  const withLead = cleaned.startsWith('/') ? cleaned : `/${cleaned}`;
+  return withLead.endsWith('/') && withLead.length > 1 ? withLead.slice(0, -1) : withLead;
+}
+
+function isMediaItemReferenced(item: any): boolean {
+  const refs = item?.references ?? item?.References ?? item?.relations ?? item?.Relations;
+  if (typeof refs === 'number') return refs > 0;
+  if (Array.isArray(refs)) return refs.length > 0;
+  if (refs && typeof refs === 'object') {
+    return Object.values(refs).some((count) => Number(count) > 0);
+  }
+  return false;
+}
+
+function extractMediaFiles(res: any): any[] {
+  const raw = res?.files ?? res?.Files;
+  if (Array.isArray(raw)) return raw;
+  const list = raw?.list ?? raw?.List ?? raw?.dataList ?? raw?.DataList;
+  return Array.isArray(list) ? list : [];
+}
+
+function extractMediaFolders(res: any): any[] {
+  const raw = res?.folders ?? res?.Folders;
+  return Array.isArray(raw) ? raw : [];
+}
+
+export interface TempScreenshotCleanupResult {
+  deletedImages: number;
+  deletedBytes: number;
+  deletedFolders: number;
+  skippedReferenced: number;
+}
+
+/**
+ * Cleans up unreferenced temporary screenshots stored under `/screenshots` in the Kooboo media library
+ * before cross-environment delivery, avoiding bloated site packages (`P04`) while preserving any image
+ * still referenced by pages/views/styles.
+ */
+export async function cleanupSiteTempScreenshots(
+  request: KoobooRequestFn,
+  siteId: string,
+): Promise<TempScreenshotCleanupResult> {
+  const rootPath = '/screenshots';
+  const visited = new Set<string>();
+  const queue: Array<{ path: string; depth: number }> = [{ path: rootPath, depth: 0 }];
+  const folderNodes = new Map<string, { depth: number; children: string[]; hasOwnReferenced: boolean; hasOwnDeletable: boolean }>();
+  const deletableImages: Array<{ id: string; size: number }> = [];
+  let skippedReferenced = 0;
+
+  while (queue.length > 0 && visited.size < 200) {
+    const current = queue.shift()!;
+    const folderPath = normalizeMediaFolderPath(current.path);
+    if (visited.has(folderPath)) continue;
+    if (folderPath !== rootPath && !folderPath.startsWith(`${rootPath}/`)) continue;
+    visited.add(folderPath);
+
+    const listing = await request(`Media/List?path=${encodeURIComponent(folderPath)}`, undefined, siteId);
+    if (!listing || typeof listing !== 'object' || Array.isArray(listing)) {
+      if (folderPath === rootPath) break;
+      continue;
+    }
+
+    const files = extractMediaFiles(listing);
+    const folders = extractMediaFolders(listing);
+    const childPaths: string[] = [];
+    let hasOwnReferenced = false;
+    let hasOwnDeletable = false;
+
+    for (const file of files) {
+      if (!file || typeof file !== 'object') continue;
+      if (isMediaItemReferenced(file)) {
+        hasOwnReferenced = true;
+        skippedReferenced++;
+        continue;
+      }
+      const id = String(file.id ?? file.Id ?? file.key ?? file.Key ?? '').trim();
+      if (!id) continue;
+      const size = Math.max(0, Number(file.size ?? file.Size ?? 0) || 0);
+      deletableImages.push({ id, size });
+      hasOwnDeletable = true;
+    }
+
+    if (current.depth < 8) {
+      for (const folder of folders) {
+        if (!folder || typeof folder !== 'object') continue;
+        const rawSub = folder.fullPath ?? folder.FullPath ?? folder.path ?? folder.Path;
+        const subName = String(folder.name ?? folder.Name ?? '').trim();
+        const subPath = normalizeMediaFolderPath(
+          rawSub || (subName ? `${folderPath}/${subName}` : ''),
+        );
+        if (!subPath.startsWith(`${folderPath}/`) || visited.has(subPath)) continue;
+        childPaths.push(subPath);
+        queue.push({ path: subPath, depth: current.depth + 1 });
+      }
+    }
+
+    folderNodes.set(folderPath, {
+      depth: current.depth,
+      children: childPaths,
+      hasOwnReferenced,
+      hasOwnDeletable,
+    });
+  }
+
+  const deletedBytes = deletableImages.reduce((sum, img) => sum + img.size, 0);
+  const subfolderCount = [...folderNodes.keys()].filter((p) => p !== rootPath).length;
+
+  if (skippedReferenced === 0 && (deletableImages.length > 0 || subfolderCount > 0)) {
+    await request('Media/DeleteFolders', [rootPath], siteId);
+    return {
+      deletedImages: deletableImages.length,
+      deletedBytes,
+      deletedFolders: folderNodes.has(rootPath) ? 1 + subfolderCount : subfolderCount,
+      skippedReferenced: 0,
+    };
+  }
+
+  for (let i = 0; i < deletableImages.length; i += 100) {
+    const chunk = deletableImages.slice(i, i + 100).map((img) => img.id);
+    await request('Media/DeleteImages', chunk, siteId);
+  }
+
+  // Delete clean descendant folders bottom-up (only when neither the folder nor any descendant contains referenced files).
+  const sortedNodes = [...folderNodes.entries()].sort((a, b) => b[1].depth - a[1].depth);
+  const hasReferencedInSubtree = new Map<string, boolean>();
+  for (const [path, node] of sortedNodes) {
+    const childRef = node.children.some((child) => hasReferencedInSubtree.get(child) === true);
+    hasReferencedInSubtree.set(path, node.hasOwnReferenced || childRef);
+  }
+
+  const cleanSubfolders = sortedNodes
+    .filter(([path]) => path !== rootPath && hasReferencedInSubtree.get(path) === false)
+    .map(([path]) => path);
+  if (cleanSubfolders.length > 0) {
+    await request('Media/DeleteFolders', cleanSubfolders, siteId);
+  }
+
+  return {
+    deletedImages: deletableImages.length,
+    deletedBytes,
+    deletedFolders: cleanSubfolders.length,
+    skippedReferenced,
+  };
+}
+
 export async function executeDelivery(task:AutomationTask,store:AutomationStore,vault:Vault,directory:string,signal:AbortSignal,verify=verifyDelivery){
   const delivery=task.delivery!;
   if(!delivery.target){
@@ -355,6 +510,19 @@ export async function executeDelivery(task:AutomationTask,store:AutomationStore,
     const sourceSite=task.generatedSiteId?store.site(task.generatedSiteId):undefined;
     const sourceUrl=actualSource?await publicSiteUrl(sourceSite?.siteId.toLowerCase()===delivery.sourceSiteId.toLowerCase()?sourceSite:undefined,actualSource,sourceClient.request):undefined;
     if(typeof sourceUrl!=='string'||new URL(sourceUrl).origin!==new URL(delivery.sourceUrl).origin)throw new Error('源环境的站点身份 / 地址与评测记录不一致，禁止迁移；请核对生成站');
+    try {
+      const cleanup = await cleanupSiteTempScreenshots(sourceClient.request, delivery.sourceSiteId);
+      if (cleanup.deletedImages > 0 || cleanup.deletedFolders > 0) {
+        const parts = [`${cleanup.deletedImages} 张`];
+        if (cleanup.deletedBytes > 0) parts.push(`释放约 ${formatCleanupBytes(cleanup.deletedBytes)}`);
+        if (cleanup.skippedReferenced > 0) parts.push(`保留 ${cleanup.skippedReferenced} 张被页面引用的图片`);
+        store.event(task.id, `跨环境交付前已清理媒体库 /screenshots 临时截图（${parts.join('，')}）`);
+      }
+    } catch (cleanupError) {
+      if (signal.aborted) throw cleanupError;
+      const msg = cleanupError instanceof Error ? cleanupError.message : String(cleanupError || '请求异常');
+      store.event(task.id, `跨环境交付前清理媒体库临时截图失败（不影响继续迁移）：${msg}`);
+    }
     const startedAt=Date.now();
     delivery.status='running';delivery.attemptedAt=startedAt;store.put(task);store.event(task.id,'正在迁移生成站至目标环境（不会删除源站）');
     const redactor=deliveryRedactor(vault,[config.token]);

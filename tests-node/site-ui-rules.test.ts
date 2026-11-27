@@ -69,9 +69,21 @@ test('buildSiteUiHardRulesPrompt generates bounded, scenario- and scope-aware v1
     scope: 'site',
     templateMode: 'reference-sandbox',
   });
-  assert.ok(upgradeRefSandbox.length <= 1800);
+  assert.ok(upgradeRefSandbox.length <= 1800, `expected <= 1800 chars, got ${upgradeRefSandbox.length}`);
   assert.match(upgradeRefSandbox, /保留参考视觉 DNA/);
+  assert.match(upgradeRefSandbox, /Header 主 CTA 形态/);
+  assert.match(upgradeRefSandbox, /不得轻易退化为普通 2×2 卡片/);
+  assert.match(upgradeRefSandbox, /禁对高差悬殊列用 align-content:space-between 拉出大段空洞/);
+  assert.match(upgradeRefSandbox, /禁止询问是否删除临时 reference-\* 参考 Sandbox/);
   assert.match(upgradeRefSandbox, /品牌主色\/强调色优先对齐原内容站与商家气质/);
+
+  const upgradeHomepageRef = buildSiteUiHardRulesPrompt({
+    scenario: 'upgrade',
+    scope: 'homepage',
+  });
+  assert.ok(upgradeHomepageRef.length <= 1800, `expected <= 1800 chars, got ${upgradeHomepageRef.length}`);
+  assert.match(upgradeHomepageRef, /Header 主 CTA 形态/);
+  assert.match(upgradeHomepageRef, /核心交互\/色块签名区块/);
 
   const upgradeHomepageDirect = buildSiteUiHardRulesPrompt({
     scenario: 'upgrade',
@@ -85,10 +97,10 @@ test('buildSiteUiHardRulesPrompt generates bounded, scenario- and scope-aware v1
     scope: 'site',
     isContinuation: true,
   });
-  assert.ok(continuation.length <= 220);
+  assert.ok(continuation.length <= 220, `expected <= 220 chars, got ${continuation.length}`);
   assert.match(continuation, /覆写10–11px小字/);
   assert.match(continuation, /严禁改动已达标稳定区段/);
-  assert.match(continuation, /禁调 ask_user_input 询问打开浏览器\/页面做视觉验收/);
+  assert.match(continuation, /禁调 ask_user_input 询问打开浏览器\/页面做视觉验收或删除临时参考 Sandbox/);
 
   assert.equal(buildSiteUiHardRulesPrompt({ scenario: 'app-template', scope: 'site' }), '');
 });

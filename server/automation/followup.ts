@@ -90,6 +90,32 @@ export function isBrowserVerificationConfirmAskUserInput(
   return BROWSER_VERIFICATION_CONFIRM_PATTERN.test(text);
 }
 
+const SANDBOX_TERM_PATTERN = /\bsandbox\b|沙箱/i;
+const SANDBOX_DELETE_VERB_PATTERN = /\b(?:delete|remove|clean(?:\s*up)?|drop|purge)\b|删除|清理|移除/i;
+const REFERENCE_SANDBOX_MARKER_PATTERN =
+  /\breference-[a-z0-9_-]+\b|\breference\s*(?:study|research|preview|site)?\s*sandbox\b|\btemporary\b[\s\S]{0,40}\bsandbox\b|临时[\s\S]{0,20}(?:参考|研读)[\s\S]{0,20}(?:sandbox|沙箱)|(?:参考|研读)[\s\S]{0,20}(?:sandbox|沙箱)/i;
+const SANDBOX_CLEANUP_EXCLUDE_PATTERN =
+  /支付|payment|发送邮件|send\s*email|发布|publish|修改用户|账号|密码|登录|login|sourceSandbox|source-sandbox|automation-ref-|tpl-|主站|目标站|正式站|生产站|(?:delete|remove|drop|purge|删除|清理|移除)\s*(?:the\s*)?(?:live|production|main|target)\s*site/i;
+
+export function isReferenceSandboxCleanupConfirmAskUserInput(
+  pending: GenerationObservation['pending'] | undefined,
+): boolean {
+  if (!pending || pending.name !== 'ask_user_input') return false;
+  const args = pending.args && typeof pending.args === 'object' ? (pending.args as Record<string, unknown>) : {};
+  if (args.kind !== 'confirm') return false;
+  if (isReferenceDecisionAskUserInput(pending)) return false;
+  const text = [args.question, args.description]
+    .filter((value): value is string => typeof value === 'string')
+    .join('\n');
+  if (!text.trim()) return false;
+  if (SANDBOX_CLEANUP_EXCLUDE_PATTERN.test(text)) return false;
+  return (
+    SANDBOX_TERM_PATTERN.test(text) &&
+    SANDBOX_DELETE_VERB_PATTERN.test(text) &&
+    REFERENCE_SANDBOX_MARKER_PATTERN.test(text)
+  );
+}
+
 function hasExecutionPayloadTooLarge(task: AutomationTask, inspection: RecoveryInspection): boolean {
   const tailText = (inspection.execution?.context || [])
     .slice(-3)
@@ -116,6 +142,9 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
   if(action.action==='interrupt'&&!action.nextSteps?.length)throw new Error('中断必须给出下一步做法');
   if(action.action==='interrupt'&&isBrowserVerificationConfirmAskUserInput(inspection.execution?.pending)){
     throw new Error('当前待输入调用仅为收尾阶段的浏览器/页面视觉验收确认（ask_user_input kind=confirm），不属于缺料或参考站阻断；请核实页面后直接调用 answer（confirmed=false, kind="confirm", value=false）通知 Kooboo 跳过浏览器视觉验收并汇总结束本轮，不要中断。');
+  }
+  if(action.action==='interrupt'&&isReferenceSandboxCleanupConfirmAskUserInput(inspection.execution?.pending)){
+    throw new Error('当前待输入调用仅为收尾阶段询问是否删除临时 reference-* 参考研究 Sandbox（ask_user_input kind=confirm），不属于缺料或故障阻断；请直接调用 answer 提交 {"confirmed":false,"kind":"confirm","value":false,"feedback":"当前为无人值守自动化模式，保留临时参考研究 Sandbox 供后续评测与修复复用，无需删除，请直接汇总本轮成果并结束。"}，不要中断。');
   }
   if(
     action.action==='interrupt'&&
@@ -174,6 +203,9 @@ export function validateFollowupAction(raw:unknown,task:AutomationTask,inspectio
     if(action.action==='answer'&&(!action.answer||!state.pending||action.callId!==state.pending.callId))throw new Error('回答必须对应当前待输入调用及其参数');
     if(action.action==='answer'&&state.pending?.name==='ask_user_input'&&state.pending.args?.kind==='upload')throw new Error('待输入调用要求用户上传文件（kind=upload），自动跟进不能伪造上传结果，请改用 interrupt 说明原因与下一步');
     if(action.action==='answer'&&isReferenceDecisionAskUserInput(state.pending,action.answer))throw new Error('待输入调用涉及参考站获取失败或是否放弃参考站改为 AI 自由设计的决策，自动跟进严禁代答放行，请改用 interrupt 交由用户决定（更换参考 URL、上传参考截图或明确授权自由设计）');
+    if(action.action==='answer'&&isReferenceSandboxCleanupConfirmAskUserInput(state.pending)&&action.answer?.confirmed!==false){
+      throw new Error('临时参考研究 Sandbox 清理确认在无人值守模式下必须回答 confirmed=false（保留供后续评测与修复复用），禁止自动批准删除 Sandbox。');
+    }
   }
   if(action.action==='evaluate') {
     if(task.generation?.next)throw new Error('仍有尚未发送的本轮委托，不能使用上一轮完成回执交接评测');
@@ -350,7 +382,7 @@ ${PLATFORM_HARD_CONTRACTS}
 查询示例：{"tool":"get_task"}。其他查询工具：get_conversation、get_site、probe_site、inspect_execution。工具返回 evidenceId，行动必须引用本轮已取得的 evidenceId。
 行动示例：{"tool":"act","decision":{"action":"retry","reason":"依据实际错误决定重试本阶段","evidence":["工具返回的 evidenceId"]}}。
 action 可选 retry（重新执行当前阶段，保留已有站点和证据）、continue（原站原会话继续，需 message）、answer（处理待输入调用，需 callId 和符合调用要求的 answer 参数对象）、evaluate（确认交付后接入独立评测）、wait（waitSeconds 为5到300）、interrupt（必须 nextSteps 数组，并同时按 references/human-output.md 填写面向非研发用户的 userSummary）。
-continue/answer 前必须 inspect_execution；evaluate 前必须 get_site、probe_site，执行终态不明确时还必须 get_conversation 查交付及未完成调用。pending 为 ask_user_input 时，仅当答案可由冻结输入与原任务范围如实确定时才用 answer；若因参考站截图/视觉取证失败挂起等待用户决策（如协助上传参考截图、刷新环境重试或更换参考 URL）、请求文件上传（kind=upload）或需变更范围/地址，严禁代答跳过视觉证据盲写，必须用 interrupt 给出具体原因、可操作 nextSteps 与通俗 userSummary。例外：若 pending 为 ask_user_input(kind=confirm) 且仅在页面已写入后询问“是否允许打开页面/浏览器做桌面或手机视图视觉验收”，在 probe_site（必要时配合 get_conversation）核实页面已落地后，应直接调用 answer 提交 {"confirmed":false,"kind":"confirm","value":false,"feedback":"当前为无人值守自动化模式，无需在 Kooboo 内打开浏览器进行视觉验收，请直接汇总本轮成果并结束。"} 推动 Kooboo 结束本轮，不要因此 interrupt。系统会检查真实执行前提，失败后请根据工具错误继续查证。不要把原会话的可选建议当成当前任务必做项。首页外工作不在首页任务范围内。评测不达标无需生成修复。
+continue/answer 前必须 inspect_execution；evaluate 前必须 get_site、probe_site，执行终态不明确时还必须 get_conversation 查交付及未完成调用。pending 为 ask_user_input 时，仅当答案可由冻结输入与原任务范围如实确定时才用 answer；ask_user_input(kind="confirm") 的标准应答参数格式固定为 {"confirmed": boolean, "kind": "confirm", "value": boolean, "feedback": "..."}，严禁使用 curl 下载或反查 Kooboo _Admin/assets/*.js 前端脚本核对参数格式。若因参考站截图/视觉取证失败挂起等待用户决策（如协助上传参考截图、刷新环境重试或更换参考 URL）、请求文件上传（kind=upload）或需变更范围/地址，严禁代答跳过视觉证据盲写，必须用 interrupt 给出具体原因、可操作 nextSteps 与通俗 userSummary。例外：若 pending 为 ask_user_input(kind=confirm) 且仅在页面已写入后询问“是否允许打开页面/浏览器做桌面或手机视图视觉验收”，在 probe_site（必要时配合 get_conversation）核实页面已落地后，应直接调用 answer 提交 {"confirmed":false,"kind":"confirm","value":false,"feedback":"当前为无人值守自动化模式，无需在 Kooboo 内打开浏览器进行视觉验收，请直接汇总本轮成果并结束。"}；若仅询问是否删除临时 reference-* 参考研究 Sandbox，则直接调用 answer 提交 {"confirmed":false,"kind":"confirm","value":false,"feedback":"当前为无人值守自动化模式，保留临时参考研究 Sandbox 供后续评测与修复复用，无需删除，请直接汇总本轮成果并结束。"}，不要因此 interrupt。系统会检查真实执行前提，失败后请根据工具错误继续查证。不要把原会话的可选建议当成当前任务必做项。首页外工作不在首页任务范围内。评测不达标无需生成修复。
 已投递的生成任务 retry 前也必须 inspect_execution。原委托存在匹配的 failed/interrupted 终态时，系统会将 retry 转为同站同会话的新一轮投递。历史余额不足等错误只证明对应旧 run 失败；只有新 run 的回执才能证明重试再次失败，不能据旧错误判断当前余额或连接仍不可用。发送结果不确定时只查证，不重复投递。
 评测阶段的 retry 会把你本轮 decision.reason 直接传给原评测会话，请在 reason 中明确需要修正的指标、视口、证据角色等已查证要求。评测器会向同一会话反馈具体结果校验错误，最多追加两次结果修正；可以复用有效证据，不需要重新生成站点或重复采集。会话本身失效时会释放绑定供后续评测使用新会话。不要假定 retry 无法传递具体修正要求。
 成功 act 后简要说明原因即结束本轮。`;
